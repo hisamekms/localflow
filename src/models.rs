@@ -130,15 +130,21 @@ pub struct Task {
     pub dependencies: Vec<i64>,
 }
 
+#[derive(Debug, Deserialize)]
 pub struct CreateTaskParams {
     pub title: String,
     pub background: Option<String>,
     pub details: Option<String>,
     pub priority: Option<Priority>,
+    #[serde(default)]
     pub definition_of_done: Vec<String>,
+    #[serde(default)]
     pub in_scope: Vec<String>,
+    #[serde(default)]
     pub out_of_scope: Vec<String>,
+    #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
     pub dependencies: Vec<i64>,
 }
 
