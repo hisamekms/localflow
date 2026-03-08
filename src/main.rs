@@ -3,6 +3,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
+use localflow::db;
+use localflow::models::{Priority, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams};
+use localflow::project;
 
 #[derive(Debug, Clone, ValueEnum)]
 enum OutputFormat {
@@ -36,7 +39,51 @@ enum Command {
     /// Show the next task to work on
     Next,
     /// Edit a task
-    Edit,
+    Edit {
+        /// Task ID
+        id: i64,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        background: Option<String>,
+        #[arg(long)]
+        clear_background: bool,
+        #[arg(long)]
+        details: Option<String>,
+        #[arg(long)]
+        clear_details: bool,
+        #[arg(long, value_enum)]
+        priority: Option<Priority>,
+        #[arg(long, value_enum)]
+        status: Option<TaskStatus>,
+        // Array set
+        #[arg(long, num_args = 0..)]
+        set_tags: Option<Vec<String>>,
+        #[arg(long, num_args = 0..)]
+        set_definition_of_done: Option<Vec<String>>,
+        #[arg(long, num_args = 0..)]
+        set_in_scope: Option<Vec<String>>,
+        #[arg(long, num_args = 0..)]
+        set_out_of_scope: Option<Vec<String>>,
+        // Array add
+        #[arg(long)]
+        add_tag: Vec<String>,
+        #[arg(long)]
+        add_definition_of_done: Vec<String>,
+        #[arg(long)]
+        add_in_scope: Vec<String>,
+        #[arg(long)]
+        add_out_of_scope: Vec<String>,
+        // Array remove
+        #[arg(long)]
+        remove_tag: Vec<String>,
+        #[arg(long)]
+        remove_definition_of_done: Vec<String>,
+        #[arg(long)]
+        remove_in_scope: Vec<String>,
+        #[arg(long)]
+        remove_out_of_scope: Vec<String>,
+    },
     /// Mark a task as complete
     Complete,
     /// Cancel a task
@@ -59,7 +106,93 @@ fn main() -> Result<()> {
         Command::List => todo!("list"),
         Command::Get => todo!("get"),
         Command::Next => todo!("next"),
-        Command::Edit => todo!("edit"),
+        Command::Edit {
+            id,
+            title,
+            background,
+            clear_background,
+            details,
+            clear_details,
+            priority,
+            status,
+            set_tags,
+            set_definition_of_done,
+            set_in_scope,
+            set_out_of_scope,
+            add_tag,
+            add_definition_of_done,
+            add_in_scope,
+            add_out_of_scope,
+            remove_tag,
+            remove_definition_of_done,
+            remove_in_scope,
+            remove_out_of_scope,
+        } => {
+            let project_root = project::resolve_project_root(cli.project_root.as_deref())?;
+            let conn = db::open_db(&project_root)?;
+
+            let scalar_params = UpdateTaskParams {
+                title,
+                background: if clear_background {
+                    Some(None)
+                } else {
+                    background.map(Some)
+                },
+                details: if clear_details {
+                    Some(None)
+                } else {
+                    details.map(Some)
+                },
+                priority,
+                status,
+                assignee_session_id: None,
+                started_at: None,
+                completed_at: None,
+                canceled_at: None,
+                cancel_reason: None,
+            };
+
+            let array_params = UpdateTaskArrayParams {
+                set_tags,
+                add_tags: add_tag,
+                remove_tags: remove_tag,
+                set_definition_of_done,
+                add_definition_of_done,
+                remove_definition_of_done,
+                set_in_scope,
+                add_in_scope,
+                remove_in_scope,
+                set_out_of_scope,
+                add_out_of_scope,
+                remove_out_of_scope,
+            };
+
+            db::update_task(&conn, id, &scalar_params)?;
+            db::update_task_arrays(&conn, id, &array_params)?;
+            let task = db::get_task(&conn, id)?;
+
+            match cli.output {
+                OutputFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&task)?);
+                }
+                OutputFormat::Text => {
+                    println!("Updated task {}", task.id);
+                    println!("  title: {}", task.title);
+                    println!("  status: {}", task.status);
+                    println!("  priority: {}", task.priority);
+                    if let Some(ref bg) = task.background {
+                        println!("  background: {bg}");
+                    }
+                    if let Some(ref det) = task.details {
+                        println!("  details: {det}");
+                    }
+                    if !task.tags.is_empty() {
+                        println!("  tags: {}", task.tags.join(", "));
+                    }
+                }
+            }
+            Ok(())
+        }
         Command::Complete => todo!("complete"),
         Command::Cancel => todo!("cancel"),
         Command::Deps => todo!("deps"),
@@ -109,8 +242,58 @@ mod tests {
 
     #[test]
     fn parse_edit_subcommand() {
-        let cli = Cli::parse_from(["localflow", "edit"]);
-        assert!(matches!(cli.command, Command::Edit));
+        let cli = Cli::parse_from(["localflow", "edit", "1"]);
+        assert!(matches!(cli.command, Command::Edit { id: 1, .. }));
+    }
+
+    #[test]
+    fn parse_edit_with_scalar_args() {
+        let cli = Cli::parse_from([
+            "localflow", "edit", "5",
+            "--title", "new title",
+            "--priority", "p0",
+            "--status", "todo",
+        ]);
+        match cli.command {
+            Command::Edit { id, title, priority, status, .. } => {
+                assert_eq!(id, 5);
+                assert_eq!(title.as_deref(), Some("new title"));
+                assert_eq!(priority, Some(Priority::P0));
+                assert_eq!(status, Some(TaskStatus::Todo));
+            }
+            _ => panic!("expected Edit"),
+        }
+    }
+
+    #[test]
+    fn parse_edit_with_array_args() {
+        let cli = Cli::parse_from([
+            "localflow", "edit", "3",
+            "--add-tag", "rust",
+            "--add-tag", "cli",
+            "--remove-tag", "old",
+            "--set-in-scope", "a", "b",
+        ]);
+        match cli.command {
+            Command::Edit { id, add_tag, remove_tag, set_in_scope, .. } => {
+                assert_eq!(id, 3);
+                assert_eq!(add_tag, vec!["rust", "cli"]);
+                assert_eq!(remove_tag, vec!["old"]);
+                assert_eq!(set_in_scope, Some(vec!["a".to_string(), "b".to_string()]));
+            }
+            _ => panic!("expected Edit"),
+        }
+    }
+
+    #[test]
+    fn parse_edit_clear_background() {
+        let cli = Cli::parse_from(["localflow", "edit", "1", "--clear-background"]);
+        match cli.command {
+            Command::Edit { clear_background, .. } => {
+                assert!(clear_background);
+            }
+            _ => panic!("expected Edit"),
+        }
     }
 
     #[test]

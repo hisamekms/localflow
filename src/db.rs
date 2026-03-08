@@ -4,7 +4,8 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
 use crate::models::{
-    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskParams,
+    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
+    UpdateTaskParams,
 };
 
 pub fn open_db(project_root: &Path) -> Result<Connection> {
@@ -254,6 +255,93 @@ pub fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Res
     }
 
     get_task(conn, id)
+}
+
+pub fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
+    // tags
+    if let Some(ref values) = params.set_tags {
+        conn.execute("DELETE FROM task_tags WHERE task_id = ?1", params![id])?;
+        for tag in values {
+            conn.execute(
+                "INSERT INTO task_tags (task_id, tag) VALUES (?1, ?2)",
+                params![id, tag],
+            )?;
+        }
+    }
+    for tag in &params.add_tags {
+        conn.execute(
+            "INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?1, ?2)",
+            params![id, tag],
+        )?;
+    }
+    for tag in &params.remove_tags {
+        conn.execute(
+            "DELETE FROM task_tags WHERE task_id = ?1 AND tag = ?2",
+            params![id, tag],
+        )?;
+    }
+
+    // definition_of_done
+    update_content_array(conn, id, "task_definition_of_done", &params.set_definition_of_done, &params.add_definition_of_done, &params.remove_definition_of_done)?;
+    // in_scope
+    update_content_array(conn, id, "task_in_scope", &params.set_in_scope, &params.add_in_scope, &params.remove_in_scope)?;
+    // out_of_scope
+    update_content_array(conn, id, "task_out_of_scope", &params.set_out_of_scope, &params.add_out_of_scope, &params.remove_out_of_scope)?;
+
+    // Touch updated_at
+    let has_changes = params.set_tags.is_some()
+        || !params.add_tags.is_empty()
+        || !params.remove_tags.is_empty()
+        || params.set_definition_of_done.is_some()
+        || !params.add_definition_of_done.is_empty()
+        || !params.remove_definition_of_done.is_empty()
+        || params.set_in_scope.is_some()
+        || !params.add_in_scope.is_empty()
+        || !params.remove_in_scope.is_empty()
+        || params.set_out_of_scope.is_some()
+        || !params.add_out_of_scope.is_empty()
+        || !params.remove_out_of_scope.is_empty();
+
+    if has_changes {
+        conn.execute(
+            "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+            params![id],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn update_content_array(
+    conn: &Connection,
+    task_id: i64,
+    table: &str,
+    set: &Option<Vec<String>>,
+    add: &[String],
+    remove: &[String],
+) -> Result<()> {
+    if let Some(values) = set {
+        conn.execute(&format!("DELETE FROM {table} WHERE task_id = ?1"), params![task_id])?;
+        for item in values {
+            conn.execute(
+                &format!("INSERT INTO {table} (task_id, content) VALUES (?1, ?2)"),
+                params![task_id, item],
+            )?;
+        }
+    }
+    for item in add {
+        conn.execute(
+            &format!("INSERT INTO {table} (task_id, content) VALUES (?1, ?2)"),
+            params![task_id, item],
+        )?;
+    }
+    for item in remove {
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE task_id = ?1 AND content = ?2"),
+            params![task_id, item],
+        )?;
+    }
+    Ok(())
 }
 
 pub fn delete_task(conn: &Connection, id: i64) -> Result<()> {
@@ -796,6 +884,159 @@ mod tests {
         assert_eq!(task.dependencies.len(), 2);
         assert!(task.dependencies.contains(&dep1.id));
         assert!(task.dependencies.contains(&dep2.id));
+    }
+
+    fn default_array_params() -> UpdateTaskArrayParams {
+        UpdateTaskArrayParams {
+            set_tags: None,
+            add_tags: vec![],
+            remove_tags: vec![],
+            set_definition_of_done: None,
+            add_definition_of_done: vec![],
+            remove_definition_of_done: vec![],
+            set_in_scope: None,
+            add_in_scope: vec![],
+            remove_in_scope: vec![],
+            set_out_of_scope: None,
+            add_out_of_scope: vec![],
+            remove_out_of_scope: vec![],
+        }
+    }
+
+    #[test]
+    fn update_arrays_set_tags() {
+        let (_tmp, conn) = setup();
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                tags: vec!["old".to_string()],
+                ..default_create_params("t")
+            },
+        )
+        .unwrap();
+
+        update_task_arrays(
+            &conn,
+            task.id,
+            &UpdateTaskArrayParams {
+                set_tags: Some(vec!["new1".to_string(), "new2".to_string()]),
+                ..default_array_params()
+            },
+        )
+        .unwrap();
+
+        let updated = get_task(&conn, task.id).unwrap();
+        assert_eq!(updated.tags.len(), 2);
+        assert!(updated.tags.contains(&"new1".to_string()));
+        assert!(updated.tags.contains(&"new2".to_string()));
+        assert!(!updated.tags.contains(&"old".to_string()));
+    }
+
+    #[test]
+    fn update_arrays_add_tags() {
+        let (_tmp, conn) = setup();
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                tags: vec!["existing".to_string()],
+                ..default_create_params("t")
+            },
+        )
+        .unwrap();
+
+        update_task_arrays(
+            &conn,
+            task.id,
+            &UpdateTaskArrayParams {
+                add_tags: vec!["new".to_string(), "existing".to_string()],
+                ..default_array_params()
+            },
+        )
+        .unwrap();
+
+        let updated = get_task(&conn, task.id).unwrap();
+        assert_eq!(updated.tags.len(), 2);
+        assert!(updated.tags.contains(&"existing".to_string()));
+        assert!(updated.tags.contains(&"new".to_string()));
+    }
+
+    #[test]
+    fn update_arrays_remove_tags() {
+        let (_tmp, conn) = setup();
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                tags: vec!["keep".to_string(), "remove".to_string()],
+                ..default_create_params("t")
+            },
+        )
+        .unwrap();
+
+        update_task_arrays(
+            &conn,
+            task.id,
+            &UpdateTaskArrayParams {
+                remove_tags: vec!["remove".to_string()],
+                ..default_array_params()
+            },
+        )
+        .unwrap();
+
+        let updated = get_task(&conn, task.id).unwrap();
+        assert_eq!(updated.tags, vec!["keep"]);
+    }
+
+    #[test]
+    fn update_arrays_set_definition_of_done() {
+        let (_tmp, conn) = setup();
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                definition_of_done: vec!["old".to_string()],
+                ..default_create_params("t")
+            },
+        )
+        .unwrap();
+
+        update_task_arrays(
+            &conn,
+            task.id,
+            &UpdateTaskArrayParams {
+                set_definition_of_done: Some(vec!["new1".to_string(), "new2".to_string()]),
+                ..default_array_params()
+            },
+        )
+        .unwrap();
+
+        let updated = get_task(&conn, task.id).unwrap();
+        assert_eq!(updated.definition_of_done, vec!["new1", "new2"]);
+    }
+
+    #[test]
+    fn update_arrays_add_and_remove_in_scope() {
+        let (_tmp, conn) = setup();
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                in_scope: vec!["a".to_string(), "b".to_string()],
+                ..default_create_params("t")
+            },
+        )
+        .unwrap();
+
+        update_task_arrays(
+            &conn,
+            task.id,
+            &UpdateTaskArrayParams {
+                add_in_scope: vec!["c".to_string()],
+                remove_in_scope: vec!["a".to_string()],
+                ..default_array_params()
+            },
+        )
+        .unwrap();
+
+        let updated = get_task(&conn, task.id).unwrap();
+        assert_eq!(updated.in_scope, vec!["b", "c"]);
     }
 
     #[test]
