@@ -1,9 +1,10 @@
 use std::fmt;
 use std::str::FromStr;
 
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     Draft,
@@ -68,7 +69,7 @@ impl FromStr for TaskStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 pub enum Priority {
     P0 = 0,
     P1 = 1,
@@ -160,6 +161,21 @@ pub struct ListTasksFilter {
     pub tag: Option<String>,
     pub depends_on: Option<i64>,
     pub ready: bool,
+}
+
+pub struct UpdateTaskArrayParams {
+    pub set_tags: Option<Vec<String>>,
+    pub add_tags: Vec<String>,
+    pub remove_tags: Vec<String>,
+    pub set_definition_of_done: Option<Vec<String>>,
+    pub add_definition_of_done: Vec<String>,
+    pub remove_definition_of_done: Vec<String>,
+    pub set_in_scope: Option<Vec<String>>,
+    pub add_in_scope: Vec<String>,
+    pub remove_in_scope: Vec<String>,
+    pub set_out_of_scope: Option<Vec<String>>,
+    pub add_out_of_scope: Vec<String>,
+    pub remove_out_of_scope: Vec<String>,
 }
 
 impl Default for ListTasksFilter {

@@ -1,10 +1,11 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::models::{
-    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskParams,
+    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
+    UpdateTaskParams,
 };
 
 pub fn open_db(project_root: &Path) -> Result<Connection> {
@@ -256,6 +257,93 @@ pub fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Res
     get_task(conn, id)
 }
 
+pub fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
+    // tags
+    if let Some(ref values) = params.set_tags {
+        conn.execute("DELETE FROM task_tags WHERE task_id = ?1", params![id])?;
+        for tag in values {
+            conn.execute(
+                "INSERT INTO task_tags (task_id, tag) VALUES (?1, ?2)",
+                params![id, tag],
+            )?;
+        }
+    }
+    for tag in &params.add_tags {
+        conn.execute(
+            "INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?1, ?2)",
+            params![id, tag],
+        )?;
+    }
+    for tag in &params.remove_tags {
+        conn.execute(
+            "DELETE FROM task_tags WHERE task_id = ?1 AND tag = ?2",
+            params![id, tag],
+        )?;
+    }
+
+    // definition_of_done
+    update_content_array(conn, id, "task_definition_of_done", &params.set_definition_of_done, &params.add_definition_of_done, &params.remove_definition_of_done)?;
+    // in_scope
+    update_content_array(conn, id, "task_in_scope", &params.set_in_scope, &params.add_in_scope, &params.remove_in_scope)?;
+    // out_of_scope
+    update_content_array(conn, id, "task_out_of_scope", &params.set_out_of_scope, &params.add_out_of_scope, &params.remove_out_of_scope)?;
+
+    // Touch updated_at
+    let has_changes = params.set_tags.is_some()
+        || !params.add_tags.is_empty()
+        || !params.remove_tags.is_empty()
+        || params.set_definition_of_done.is_some()
+        || !params.add_definition_of_done.is_empty()
+        || !params.remove_definition_of_done.is_empty()
+        || params.set_in_scope.is_some()
+        || !params.add_in_scope.is_empty()
+        || !params.remove_in_scope.is_empty()
+        || params.set_out_of_scope.is_some()
+        || !params.add_out_of_scope.is_empty()
+        || !params.remove_out_of_scope.is_empty();
+
+    if has_changes {
+        conn.execute(
+            "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+            params![id],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn update_content_array(
+    conn: &Connection,
+    task_id: i64,
+    table: &str,
+    set: &Option<Vec<String>>,
+    add: &[String],
+    remove: &[String],
+) -> Result<()> {
+    if let Some(values) = set {
+        conn.execute(&format!("DELETE FROM {table} WHERE task_id = ?1"), params![task_id])?;
+        for item in values {
+            conn.execute(
+                &format!("INSERT INTO {table} (task_id, content) VALUES (?1, ?2)"),
+                params![task_id, item],
+            )?;
+        }
+    }
+    for item in add {
+        conn.execute(
+            &format!("INSERT INTO {table} (task_id, content) VALUES (?1, ?2)"),
+            params![task_id, item],
+        )?;
+    }
+    for item in remove {
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE task_id = ?1 AND content = ?2"),
+            params![task_id, item],
+        )?;
+    }
+    Ok(())
+}
+
 pub fn delete_task(conn: &Connection, id: i64) -> Result<()> {
     let affected = conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])?;
     if affected == 0 {
@@ -315,6 +403,27 @@ pub fn list_tasks(conn: &Connection, filter: &ListTasksFilter) -> Result<Vec<Tas
         tasks.push(get_task(conn, id)?);
     }
     Ok(tasks)
+}
+
+pub fn next_task(conn: &Connection) -> Result<Option<Task>> {
+    let sql = "
+        SELECT t.id FROM tasks t
+        WHERE t.status = 'todo'
+          AND NOT EXISTS (
+            SELECT 1 FROM task_dependencies td
+            JOIN tasks dep ON dep.id = td.depends_on_task_id
+            WHERE td.task_id = t.id AND dep.status != 'completed'
+          )
+        ORDER BY t.priority ASC, t.created_at ASC, t.id ASC
+        LIMIT 1
+    ";
+    let id: Option<i64> = conn
+        .query_row(sql, [], |row| row.get(0))
+        .optional()?;
+    match id {
+        Some(id) => Ok(Some(get_task(conn, id)?)),
+        None => Ok(None),
+    }
 }
 
 fn query_string_list(conn: &Connection, sql: &str, task_id: i64) -> Result<Vec<String>> {
@@ -807,6 +916,310 @@ mod tests {
         assert_eq!(task.dependencies.len(), 2);
         assert!(task.dependencies.contains(&dep1.id));
         assert!(task.dependencies.contains(&dep2.id));
+    }
+
+    fn default_array_params() -> UpdateTaskArrayParams {
+        UpdateTaskArrayParams {
+            set_tags: None,
+            add_tags: vec![],
+            remove_tags: vec![],
+            set_definition_of_done: None,
+            add_definition_of_done: vec![],
+            remove_definition_of_done: vec![],
+            set_in_scope: None,
+            add_in_scope: vec![],
+            remove_in_scope: vec![],
+            set_out_of_scope: None,
+            add_out_of_scope: vec![],
+            remove_out_of_scope: vec![],
+        }
+    }
+
+    #[test]
+    fn update_arrays_set_tags() {
+        let (_tmp, conn) = setup();
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                tags: vec!["old".to_string()],
+                ..default_create_params("t")
+            },
+        )
+        .unwrap();
+
+        update_task_arrays(
+            &conn,
+            task.id,
+            &UpdateTaskArrayParams {
+                set_tags: Some(vec!["new1".to_string(), "new2".to_string()]),
+                ..default_array_params()
+            },
+        )
+        .unwrap();
+
+        let updated = get_task(&conn, task.id).unwrap();
+        assert_eq!(updated.tags.len(), 2);
+        assert!(updated.tags.contains(&"new1".to_string()));
+        assert!(updated.tags.contains(&"new2".to_string()));
+        assert!(!updated.tags.contains(&"old".to_string()));
+    }
+
+    #[test]
+    fn update_arrays_add_tags() {
+        let (_tmp, conn) = setup();
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                tags: vec!["existing".to_string()],
+                ..default_create_params("t")
+            },
+        )
+        .unwrap();
+
+        update_task_arrays(
+            &conn,
+            task.id,
+            &UpdateTaskArrayParams {
+                add_tags: vec!["new".to_string(), "existing".to_string()],
+                ..default_array_params()
+            },
+        )
+        .unwrap();
+
+        let updated = get_task(&conn, task.id).unwrap();
+        assert_eq!(updated.tags.len(), 2);
+        assert!(updated.tags.contains(&"existing".to_string()));
+        assert!(updated.tags.contains(&"new".to_string()));
+    }
+
+    #[test]
+    fn update_arrays_remove_tags() {
+        let (_tmp, conn) = setup();
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                tags: vec!["keep".to_string(), "remove".to_string()],
+                ..default_create_params("t")
+            },
+        )
+        .unwrap();
+
+        update_task_arrays(
+            &conn,
+            task.id,
+            &UpdateTaskArrayParams {
+                remove_tags: vec!["remove".to_string()],
+                ..default_array_params()
+            },
+        )
+        .unwrap();
+
+        let updated = get_task(&conn, task.id).unwrap();
+        assert_eq!(updated.tags, vec!["keep"]);
+    }
+
+    #[test]
+    fn update_arrays_set_definition_of_done() {
+        let (_tmp, conn) = setup();
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                definition_of_done: vec!["old".to_string()],
+                ..default_create_params("t")
+            },
+        )
+        .unwrap();
+
+        update_task_arrays(
+            &conn,
+            task.id,
+            &UpdateTaskArrayParams {
+                set_definition_of_done: Some(vec!["new1".to_string(), "new2".to_string()]),
+                ..default_array_params()
+            },
+        )
+        .unwrap();
+
+        let updated = get_task(&conn, task.id).unwrap();
+        assert_eq!(updated.definition_of_done, vec!["new1", "new2"]);
+    }
+
+    #[test]
+    fn update_arrays_add_and_remove_in_scope() {
+        let (_tmp, conn) = setup();
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                in_scope: vec!["a".to_string(), "b".to_string()],
+                ..default_create_params("t")
+            },
+        )
+        .unwrap();
+
+        update_task_arrays(
+            &conn,
+            task.id,
+            &UpdateTaskArrayParams {
+                add_in_scope: vec!["c".to_string()],
+                remove_in_scope: vec!["a".to_string()],
+                ..default_array_params()
+            },
+        )
+        .unwrap();
+
+        let updated = get_task(&conn, task.id).unwrap();
+        assert_eq!(updated.in_scope, vec!["b", "c"]);
+    }
+
+    fn make_todo(conn: &Connection, title: &str, priority: Option<Priority>) -> Task {
+        let task = create_task(
+            conn,
+            &CreateTaskParams {
+                priority,
+                ..default_create_params(title)
+            },
+        )
+        .unwrap();
+        update_task(
+            conn,
+            task.id,
+            &UpdateTaskParams {
+                title: None, background: None, details: None, priority: None,
+                status: Some(TaskStatus::Todo),
+                assignee_session_id: None, started_at: None, completed_at: None,
+                canceled_at: None, cancel_reason: None,
+            },
+        )
+        .unwrap()
+    }
+
+    fn make_completed(conn: &Connection, title: &str) -> Task {
+        let task = make_todo(conn, title, None);
+        update_task(
+            conn,
+            task.id,
+            &UpdateTaskParams {
+                title: None, background: None, details: None, priority: None,
+                status: Some(TaskStatus::InProgress),
+                assignee_session_id: None, started_at: None, completed_at: None,
+                canceled_at: None, cancel_reason: None,
+            },
+        ).unwrap();
+        update_task(
+            conn,
+            task.id,
+            &UpdateTaskParams {
+                title: None, background: None, details: None, priority: None,
+                status: Some(TaskStatus::Completed),
+                assignee_session_id: None, started_at: None, completed_at: None,
+                canceled_at: None, cancel_reason: None,
+            },
+        ).unwrap()
+    }
+
+    #[test]
+    fn next_task_returns_none_when_empty() {
+        let (_tmp, conn) = setup();
+        assert!(next_task(&conn).unwrap().is_none());
+    }
+
+    #[test]
+    fn next_task_skips_blocked() {
+        let (_tmp, conn) = setup();
+
+        // Create a dep that is NOT completed (still draft)
+        let dep = create_task(&conn, &default_create_params("dep")).unwrap();
+
+        // Create a todo task that depends on dep
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                title: "blocked".to_string(),
+                dependencies: vec![dep.id],
+                ..default_create_params("blocked")
+            },
+        ).unwrap();
+        update_task(
+            &conn,
+            task.id,
+            &UpdateTaskParams {
+                title: None, background: None, details: None, priority: None,
+                status: Some(TaskStatus::Todo),
+                assignee_session_id: None, started_at: None, completed_at: None,
+                canceled_at: None, cancel_reason: None,
+            },
+        ).unwrap();
+
+        assert!(next_task(&conn).unwrap().is_none());
+    }
+
+    #[test]
+    fn next_task_priority_order() {
+        let (_tmp, conn) = setup();
+
+        make_todo(&conn, "low", Some(Priority::P3));
+        make_todo(&conn, "high", Some(Priority::P0));
+        make_todo(&conn, "mid", Some(Priority::P1));
+
+        let task = next_task(&conn).unwrap().unwrap();
+        assert_eq!(task.title, "high");
+    }
+
+    #[test]
+    fn next_task_created_at_tiebreak() {
+        let (_tmp, conn) = setup();
+
+        // Same priority, created_at order should decide
+        // Since tasks are inserted sequentially, the first one has earlier created_at
+        make_todo(&conn, "first", Some(Priority::P2));
+        make_todo(&conn, "second", Some(Priority::P2));
+
+        let task = next_task(&conn).unwrap().unwrap();
+        assert_eq!(task.title, "first");
+    }
+
+    #[test]
+    fn next_task_id_tiebreak() {
+        let (_tmp, conn) = setup();
+
+        // Insert two tasks with same priority; SQLite created_at has second-level precision
+        // so they'll likely have the same created_at, making id the final tiebreaker
+        let t1 = make_todo(&conn, "t1", Some(Priority::P2));
+        let t2 = make_todo(&conn, "t2", Some(Priority::P2));
+
+        let task = next_task(&conn).unwrap().unwrap();
+        // t1 was created first, so it has lower id
+        assert!(t1.id < t2.id);
+        assert_eq!(task.id, t1.id);
+    }
+
+    #[test]
+    fn next_task_with_completed_dep() {
+        let (_tmp, conn) = setup();
+
+        let dep = make_completed(&conn, "dep");
+
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                title: "ready".to_string(),
+                dependencies: vec![dep.id],
+                ..default_create_params("ready")
+            },
+        ).unwrap();
+        update_task(
+            &conn,
+            task.id,
+            &UpdateTaskParams {
+                title: None, background: None, details: None, priority: None,
+                status: Some(TaskStatus::Todo),
+                assignee_session_id: None, started_at: None, completed_at: None,
+                canceled_at: None, cancel_reason: None,
+            },
+        ).unwrap();
+
+        let result = next_task(&conn).unwrap().unwrap();
+        assert_eq!(result.title, "ready");
     }
 
     #[test]
