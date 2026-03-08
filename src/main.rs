@@ -89,9 +89,18 @@ enum Command {
         remove_out_of_scope: Vec<String>,
     },
     /// Mark a task as complete
-    Complete,
+    Complete {
+        /// Task ID
+        id: i64,
+    },
     /// Cancel a task
-    Cancel,
+    Cancel {
+        /// Task ID
+        id: i64,
+        /// Cancellation reason
+        #[arg(long)]
+        reason: Option<String>,
+    },
     /// Manage task dependencies
     Deps,
     /// Install a skill
@@ -197,8 +206,8 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Command::Complete => todo!("complete"),
-        Command::Cancel => todo!("cancel"),
+        Command::Complete { id } => cmd_complete(&cli, id),
+        Command::Cancel { id, ref reason } => cmd_cancel(&cli, id, reason.clone()),
         Command::Deps => todo!("deps"),
         Command::SkillInstall { output_dir } => skill_install(output_dir),
     }
@@ -234,6 +243,83 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
         }
         OutputFormat::Text => {
             println!("Started task #{}: {}", updated.id, updated.title);
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_complete(cli: &Cli, id: i64) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let conn = db::open_db(&root)?;
+
+    let task = db::get_task(&conn, id)?;
+    task.status.transition_to(TaskStatus::Completed)?;
+
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let updated = db::update_task(
+        &conn,
+        id,
+        &UpdateTaskParams {
+            title: None,
+            background: None,
+            details: None,
+            priority: None,
+            status: Some(TaskStatus::Completed),
+            assignee_session_id: None,
+            started_at: None,
+            completed_at: Some(Some(now)),
+            canceled_at: None,
+            cancel_reason: None,
+        },
+    )?;
+
+    match cli.output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&updated)?);
+        }
+        OutputFormat::Text => {
+            println!("Completed task #{}: {}", updated.id, updated.title);
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let conn = db::open_db(&root)?;
+
+    let task = db::get_task(&conn, id)?;
+    task.status.transition_to(TaskStatus::Canceled)?;
+
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let updated = db::update_task(
+        &conn,
+        id,
+        &UpdateTaskParams {
+            title: None,
+            background: None,
+            details: None,
+            priority: None,
+            status: Some(TaskStatus::Canceled),
+            assignee_session_id: None,
+            started_at: None,
+            completed_at: None,
+            canceled_at: Some(Some(now)),
+            cancel_reason: reason.map(Some),
+        },
+    )?;
+
+    match cli.output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&updated)?);
+        }
+        OutputFormat::Text => {
+            println!("Canceled task #{}: {}", updated.id, updated.title);
+            if let Some(ref r) = updated.cancel_reason {
+                println!("  reason: {r}");
+            }
         }
     }
 
@@ -349,14 +435,38 @@ mod tests {
 
     #[test]
     fn parse_complete_subcommand() {
-        let cli = Cli::parse_from(["localflow", "complete"]);
-        assert!(matches!(cli.command, Command::Complete));
+        let cli = Cli::parse_from(["localflow", "complete", "1"]);
+        assert!(matches!(cli.command, Command::Complete { id: 1 }));
     }
 
     #[test]
     fn parse_cancel_subcommand() {
-        let cli = Cli::parse_from(["localflow", "cancel"]);
-        assert!(matches!(cli.command, Command::Cancel));
+        let cli = Cli::parse_from(["localflow", "cancel", "2"]);
+        assert!(matches!(cli.command, Command::Cancel { id: 2, .. }));
+    }
+
+    #[test]
+    fn parse_cancel_with_reason() {
+        let cli = Cli::parse_from(["localflow", "cancel", "3", "--reason", "no longer needed"]);
+        match cli.command {
+            Command::Cancel { id, reason } => {
+                assert_eq!(id, 3);
+                assert_eq!(reason.as_deref(), Some("no longer needed"));
+            }
+            _ => panic!("expected Cancel"),
+        }
+    }
+
+    #[test]
+    fn parse_cancel_without_reason() {
+        let cli = Cli::parse_from(["localflow", "cancel", "4"]);
+        match cli.command {
+            Command::Cancel { id, reason } => {
+                assert_eq!(id, 4);
+                assert!(reason.is_none());
+            }
+            _ => panic!("expected Cancel"),
+        }
     }
 
     #[test]
