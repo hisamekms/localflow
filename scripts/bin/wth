@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log() {
+  printf '[wth] %s\n' "$*"
+}
+
+on_error() {
+  local exit_code=$?
+  log "FAILED (exit=${exit_code}) at line ${BASH_LINENO[0]}: ${BASH_COMMAND}"
+  exit "$exit_code"
+}
+
+trap on_error ERR
+
+PROJECT_ROOT="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+WTH_DIR="${WTH_DIR:-${PROJECT_ROOT}/worktrees}"
+
+run_hooks() {
+  local hook_dir="${PROJECT_ROOT}/.wth/hooks/${1}"
+  if [ ! -d "$hook_dir" ]; then
+    return
+  fi
+  local hooks=()
+  while IFS= read -r -d '' file; do
+    hooks+=("$file")
+  done < <(find "$hook_dir" -maxdepth 1 -name '*.sh' -print0 | sort -z)
+  if [ ${#hooks[@]} -eq 0 ]; then
+    return
+  fi
+  for hook in "${hooks[@]}"; do
+    log "running hook: ${hook}"
+    bash "$hook"
+  done
+}
+
+usage() {
+  cat <<'EOF'
+Usage: wth <command> <name>
+
+Commands:
+  add <name>   Create a worktree and branch wth/<name>
+  rm  <name>   Remove a worktree and delete branch wth/<name>
+  help         Show this help message
+
+Environment variables:
+  WTH_DIR      Override worktree base directory (default: <project-root>/worktrees)
+
+Hooks:
+  .wth/hooks/add/*.sh   Executed after worktree creation (sorted lexicographically)
+  .wth/hooks/rm/*.sh    Executed before worktree removal (sorted lexicographically)
+
+  Hooks receive these env vars:
+    WTH_NAME          Worktree name
+    WTH_BRANCH        Branch name (wth/<name>)
+    WTH_PATH          Absolute path to the worktree
+    WTH_PROJECT_ROOT  Absolute path to the project root
+EOF
+}
+
+validate_name() {
+  local name="$1"
+  if [[ "$name" == */* ]]; then
+    log "error: name must not contain '/': ${name}"
+    exit 1
+  fi
+  if [[ "$name" == -* ]]; then
+    log "error: name must not start with '-': ${name}"
+    exit 1
+  fi
+}
+
+cmd_add() {
+  local name="${1:?missing worktree name}"
+  validate_name "$name"
+  local branch="wth/${name}"
+  local wt_path="${WTH_DIR}/${name}"
+
+  if [ -d "$wt_path" ]; then
+    log "error: worktree directory already exists: ${wt_path}"
+    exit 1
+  fi
+
+  if git show-ref --verify --quiet "refs/heads/${branch}"; then
+    log "error: branch already exists: ${branch}"
+    exit 1
+  fi
+
+  log "creating worktree: ${wt_path} (branch: ${branch})"
+  git worktree add -b "$branch" "$wt_path"
+
+  export WTH_NAME="$name"
+  export WTH_BRANCH="$branch"
+  export WTH_PATH="$wt_path"
+  export WTH_PROJECT_ROOT="$PROJECT_ROOT"
+
+  run_hooks add
+
+  log "done: ${wt_path}"
+}
+
+cmd_rm() {
+  local name="${1:?missing worktree name}"
+  local branch="wth/${name}"
+  local wt_path="${WTH_DIR}/${name}"
+
+  if [ ! -d "$wt_path" ]; then
+    log "error: worktree directory does not exist: ${wt_path}"
+    exit 1
+  fi
+
+  export WTH_NAME="$name"
+  export WTH_BRANCH="$branch"
+  export WTH_PATH="$wt_path"
+  export WTH_PROJECT_ROOT="$PROJECT_ROOT"
+
+  run_hooks rm
+
+  # Ensure cwd is not inside the worktree being removed, otherwise
+  # subsequent git commands fail with "Unable to read current working directory".
+  cd "$PROJECT_ROOT"
+
+  log "removing worktree: ${wt_path}"
+  git worktree remove --force "$wt_path"
+
+  local parent
+  parent="$(dirname "$wt_path")"
+  while [ "$parent" != "$WTH_DIR" ] && [ -d "$parent" ] && [ -z "$(ls -A "$parent")" ]; do
+    log "removing empty directory: ${parent}"
+    rmdir "$parent"
+    parent="$(dirname "$parent")"
+  done
+
+  if git show-ref --verify --quiet "refs/heads/${branch}"; then
+    log "deleting branch: ${branch}"
+    git branch -D "$branch"
+  fi
+
+  log "done"
+}
+
+case "${1:-}" in
+  add)  shift; cmd_add "$@" ;;
+  rm)   shift; cmd_rm "$@" ;;
+  help) usage ;;
+  *)
+    usage >&2
+    exit 1
+    ;;
+esac

@@ -1,0 +1,8 @@
+[env]
+_.path = ["./scripts/bin"]
+_.file = ".env"
+
+[tools]
+rust = "latest"
+gh = "latest"
+awscli = "latest"

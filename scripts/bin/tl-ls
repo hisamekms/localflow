@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+TASKS_DIR="${PROJECT_ROOT}/tasks.local"
+
+show_all=false
+
+for arg in "$@"; do
+  case "$arg" in
+    --all) show_all=true ;;
+    -h|--help)
+      printf 'Usage: tl-ls [--all]\n'
+      printf '\nList tasks from tasks.local/ frontmatter.\n'
+      printf 'By default, only todo and in_progress tasks are shown.\n'
+      printf '\nOptions:\n'
+      printf '  --all   Show all tasks regardless of status\n'
+      exit 0
+      ;;
+    *)
+      printf 'Unknown option: %s\n' "$arg" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ ! -d "$TASKS_DIR" ]; then
+  printf 'tasks.local/ directory not found\n' >&2
+  exit 1
+fi
+
+for file in "$TASKS_DIR"/*.md; do
+  [ -f "$file" ] || continue
+
+  id=""
+  title=""
+  status=""
+  in_frontmatter=false
+
+  while IFS= read -r line; do
+    if [ "$line" = "---" ]; then
+      if [ "$in_frontmatter" = true ]; then
+        break
+      else
+        in_frontmatter=true
+        continue
+      fi
+    fi
+
+    if [ "$in_frontmatter" = true ]; then
+      case "$line" in
+        id:*)     id="${line#id:}"; id="${id## }"; id="${id#\"}"; id="${id%\"}" ;;
+        title:*)  title="${line#title:}"; title="${title## }" ;;
+        status:*) status="${line#status:}"; status="${status## }" ;;
+      esac
+    fi
+  done < "$file"
+
+  if [ -z "$status" ]; then
+    continue
+  fi
+
+  if [ "$show_all" = false ] && [ "$status" != "todo" ] && [ "$status" != "in_progress" ]; then
+    continue
+  fi
+
+  printf '%s\t%s\t%s\n' "$id" "$status" "$title"
+done | sort -t$'\t' -k1,1
