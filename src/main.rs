@@ -2,10 +2,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
+use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use localflow::db;
 use localflow::models::{Priority, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams};
-use localflow::project;
+use localflow::project::resolve_project_root;
 
 #[derive(Debug, Clone, ValueEnum)]
 enum OutputFormat {
@@ -37,7 +38,10 @@ enum Command {
     /// Get task details
     Get,
     /// Show the next task to work on
-    Next,
+    Next {
+        #[arg(long)]
+        session_id: Option<String>,
+    },
     /// Edit a task
     Edit {
         /// Task ID
@@ -105,7 +109,7 @@ fn main() -> Result<()> {
         Command::Add => todo!("add"),
         Command::List => todo!("list"),
         Command::Get => todo!("get"),
-        Command::Next => todo!("next"),
+        Command::Next { ref session_id } => cmd_next(&cli, session_id.clone()),
         Command::Edit {
             id,
             title,
@@ -128,7 +132,7 @@ fn main() -> Result<()> {
             remove_in_scope,
             remove_out_of_scope,
         } => {
-            let project_root = project::resolve_project_root(cli.project_root.as_deref())?;
+            let project_root = resolve_project_root(cli.project_root.as_deref())?;
             let conn = db::open_db(&project_root)?;
 
             let scalar_params = UpdateTaskParams {
@@ -200,6 +204,42 @@ fn main() -> Result<()> {
     }
 }
 
+fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let conn = db::open_db(&root)?;
+
+    let task = db::next_task(&conn)?.ok_or_else(|| anyhow::anyhow!("no eligible task found"))?;
+
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let updated = db::update_task(
+        &conn,
+        task.id,
+        &UpdateTaskParams {
+            title: None,
+            background: None,
+            details: None,
+            priority: None,
+            status: Some(TaskStatus::InProgress),
+            assignee_session_id: Some(session_id),
+            started_at: Some(Some(now)),
+            completed_at: None,
+            canceled_at: None,
+            cancel_reason: None,
+        },
+    )?;
+
+    match cli.output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&updated)?);
+        }
+        OutputFormat::Text => {
+            println!("Started task #{}: {}", updated.id, updated.title);
+        }
+    }
+
+    Ok(())
+}
+
 const SKILL_MD_CONTENT: &str = include_str!("skill_md.txt");
 
 fn skill_install(output_dir: Option<PathBuf>) -> Result<()> {
@@ -237,7 +277,18 @@ mod tests {
     #[test]
     fn parse_next_subcommand() {
         let cli = Cli::parse_from(["localflow", "next"]);
-        assert!(matches!(cli.command, Command::Next));
+        assert!(matches!(cli.command, Command::Next { .. }));
+    }
+
+    #[test]
+    fn parse_next_with_session_id() {
+        let cli = Cli::parse_from(["localflow", "next", "--session-id", "abc-123"]);
+        match cli.command {
+            Command::Next { session_id } => {
+                assert_eq!(session_id, Some("abc-123".to_string()));
+            }
+            _ => panic!("expected Next"),
+        }
     }
 
     #[test]
