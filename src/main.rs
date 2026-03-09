@@ -22,7 +22,7 @@ enum OutputFormat {
 #[command(name = "localflow", about = "Local task management CLI")]
 struct Cli {
     /// Output format
-    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
     output: OutputFormat,
 
     /// Project root directory
@@ -1417,9 +1417,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_output_text_default() {
+    fn parse_output_json_default() {
         let cli = Cli::parse_from(["localflow", "add"]);
-        assert!(matches!(cli.output, OutputFormat::Text));
+        assert!(matches!(cli.output, OutputFormat::Json));
     }
 
     #[test]

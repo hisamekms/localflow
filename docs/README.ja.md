@@ -54,7 +54,7 @@ localflow complete 1
 ### グローバルオプション
 
 ```
---output <FORMAT>       json または text（デフォルト: text）
+--output <FORMAT>       json または text（デフォルト: json）
 --project-root <PATH>   プロジェクトルート（省略時は自動検出）
 ```
 

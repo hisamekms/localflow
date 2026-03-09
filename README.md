@@ -54,7 +54,7 @@ localflow complete 1
 ### Global Options
 
 ```
---output <FORMAT>       json or text (default: text)
+--output <FORMAT>       json or text (default: json)
 --project-root <PATH>   Project root (auto-detected if omitted)
 ```
 
