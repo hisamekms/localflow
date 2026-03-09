@@ -29,8 +29,18 @@ struct Cli {
     #[arg(long)]
     project_root: Option<PathBuf>,
 
+    /// Dry run mode: show what would be done without executing
+    #[arg(long)]
+    dry_run: bool,
+
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct DryRunOperation {
+    command: String,
+    operations: Vec<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -196,8 +206,22 @@ enum DepsCommand {
     },
 }
 
+fn print_dry_run(output: &OutputFormat, ops: &DryRunOperation) -> Result<()> {
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(ops)?),
+        OutputFormat::Text => {
+            for op in &ops.operations {
+                println!("{}", op);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let dry_run = cli.dry_run;
+    let output_format = cli.output.clone();
 
     match cli.command {
         Command::Add {
@@ -265,6 +289,45 @@ fn main() -> Result<()> {
         } => {
             let project_root = resolve_project_root(cli.project_root.as_deref())?;
             let conn = db::open_db(&project_root)?;
+
+            // Verify task exists (even in dry-run)
+            let _task = db::get_task(&conn, id)?;
+
+            if dry_run {
+                let mut operations = Vec::new();
+                if let Some(ref t) = title {
+                    operations.push(format!("Update task #{}: set title to \"{}\"", id, t));
+                }
+                if clear_background {
+                    operations.push(format!("Update task #{}: clear background", id));
+                } else if let Some(ref bg) = background {
+                    operations.push(format!("Update task #{}: set background to \"{}\"", id, bg));
+                }
+                if clear_details {
+                    operations.push(format!("Update task #{}: clear details", id));
+                } else if let Some(ref det) = details {
+                    operations.push(format!("Update task #{}: set details to \"{}\"", id, det));
+                }
+                if let Some(ref p) = priority {
+                    operations.push(format!("Update task #{}: set priority to {}", id, p));
+                }
+                if let Some(ref s) = status {
+                    operations.push(format!("Update task #{}: set status to {}", id, s));
+                }
+                if let Some(ref tags) = set_tags {
+                    operations.push(format!("Update task #{}: set tags to [{}]", id, tags.join(", ")));
+                }
+                if !add_tag.is_empty() {
+                    operations.push(format!("Update task #{}: add tags [{}]", id, add_tag.join(", ")));
+                }
+                if !remove_tag.is_empty() {
+                    operations.push(format!("Update task #{}: remove tags [{}]", id, remove_tag.join(", ")));
+                }
+                if operations.is_empty() {
+                    operations.push(format!("Update task #{}: no changes", id));
+                }
+                return print_dry_run(&output_format, &DryRunOperation { command: "edit".into(), operations });
+            }
 
             let scalar_params = UpdateTaskParams {
                 title,
@@ -385,6 +448,36 @@ fn cmd_add(
             dependencies: depends_on,
         }
     };
+
+    if cli.dry_run {
+        let mut operations = vec![format!("Create task with title \"{}\"", params.title)];
+        if let Some(ref p) = params.priority {
+            operations.push(format!("Set priority to {}", p));
+        }
+        if let Some(ref bg) = params.background {
+            operations.push(format!("Set background to \"{}\"", bg));
+        }
+        if let Some(ref det) = params.details {
+            operations.push(format!("Set details to \"{}\"", det));
+        }
+        if !params.tags.is_empty() {
+            operations.push(format!("Set tags: {}", params.tags.join(", ")));
+        }
+        if !params.dependencies.is_empty() {
+            let deps: Vec<String> = params.dependencies.iter().map(|d| format!("#{d}")).collect();
+            operations.push(format!("Set dependencies: {}", deps.join(", ")));
+        }
+        if !params.definition_of_done.is_empty() {
+            operations.push(format!("Set definition of done: {}", params.definition_of_done.join(", ")));
+        }
+        if !params.in_scope.is_empty() {
+            operations.push(format!("Set in scope: {}", params.in_scope.join(", ")));
+        }
+        if !params.out_of_scope.is_empty() {
+            operations.push(format!("Set out of scope: {}", params.out_of_scope.join(", ")));
+        }
+        return print_dry_run(&cli.output, &DryRunOperation { command: "add".into(), operations });
+    }
 
     let task = db::create_task(&conn, &params)?;
 
@@ -518,6 +611,17 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
 
     let task = db::next_task(&conn)?.ok_or_else(|| anyhow::anyhow!("no eligible task found"))?;
 
+    if cli.dry_run {
+        let mut operations = vec![
+            format!("Start next eligible task #{}: \"{}\"", task.id, task.title),
+            format!("Change status: {} → in_progress", task.status),
+        ];
+        if let Some(ref sid) = session_id {
+            operations.push(format!("Set assignee_session_id to \"{}\"", sid));
+        }
+        return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
+    }
+
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let updated = db::update_task(
         &conn,
@@ -555,6 +659,13 @@ fn cmd_complete(cli: &Cli, id: i64) -> Result<()> {
     let task = db::get_task(&conn, id)?;
     task.status.transition_to(TaskStatus::Completed)?;
 
+    if cli.dry_run {
+        let operations = vec![
+            format!("Complete task #{} (status: {} → completed)", id, task.status),
+        ];
+        return print_dry_run(&cli.output, &DryRunOperation { command: "complete".into(), operations });
+    }
+
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let updated = db::update_task(
         &conn,
@@ -591,6 +702,16 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
 
     let task = db::get_task(&conn, id)?;
     task.status.transition_to(TaskStatus::Canceled)?;
+
+    if cli.dry_run {
+        let mut operations = vec![
+            format!("Cancel task #{} (status: {} → canceled)", id, task.status),
+        ];
+        if let Some(ref r) = reason {
+            operations.push(format!("Set cancel reason: \"{}\"", r));
+        }
+        return print_dry_run(&cli.output, &DryRunOperation { command: "cancel".into(), operations });
+    }
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let updated = db::update_task(
@@ -632,6 +753,10 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     match command {
         DepsCommand::Add { task_id, on } => {
             let (task_id, on) = (*task_id, *on);
+            if cli.dry_run {
+                let operations = vec![format!("Add dependency: task #{} depends on #{}", task_id, on)];
+                return print_dry_run(&cli.output, &DryRunOperation { command: "deps add".into(), operations });
+            }
             let task = db::add_dependency(&conn, task_id, on)?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
@@ -640,6 +765,10 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
         }
         DepsCommand::Remove { task_id, on } => {
             let (task_id, on) = (*task_id, *on);
+            if cli.dry_run {
+                let operations = vec![format!("Remove dependency: task #{} no longer depends on #{}", task_id, on)];
+                return print_dry_run(&cli.output, &DryRunOperation { command: "deps remove".into(), operations });
+            }
             let task = db::remove_dependency(&conn, task_id, on)?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
@@ -648,6 +777,11 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
         }
         DepsCommand::Set { task_id, on } => {
             let task_id = *task_id;
+            if cli.dry_run {
+                let dep_strs: Vec<String> = on.iter().map(|d| format!("#{d}")).collect();
+                let operations = vec![format!("Set dependencies for task #{}: [{}]", task_id, dep_strs.join(", "))];
+                return print_dry_run(&cli.output, &DryRunOperation { command: "deps set".into(), operations });
+            }
             let task = db::set_dependencies(&conn, task_id, on)?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
@@ -662,6 +796,7 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
             }
         }
         DepsCommand::List { task_id } => {
+            // Read-only: ignore --dry-run
             let deps = db::list_dependencies(&conn, *task_id)?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&deps)?),
@@ -679,6 +814,17 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
 const SKILL_MD_CONTENT: &str = include_str!("skill_md.txt");
 
 fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool) -> Result<()> {
+    if cli.dry_run {
+        let path = if let Some(ref dir) = output_dir {
+            dir.join("SKILL.md")
+        } else {
+            let project_root = resolve_project_root(cli.project_root.as_deref())?;
+            project_root.join(".claude").join("skills").join("localflow").join("SKILL.md")
+        };
+        let operations = vec![format!("Write SKILL.md to {}", path.display())];
+        return print_dry_run(&cli.output, &DryRunOperation { command: "skill-install".into(), operations });
+    }
+
     if let Some(dir) = output_dir {
         let path = dir.join("SKILL.md");
         fs::write(&path, SKILL_MD_CONTENT)?;
@@ -838,6 +984,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            dry_run: false,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -886,6 +1033,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            dry_run: false,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -928,6 +1076,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            dry_run: false,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -969,6 +1118,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            dry_run: false,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -1009,6 +1159,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Json,
             project_root: Some(tmp.path().to_path_buf()),
+            dry_run: false,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -1303,6 +1454,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: None,
+            dry_run: false,
             command: Command::SkillInstall {
                 output_dir: Some(dir.path().to_path_buf()),
                 yes: false,
@@ -1320,6 +1472,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            dry_run: false,
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: true,
@@ -1347,6 +1500,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            dry_run: false,
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: false,
@@ -1372,6 +1526,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            dry_run: false,
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: true,
