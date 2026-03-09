@@ -61,7 +61,7 @@ assert_eq "new1,new2" "$TAGS" "set-tags replaces all"
 echo "[4] Array field operations (definition_of_done)"
 
 OUT="$(run_lf --output json edit "$TASK_ID" --add-definition-of-done "item1")"
-DOD="$(echo "$OUT" | jq -r '.definition_of_done | join(",")')"
+DOD="$(echo "$OUT" | jq -r '[.definition_of_done[].content] | join(",")')"
 assert_eq "item1" "$DOD" "add-definition-of-done item1"
 
 OUT="$(run_lf --output json edit "$TASK_ID" --remove-definition-of-done "item1")"

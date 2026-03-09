@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::models::{
-    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
+    CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
     UpdateTaskParams,
 };
 
@@ -20,6 +20,7 @@ pub fn open_db(project_root: &Path) -> Result<Connection> {
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
 
     create_schema(&conn)?;
+    migrate_dod_checked(&conn)?;
 
     warn_if_not_gitignored(project_root);
 
@@ -45,6 +46,19 @@ fn warn_if_not_gitignored(project_root: &Path) {
     }
 }
 
+fn migrate_dod_checked(conn: &Connection) -> Result<()> {
+    let has_checked: bool = conn
+        .prepare("PRAGMA table_info(task_definition_of_done)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .any(|name| name.as_deref() == Ok("checked"));
+    if !has_checked {
+        conn.execute_batch(
+            "ALTER TABLE task_definition_of_done ADD COLUMN checked INTEGER NOT NULL DEFAULT 0",
+        )?;
+    }
+    Ok(())
+}
+
 fn create_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
@@ -68,6 +82,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             task_id INTEGER NOT NULL,
             content TEXT NOT NULL,
+            checked INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
         );
 
@@ -168,11 +183,7 @@ pub fn get_task(conn: &Connection, id: i64) -> Result<Task> {
     let status: TaskStatus = status_str.parse()?;
     let priority = Priority::try_from(priority_val)?;
 
-    let definition_of_done = query_string_list(
-        conn,
-        "SELECT content FROM task_definition_of_done WHERE task_id = ?1",
-        id,
-    )?;
+    let definition_of_done = query_dod_list(conn, id)?;
     let in_scope = query_string_list(
         conn,
         "SELECT content FROM task_in_scope WHERE task_id = ?1",
@@ -572,6 +583,63 @@ pub fn list_dependencies(conn: &Connection, task_id: i64) -> Result<Vec<Task>> {
     Ok(tasks)
 }
 
+fn query_dod_list(conn: &Connection, task_id: i64) -> Result<Vec<DodItem>> {
+    let mut stmt = conn.prepare(
+        "SELECT content, checked FROM task_definition_of_done WHERE task_id = ?1 ORDER BY id",
+    )?;
+    let items = stmt
+        .query_map(params![task_id], |row| {
+            Ok(DodItem {
+                content: row.get(0)?,
+                checked: row.get::<_, i32>(1)? != 0,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(items)
+}
+
+pub fn check_dod(conn: &Connection, task_id: i64, index: usize) -> Result<Task> {
+    set_dod_checked(conn, task_id, index, true)
+}
+
+pub fn uncheck_dod(conn: &Connection, task_id: i64, index: usize) -> Result<Task> {
+    set_dod_checked(conn, task_id, index, false)
+}
+
+fn set_dod_checked(conn: &Connection, task_id: i64, index: usize, checked: bool) -> Result<Task> {
+    // Verify task exists
+    get_task(conn, task_id).context("task not found")?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id FROM task_definition_of_done WHERE task_id = ?1 ORDER BY id",
+    )?;
+    let ids: Vec<i64> = stmt
+        .query_map(params![task_id], |row| row.get(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    if index == 0 || index > ids.len() {
+        anyhow::bail!(
+            "DoD index {} out of range (task #{} has {} DoD item(s))",
+            index,
+            task_id,
+            ids.len()
+        );
+    }
+
+    let row_id = ids[index - 1];
+    let checked_val: i32 = if checked { 1 } else { 0 };
+    conn.execute(
+        "UPDATE task_definition_of_done SET checked = ?1 WHERE id = ?2",
+        params![checked_val, row_id],
+    )?;
+    conn.execute(
+        "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+        params![task_id],
+    )?;
+
+    get_task(conn, task_id)
+}
+
 fn query_string_list(conn: &Connection, sql: &str, task_id: i64) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(sql)?;
     let items: Vec<String> = stmt
@@ -690,7 +758,13 @@ mod tests {
         assert_eq!(task.details.as_deref(), Some("det"));
         assert_eq!(task.priority, Priority::P1);
         assert_eq!(task.status, TaskStatus::Draft);
-        assert_eq!(task.definition_of_done, vec!["done1", "done2"]);
+        assert_eq!(
+            task.definition_of_done,
+            vec![
+                DodItem { content: "done1".to_string(), checked: false },
+                DodItem { content: "done2".to_string(), checked: false },
+            ]
+        );
         assert_eq!(task.in_scope, vec!["scope1"]);
         assert_eq!(task.out_of_scope, vec!["out1"]);
         assert_eq!(task.tags.len(), 2);
@@ -1187,7 +1261,13 @@ mod tests {
         .unwrap();
 
         let updated = get_task(&conn, task.id).unwrap();
-        assert_eq!(updated.definition_of_done, vec!["new1", "new2"]);
+        assert_eq!(
+            updated.definition_of_done,
+            vec![
+                DodItem { content: "new1".to_string(), checked: false },
+                DodItem { content: "new2".to_string(), checked: false },
+            ]
+        );
     }
 
     #[test]
@@ -1570,5 +1650,56 @@ mod tests {
         )
         .unwrap();
         assert!(updated.background.is_none());
+    }
+
+    #[test]
+    fn check_and_uncheck_dod() {
+        let (_tmp, conn) = setup();
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                definition_of_done: vec!["item1".to_string(), "item2".to_string()],
+                ..default_create_params("t")
+            },
+        )
+        .unwrap();
+
+        // Check first item
+        let updated = check_dod(&conn, task.id, 1).unwrap();
+        assert!(updated.definition_of_done[0].checked);
+        assert!(!updated.definition_of_done[1].checked);
+
+        // Check second item
+        let updated = check_dod(&conn, task.id, 2).unwrap();
+        assert!(updated.definition_of_done[0].checked);
+        assert!(updated.definition_of_done[1].checked);
+
+        // Uncheck first item
+        let updated = uncheck_dod(&conn, task.id, 1).unwrap();
+        assert!(!updated.definition_of_done[0].checked);
+        assert!(updated.definition_of_done[1].checked);
+    }
+
+    #[test]
+    fn check_dod_index_out_of_range() {
+        let (_tmp, conn) = setup();
+        let task = create_task(
+            &conn,
+            &CreateTaskParams {
+                definition_of_done: vec!["item1".to_string()],
+                ..default_create_params("t")
+            },
+        )
+        .unwrap();
+
+        assert!(check_dod(&conn, task.id, 0).is_err());
+        assert!(check_dod(&conn, task.id, 2).is_err());
+    }
+
+    #[test]
+    fn check_dod_empty_list() {
+        let (_tmp, conn) = setup();
+        let task = create_task(&conn, &default_create_params("t")).unwrap();
+        assert!(check_dod(&conn, task.id, 1).is_err());
     }
 }

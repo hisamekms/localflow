@@ -123,6 +123,12 @@ impl FromStr for Priority {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DodItem {
+    pub content: String,
+    pub checked: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: i64,
@@ -138,7 +144,7 @@ pub struct Task {
     pub completed_at: Option<String>,
     pub canceled_at: Option<String>,
     pub cancel_reason: Option<String>,
-    pub definition_of_done: Vec<String>,
+    pub definition_of_done: Vec<DodItem>,
     pub in_scope: Vec<String>,
     pub out_of_scope: Vec<String>,
     pub tags: Vec<String>,

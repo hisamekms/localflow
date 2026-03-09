@@ -51,7 +51,7 @@ assert_json_field "$ADD_FULL" '.details' "det" "full: details"
 TAGS="$(echo "$ADD_FULL" | jq -c '.tags')"
 assert_eq '["t1","t2"]' "$TAGS" "full: tags"
 
-DOD="$(echo "$ADD_FULL" | jq -c '.definition_of_done')"
+DOD="$(echo "$ADD_FULL" | jq -c '[.definition_of_done[].content]')"
 assert_eq '["dod1","dod2"]' "$DOD" "full: definition_of_done"
 
 IN_SCOPE="$(echo "$ADD_FULL" | jq -c '.in_scope')"
@@ -92,7 +92,7 @@ assert_json_field "$ADD_FILE" '.title' "From JSON File" "from-json-file: title"
 assert_json_field "$ADD_FILE" '.details' "file-details" "from-json-file: details"
 assert_json_field "$ADD_FILE" '.priority' "P3" "from-json-file: priority"
 
-FILE_DOD="$(echo "$ADD_FILE" | jq -c '.definition_of_done')"
+FILE_DOD="$(echo "$ADD_FILE" | jq -c '[.definition_of_done[].content]')"
 assert_eq '["done1"]' "$FILE_DOD" "from-json-file: definition_of_done"
 
 # 5. Error cases

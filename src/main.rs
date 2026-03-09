@@ -157,6 +157,11 @@ enum Command {
         #[arg(long)]
         reason: Option<String>,
     },
+    /// Manage Definition of Done items
+    Dod {
+        #[command(subcommand)]
+        command: DodCommand,
+    },
     /// Manage task dependencies
     Deps {
         #[command(subcommand)]
@@ -203,6 +208,24 @@ enum DepsCommand {
     List {
         /// Task ID
         task_id: i64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DodCommand {
+    /// Mark a DoD item as checked
+    Check {
+        /// Task ID
+        task_id: i64,
+        /// DoD item index (1-based)
+        index: usize,
+    },
+    /// Unmark a DoD item
+    Uncheck {
+        /// Task ID
+        task_id: i64,
+        /// DoD item index (1-based)
+        index: usize,
     },
 }
 
@@ -410,6 +433,7 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Complete { id } => cmd_complete(&cli, id),
         Command::Cancel { id, ref reason } => cmd_cancel(&cli, id, reason.clone()),
+        Command::Dod { ref command } => cmd_dod(&cli, command),
         Command::Deps { ref command } => cmd_deps(&cli, command),
         Command::SkillInstall { ref output_dir, yes } => {
             skill_install(&cli, output_dir.clone(), yes)
@@ -588,7 +612,8 @@ fn cmd_get(
             if !task.definition_of_done.is_empty() {
                 println!("DoD:");
                 for item in &task.definition_of_done {
-                    println!("  - {item}");
+                    let mark = if item.checked { "x" } else { " " };
+                    println!("  [{mark}] {}", item.content);
                 }
             }
             if !task.in_scope.is_empty() {
@@ -676,6 +701,19 @@ fn cmd_complete(cli: &Cli, id: i64) -> Result<()> {
     let task = db::get_task(&conn, id)?;
     task.status.transition_to(TaskStatus::Completed)?;
 
+    let unchecked: Vec<_> = task
+        .definition_of_done
+        .iter()
+        .filter(|d| !d.checked)
+        .collect();
+    if !unchecked.is_empty() {
+        bail!(
+            "cannot complete task #{}: {} unchecked DoD item(s)",
+            id,
+            unchecked.len()
+        );
+    }
+
     if cli.dry_run {
         let operations = vec![
             format!("Complete task #{} (status: {} → completed)", id, task.status),
@@ -761,6 +799,66 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let conn = db::open_db(&root)?;
+
+    match command {
+        DodCommand::Check { task_id, index } => {
+            let (task_id, index) = (*task_id, *index);
+            if cli.dry_run {
+                let operations =
+                    vec![format!("Check DoD item #{index} of task #{task_id}")];
+                return print_dry_run(
+                    &cli.output,
+                    &DryRunOperation {
+                        command: "dod check".into(),
+                        operations,
+                    },
+                );
+            }
+            let task = db::check_dod(&conn, task_id, index)?;
+            match cli.output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
+                OutputFormat::Text => {
+                    println!("Checked DoD item #{index} of task #{task_id}");
+                    print_dod_items(&task.definition_of_done);
+                }
+            }
+        }
+        DodCommand::Uncheck { task_id, index } => {
+            let (task_id, index) = (*task_id, *index);
+            if cli.dry_run {
+                let operations =
+                    vec![format!("Uncheck DoD item #{index} of task #{task_id}")];
+                return print_dry_run(
+                    &cli.output,
+                    &DryRunOperation {
+                        command: "dod uncheck".into(),
+                        operations,
+                    },
+                );
+            }
+            let task = db::uncheck_dod(&conn, task_id, index)?;
+            match cli.output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
+                OutputFormat::Text => {
+                    println!("Unchecked DoD item #{index} of task #{task_id}");
+                    print_dod_items(&task.definition_of_done);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_dod_items(items: &[localflow::models::DodItem]) {
+    for item in items {
+        let mark = if item.checked { "x" } else { " " };
+        println!("  [{mark}] {}", item.content);
+    }
 }
 
 fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
@@ -1037,7 +1135,10 @@ mod tests {
         assert_eq!(task.title, "test task");
         assert_eq!(task.background.as_deref(), Some("bg"));
         assert_eq!(task.priority, localflow::models::Priority::P1);
-        assert_eq!(task.definition_of_done, vec!["done"]);
+        assert_eq!(
+            task.definition_of_done,
+            vec![localflow::models::DodItem { content: "done".to_string(), checked: false }]
+        );
         assert_eq!(task.tags, vec!["rust"]);
     }
 
