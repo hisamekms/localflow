@@ -334,11 +334,11 @@ pub fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayPa
     }
 
     // definition_of_done
-    update_content_array(conn, id, "task_definition_of_done", &params.set_definition_of_done, &params.add_definition_of_done, &params.remove_definition_of_done)?;
+    update_content_array(conn, id, ContentTable::DefinitionOfDone, &params.set_definition_of_done, &params.add_definition_of_done, &params.remove_definition_of_done)?;
     // in_scope
-    update_content_array(conn, id, "task_in_scope", &params.set_in_scope, &params.add_in_scope, &params.remove_in_scope)?;
+    update_content_array(conn, id, ContentTable::InScope, &params.set_in_scope, &params.add_in_scope, &params.remove_in_scope)?;
     // out_of_scope
-    update_content_array(conn, id, "task_out_of_scope", &params.set_out_of_scope, &params.add_out_of_scope, &params.remove_out_of_scope)?;
+    update_content_array(conn, id, ContentTable::OutOfScope, &params.set_out_of_scope, &params.add_out_of_scope, &params.remove_out_of_scope)?;
 
     // Touch updated_at
     let has_changes = params.set_tags.is_some()
@@ -364,14 +364,31 @@ pub fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayPa
     Ok(())
 }
 
+enum ContentTable {
+    DefinitionOfDone,
+    InScope,
+    OutOfScope,
+}
+
+impl ContentTable {
+    fn as_str(&self) -> &'static str {
+        match self {
+            ContentTable::DefinitionOfDone => "task_definition_of_done",
+            ContentTable::InScope => "task_in_scope",
+            ContentTable::OutOfScope => "task_out_of_scope",
+        }
+    }
+}
+
 fn update_content_array(
     conn: &Connection,
     task_id: i64,
-    table: &str,
+    table: ContentTable,
     set: &Option<Vec<String>>,
     add: &[String],
     remove: &[String],
 ) -> Result<()> {
+    let table = table.as_str();
     if let Some(values) = set {
         conn.execute(&format!("DELETE FROM {table} WHERE task_id = ?1"), params![task_id])?;
         for item in values {
