@@ -1,3 +1,4 @@
+use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -424,6 +425,130 @@ pub fn next_task(conn: &Connection) -> Result<Option<Task>> {
         Some(id) => Ok(Some(get_task(conn, id)?)),
         None => Ok(None),
     }
+}
+
+/// Check if adding dep_id as a dependency of task_id would create a cycle.
+/// Performs BFS from dep_id following its dependencies; if task_id is reachable, it's a cycle.
+fn has_cycle(conn: &Connection, task_id: i64, dep_id: i64) -> Result<bool> {
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::new();
+    queue.push_back(dep_id);
+    visited.insert(dep_id);
+
+    while let Some(current) = queue.pop_front() {
+        let deps = query_i64_list(
+            conn,
+            "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?1",
+            current,
+        )?;
+        for d in deps {
+            if d == task_id {
+                return Ok(true);
+            }
+            if visited.insert(d) {
+                queue.push_back(d);
+            }
+        }
+    }
+    Ok(false)
+}
+
+pub fn add_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Task> {
+    if task_id == dep_id {
+        anyhow::bail!("a task cannot depend on itself");
+    }
+    // Verify both tasks exist
+    get_task(conn, task_id).context("task not found")?;
+    get_task(conn, dep_id).context("dependency task not found")?;
+    // Cycle check
+    if has_cycle(conn, task_id, dep_id)? {
+        anyhow::bail!("adding this dependency would create a cycle");
+    }
+    conn.execute(
+        "INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
+        params![task_id, dep_id],
+    )?;
+    conn.execute(
+        "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+        params![task_id],
+    )?;
+    get_task(conn, task_id)
+}
+
+pub fn remove_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Task> {
+    get_task(conn, task_id).context("task not found")?;
+    let affected = conn.execute(
+        "DELETE FROM task_dependencies WHERE task_id = ?1 AND depends_on_task_id = ?2",
+        params![task_id, dep_id],
+    )?;
+    if affected == 0 {
+        anyhow::bail!("dependency not found: task {} does not depend on {}", task_id, dep_id);
+    }
+    conn.execute(
+        "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+        params![task_id],
+    )?;
+    get_task(conn, task_id)
+}
+
+pub fn set_dependencies(conn: &Connection, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
+    // Self-dependency check
+    for &dep_id in dep_ids {
+        if dep_id == task_id {
+            anyhow::bail!("a task cannot depend on itself");
+        }
+    }
+    // Verify task exists
+    get_task(conn, task_id).context("task not found")?;
+    // Verify all deps exist
+    for &dep_id in dep_ids {
+        get_task(conn, dep_id).with_context(|| format!("dependency task not found: {}", dep_id))?;
+    }
+
+    conn.execute_batch("BEGIN")?;
+
+    // Delete all existing dependencies
+    if let Err(e) = (|| -> Result<()> {
+        conn.execute(
+            "DELETE FROM task_dependencies WHERE task_id = ?1",
+            params![task_id],
+        )?;
+        // Insert each new dependency with cycle check
+        for &dep_id in dep_ids {
+            if has_cycle(conn, task_id, dep_id)? {
+                anyhow::bail!("adding dependency on {} would create a cycle", dep_id);
+            }
+            conn.execute(
+                "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
+                params![task_id, dep_id],
+            )?;
+        }
+        Ok(())
+    })() {
+        conn.execute_batch("ROLLBACK")?;
+        return Err(e);
+    }
+
+    conn.execute(
+        "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+        params![task_id],
+    )?;
+    conn.execute_batch("COMMIT")?;
+    get_task(conn, task_id)
+}
+
+pub fn list_dependencies(conn: &Connection, task_id: i64) -> Result<Vec<Task>> {
+    get_task(conn, task_id).context("task not found")?;
+    let dep_ids = query_i64_list(
+        conn,
+        "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?1",
+        task_id,
+    )?;
+    let mut tasks = Vec::with_capacity(dep_ids.len());
+    for id in dep_ids {
+        tasks.push(get_task(conn, id)?);
+    }
+    Ok(tasks)
 }
 
 fn query_string_list(conn: &Connection, sql: &str, task_id: i64) -> Result<Vec<String>> {
@@ -1220,6 +1345,176 @@ mod tests {
 
         let result = next_task(&conn).unwrap().unwrap();
         assert_eq!(result.title, "ready");
+    }
+
+    // --- Dependency tests ---
+
+    #[test]
+    fn add_dependency_basic() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("task1")).unwrap();
+        let t2 = create_task(&conn, &default_create_params("task2")).unwrap();
+
+        let updated = add_dependency(&conn, t1.id, t2.id).unwrap();
+        assert!(updated.dependencies.contains(&t2.id));
+    }
+
+    #[test]
+    fn add_dependency_self_error() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("task1")).unwrap();
+        let result = add_dependency(&conn, t1.id, t1.id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("itself"));
+    }
+
+    #[test]
+    fn add_dependency_nonexistent_task() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("task1")).unwrap();
+        assert!(add_dependency(&conn, t1.id, 999).is_err());
+        assert!(add_dependency(&conn, 999, t1.id).is_err());
+    }
+
+    #[test]
+    fn add_dependency_cycle_direct() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+
+        add_dependency(&conn, t1.id, t2.id).unwrap();
+        let result = add_dependency(&conn, t2.id, t1.id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cycle"));
+    }
+
+    #[test]
+    fn add_dependency_cycle_indirect() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+        let t3 = create_task(&conn, &default_create_params("t3")).unwrap();
+
+        add_dependency(&conn, t1.id, t2.id).unwrap();
+        add_dependency(&conn, t2.id, t3.id).unwrap();
+        let result = add_dependency(&conn, t3.id, t1.id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cycle"));
+    }
+
+    #[test]
+    fn add_dependency_idempotent() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+
+        add_dependency(&conn, t1.id, t2.id).unwrap();
+        let result = add_dependency(&conn, t1.id, t2.id);
+        assert!(result.is_ok());
+        let task = result.unwrap();
+        assert_eq!(task.dependencies.len(), 1);
+    }
+
+    #[test]
+    fn remove_dependency_basic() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+
+        add_dependency(&conn, t1.id, t2.id).unwrap();
+        let updated = remove_dependency(&conn, t1.id, t2.id).unwrap();
+        assert!(updated.dependencies.is_empty());
+    }
+
+    #[test]
+    fn remove_dependency_nonexistent() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+
+        let result = remove_dependency(&conn, t1.id, t2.id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("dependency not found"));
+    }
+
+    #[test]
+    fn set_dependencies_basic() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+        let t3 = create_task(&conn, &default_create_params("t3")).unwrap();
+
+        let updated = set_dependencies(&conn, t1.id, &[t2.id, t3.id]).unwrap();
+        assert_eq!(updated.dependencies.len(), 2);
+        assert!(updated.dependencies.contains(&t2.id));
+        assert!(updated.dependencies.contains(&t3.id));
+    }
+
+    #[test]
+    fn set_dependencies_replace() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+        let t3 = create_task(&conn, &default_create_params("t3")).unwrap();
+
+        set_dependencies(&conn, t1.id, &[t2.id]).unwrap();
+        let updated = set_dependencies(&conn, t1.id, &[t3.id]).unwrap();
+        assert_eq!(updated.dependencies, vec![t3.id]);
+    }
+
+    #[test]
+    fn set_dependencies_empty() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+
+        add_dependency(&conn, t1.id, t2.id).unwrap();
+        let updated = set_dependencies(&conn, t1.id, &[]).unwrap();
+        assert!(updated.dependencies.is_empty());
+    }
+
+    #[test]
+    fn set_dependencies_cycle_error_rollback() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+        let t3 = create_task(&conn, &default_create_params("t3")).unwrap();
+
+        // t2 -> t1
+        add_dependency(&conn, t2.id, t1.id).unwrap();
+        // Try to set t1 -> [t3, t2] — t1->t2 would create cycle (t2->t1->t2)
+        let result = set_dependencies(&conn, t1.id, &[t3.id, t2.id]);
+        assert!(result.is_err());
+
+        // Original state should be preserved (no deps on t1)
+        let task = get_task(&conn, t1.id).unwrap();
+        assert!(task.dependencies.is_empty());
+    }
+
+    #[test]
+    fn list_dependencies_basic() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+        let t3 = create_task(&conn, &default_create_params("t3")).unwrap();
+
+        add_dependency(&conn, t1.id, t2.id).unwrap();
+        add_dependency(&conn, t1.id, t3.id).unwrap();
+
+        let deps = list_dependencies(&conn, t1.id).unwrap();
+        assert_eq!(deps.len(), 2);
+        let dep_ids: Vec<i64> = deps.iter().map(|t| t.id).collect();
+        assert!(dep_ids.contains(&t2.id));
+        assert!(dep_ids.contains(&t3.id));
+    }
+
+    #[test]
+    fn list_dependencies_empty() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+
+        let deps = list_dependencies(&conn, t1.id).unwrap();
+        assert!(deps.is_empty());
     }
 
     #[test]

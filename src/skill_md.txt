@@ -39,9 +39,21 @@
 
 タスクをキャンセルする。
 
-### `localflow deps`
+### `localflow deps add <TASK_ID> --on <DEP_ID>`
 
-タスクの依存関係を管理する。
+タスクに依存関係を追加する。循環依存・自己依存はエラーになる。
+
+### `localflow deps remove <TASK_ID> --on <DEP_ID>`
+
+タスクの依存関係を削除する。
+
+### `localflow deps set <TASK_ID> --on <DEP_ID>...`
+
+タスクの依存関係を全置換する。既存の依存をすべて削除し、指定したIDで再設定する。
+
+### `localflow deps list <TASK_ID>`
+
+タスクの依存先タスク一覧を表示する。
 
 ### `localflow skill-install`
 

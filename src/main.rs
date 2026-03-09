@@ -148,12 +148,48 @@ enum Command {
         reason: Option<String>,
     },
     /// Manage task dependencies
-    Deps,
+    Deps {
+        #[command(subcommand)]
+        command: DepsCommand,
+    },
     /// Install a skill
     SkillInstall {
         /// Output directory for SKILL.md
         #[arg(long)]
         output_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DepsCommand {
+    /// Add a dependency
+    Add {
+        /// Task ID
+        task_id: i64,
+        /// Dependency task ID
+        #[arg(long)]
+        on: i64,
+    },
+    /// Remove a dependency
+    Remove {
+        /// Task ID
+        task_id: i64,
+        /// Dependency task ID
+        #[arg(long)]
+        on: i64,
+    },
+    /// Replace all dependencies
+    Set {
+        /// Task ID
+        task_id: i64,
+        /// Dependency task IDs
+        #[arg(long, num_args = 1..)]
+        on: Vec<i64>,
+    },
+    /// List dependencies
+    List {
+        /// Task ID
+        task_id: i64,
     },
 }
 
@@ -291,7 +327,7 @@ fn main() -> Result<()> {
         }
         Command::Complete { id } => cmd_complete(&cli, id),
         Command::Cancel { id, ref reason } => cmd_cancel(&cli, id, reason.clone()),
-        Command::Deps => todo!("deps"),
+        Command::Deps { ref command } => cmd_deps(&cli, command),
         Command::SkillInstall { output_dir } => skill_install(output_dir),
     }
 }
@@ -581,6 +617,57 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let conn = db::open_db(&root)?;
+
+    match command {
+        DepsCommand::Add { task_id, on } => {
+            let (task_id, on) = (*task_id, *on);
+            let task = db::add_dependency(&conn, task_id, on)?;
+            match cli.output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
+                OutputFormat::Text => println!("Added dependency: task #{} depends on #{}", task_id, on),
+            }
+        }
+        DepsCommand::Remove { task_id, on } => {
+            let (task_id, on) = (*task_id, *on);
+            let task = db::remove_dependency(&conn, task_id, on)?;
+            match cli.output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
+                OutputFormat::Text => println!("Removed dependency: task #{} no longer depends on #{}", task_id, on),
+            }
+        }
+        DepsCommand::Set { task_id, on } => {
+            let task_id = *task_id;
+            let task = db::set_dependencies(&conn, task_id, on)?;
+            match cli.output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
+                OutputFormat::Text => {
+                    if task.dependencies.is_empty() {
+                        println!("Cleared all dependencies for task #{}", task_id);
+                    } else {
+                        let dep_strs: Vec<String> = task.dependencies.iter().map(|d| format!("#{d}")).collect();
+                        println!("Set dependencies for task #{}: {}", task_id, dep_strs.join(", "));
+                    }
+                }
+            }
+        }
+        DepsCommand::List { task_id } => {
+            let deps = db::list_dependencies(&conn, *task_id)?;
+            match cli.output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&deps)?),
+                OutputFormat::Text => {
+                    for task in &deps {
+                        println!("[{}] #{} {} ({})", task.status, task.id, task.title, task.priority);
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1084,9 +1171,50 @@ mod tests {
     }
 
     #[test]
-    fn parse_deps_subcommand() {
-        let cli = Cli::parse_from(["localflow", "deps"]);
-        assert!(matches!(cli.command, Command::Deps));
+    fn parse_deps_add() {
+        let cli = Cli::parse_from(["localflow", "deps", "add", "1", "--on", "2"]);
+        match cli.command {
+            Command::Deps { command: DepsCommand::Add { task_id, on } } => {
+                assert_eq!(task_id, 1);
+                assert_eq!(on, 2);
+            }
+            _ => panic!("expected Deps Add"),
+        }
+    }
+
+    #[test]
+    fn parse_deps_remove() {
+        let cli = Cli::parse_from(["localflow", "deps", "remove", "3", "--on", "4"]);
+        match cli.command {
+            Command::Deps { command: DepsCommand::Remove { task_id, on } } => {
+                assert_eq!(task_id, 3);
+                assert_eq!(on, 4);
+            }
+            _ => panic!("expected Deps Remove"),
+        }
+    }
+
+    #[test]
+    fn parse_deps_set() {
+        let cli = Cli::parse_from(["localflow", "deps", "set", "1", "--on", "2", "3", "4"]);
+        match cli.command {
+            Command::Deps { command: DepsCommand::Set { task_id, on } } => {
+                assert_eq!(task_id, 1);
+                assert_eq!(on, vec![2, 3, 4]);
+            }
+            _ => panic!("expected Deps Set"),
+        }
+    }
+
+    #[test]
+    fn parse_deps_list() {
+        let cli = Cli::parse_from(["localflow", "deps", "list", "5"]);
+        match cli.command {
+            Command::Deps { command: DepsCommand::List { task_id } } => {
+                assert_eq!(task_id, 5);
+            }
+            _ => panic!("expected Deps List"),
+        }
     }
 
     #[test]
@@ -1141,7 +1269,10 @@ mod tests {
             "localflow edit",
             "localflow complete",
             "localflow cancel",
-            "localflow deps",
+            "localflow deps add",
+            "localflow deps remove",
+            "localflow deps set",
+            "localflow deps list",
             "localflow skill-install",
         ];
         for cmd in commands {
