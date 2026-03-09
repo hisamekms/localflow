@@ -15,6 +15,8 @@ SQLite-backed, dependency-aware, priority-driven.
 - **Claude Code integration**: `skill-install` generates a skill config for Claude Code
 - **Zero setup**: SQLite database auto-created on first run
 
+> **Note**: localflow stores data in `.localflow/` under your project root. Add `.localflow/` to your `.gitignore` to avoid committing local data.
+
 ## Install
 
 ### Build from source

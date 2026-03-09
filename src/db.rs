@@ -21,7 +21,28 @@ pub fn open_db(project_root: &Path) -> Result<Connection> {
 
     create_schema(&conn)?;
 
+    warn_if_not_gitignored(project_root);
+
     Ok(conn)
+}
+
+fn warn_if_not_gitignored(project_root: &Path) {
+    let gitignore_path = project_root.join(".gitignore");
+    let dominated = match std::fs::read_to_string(&gitignore_path) {
+        Ok(content) => content
+            .lines()
+            .any(|line| {
+                let trimmed = line.trim();
+                trimmed == ".localflow" || trimmed == ".localflow/"
+            }),
+        Err(_) => false,
+    };
+    if !dominated {
+        eprintln!(
+            "warning: .localflow/ is not in .gitignore. \
+             Add \".localflow/\" to your .gitignore to avoid committing local data."
+        );
+    }
 }
 
 fn create_schema(conn: &Connection) -> Result<()> {
