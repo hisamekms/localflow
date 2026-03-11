@@ -318,6 +318,15 @@ select {{ padding: 0.35rem 0.5rem; border-radius: 4px; border: 1px solid #ccc; }
 .filter-label {{ font-weight: 600; font-size: 0.85rem; color: #555; min-width: 60px; }}
 .filter-options {{ display: flex; gap: 0.75rem; flex-wrap: wrap; }}
 .filter-checkbox {{ font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; gap: 0.25rem; }}
+.filter-badge {{ position: relative; display: inline-block; }}
+.filter-badge input[type="checkbox"] {{ position: absolute; opacity: 0; pointer-events: none; }}
+.filter-badge .badge {{ cursor: pointer; opacity: 0.4; background: #e0e0e0; color: #888; transition: opacity 0.15s; }}
+.filter-badge input[type="checkbox"]:checked + .badge {{ opacity: 1; }}
+.filter-badge input[type="checkbox"]:checked + .status-draft {{ background: #e0e0e0; color: #555; }}
+.filter-badge input[type="checkbox"]:checked + .status-todo {{ background: #dbeafe; color: #1e40af; }}
+.filter-badge input[type="checkbox"]:checked + .status-in_progress {{ background: #fef3c7; color: #92400e; }}
+.filter-badge input[type="checkbox"]:checked + .status-completed {{ background: #d1fae5; color: #065f46; }}
+.filter-badge input[type="checkbox"]:checked + .status-canceled {{ background: #fee2e2; color: #991b1b; }}
 .tag-pill {{ display: inline-block; background: #e8e8e8; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.8rem; }}
 .empty {{ text-align: center; padding: 2rem; color: #888; }}
 pre {{ white-space: pre-wrap; word-break: break-word; }}
@@ -362,7 +371,7 @@ fn render_task_list(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> S
                 ""
             };
             format!(
-                r#"<label class="filter-checkbox"><input type="checkbox" name="status" value="{val}" onchange="this.form.submit()"{checked}> {label}</label>"#
+                r#"<label class="filter-badge"><input type="checkbox" name="status" value="{val}" onchange="this.form.submit()"{checked}><span class="badge status-{val}">{label}</span></label>"#
             )
         })
         .collect::<Vec<_>>()
