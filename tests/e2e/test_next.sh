@@ -109,13 +109,47 @@ assert_eq "$BLOCKED_ID" "$NEXT_UNBLOCKED_ID" "next returns blocked task after de
 
 run_lf complete "$BLOCKED_ID" >/dev/null
 
-# 5. No todo tasks: error exit
-echo "[5] Error when no todo tasks"
+# 5. No todo tasks: error exit (all completed)
+echo "[5] Error when all tasks completed"
 
 # All tasks have been completed at this point
 NEXT_EMPTY_OUTPUT="$(run_lf next 2>&1 || true)"
-assert_contains "$NEXT_EMPTY_OUTPUT" "no eligible task" "error message when no todo tasks"
+assert_contains "$NEXT_EMPTY_OUTPUT" "no eligible task" "error message when all tasks completed"
 
+assert_exit_code 1 run_lf next
+
+# 6. All tasks in draft: next should fail
+echo "[6] Error when all tasks in draft"
+
+# Use a fresh environment for isolation
+ORIG_DIR="$TEST_DIR"
+setup_test_env
+
+run_lf add --title "Draft Only 1" >/dev/null
+run_lf add --title "Draft Only 2" >/dev/null
+
+NEXT_DRAFT="$(run_lf next 2>&1 || true)"
+assert_contains "$NEXT_DRAFT" "no eligible task" "error when all tasks are draft"
+assert_exit_code 1 run_lf next
+
+# 7. All todo tasks blocked by dependencies
+echo "[7] Error when all todo tasks are blocked"
+
+setup_test_env
+
+BLOCKER_ID="$(run_lf --output json add --title "Blocker" | jq -r '.id')"
+BLOCKED1_ID="$(run_lf --output json add --title "Blocked 1" | jq -r '.id')"
+BLOCKED2_ID="$(run_lf --output json add --title "Blocked 2" | jq -r '.id')"
+
+run_lf edit "$BLOCKED1_ID" --status todo >/dev/null
+run_lf edit "$BLOCKED2_ID" --status todo >/dev/null
+
+run_lf deps add "$BLOCKED1_ID" --on "$BLOCKER_ID" >/dev/null
+run_lf deps add "$BLOCKED2_ID" --on "$BLOCKER_ID" >/dev/null
+
+# Blocker is still draft, so both todo tasks are blocked
+NEXT_BLOCKED="$(run_lf next 2>&1 || true)"
+assert_contains "$NEXT_BLOCKED" "no eligible task" "error when all todo tasks are blocked by deps"
 assert_exit_code 1 run_lf next
 
 test_summary
