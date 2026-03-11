@@ -290,13 +290,7 @@ Generate a branch name from the task title. Use the `/wth` skill to create a wor
 
 Use `EnterPlanMode` to create an implementation plan. Investigate the codebase based on the task's description.
 
-Wait for the user to approve the plan. After approval, save the plan to the task:
-
-```bash
-localflow edit <id> --plan "The approved implementation plan text"
-```
-
-Include this in the plan:
+Include a Post-completion section in the plan:
 
 ```
 # Post-completion
@@ -312,7 +306,17 @@ Include this in the plan:
 - Delete the worktree (using `/wth` skill)
 ```
 
-#### Step 4: Implement
+Wait for the user to approve the plan.
+
+#### Step 4: Save Plan
+
+After approval, register the plan to the task. This must be done before starting implementation.
+
+```bash
+localflow edit <id> --plan "The approved implementation plan text"
+```
+
+#### Step 5: Implement
 
 Follow the approved plan. Use the standard coding workflow.
 
