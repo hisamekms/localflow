@@ -270,9 +270,8 @@ fn layout(title: &str, body: &str) -> String {
 *, *::before, *::after {{ box-sizing: border-box; }}
 body {{
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 1rem;
+    margin: 0;
+    padding: 0;
     color: #1a1a1a;
     background: #fafafa;
     line-height: 1.5;
@@ -281,7 +280,18 @@ a {{ color: #0066cc; text-decoration: none; }}
 a:hover {{ text-decoration: underline; }}
 h1 {{ font-size: 1.5rem; margin: 0 0 1rem; }}
 h2 {{ font-size: 1.2rem; margin: 1.5rem 0 0.5rem; }}
-nav {{ margin-bottom: 1rem; }}
+.app {{ display: flex; min-height: 100vh; }}
+.sidebar {{ width: 200px; background: #fff; border-right: 1px solid #e0e0e0; padding: 1rem 0; display: flex; flex-direction: column; flex-shrink: 0; transition: width 0.2s; }}
+.sidebar-collapsed .sidebar {{ width: 48px; }}
+.sidebar .logo {{ padding: 0.5rem 1rem; font-weight: 700; font-size: 1.1rem; color: #1a1a1a; text-decoration: none; display: block; white-space: nowrap; overflow: hidden; }}
+.sidebar-collapsed .logo span {{ display: none; }}
+.sidebar .nav-links {{ list-style: none; padding: 0; margin: 1rem 0; }}
+.sidebar .nav-links a {{ display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; color: #555; text-decoration: none; font-size: 0.9rem; white-space: nowrap; overflow: hidden; }}
+.sidebar .nav-links a:hover {{ background: #f0f0f0; color: #1a1a1a; }}
+.sidebar-collapsed .nav-links a span {{ display: none; }}
+.sidebar-toggle {{ background: none; border: none; cursor: pointer; padding: 0.5rem 1rem; color: #888; font-size: 1rem; text-align: left; }}
+.sidebar-toggle:hover {{ color: #1a1a1a; }}
+.main {{ flex: 1; max-width: 900px; padding: 1rem 2rem; }}
 table {{ width: 100%; border-collapse: collapse; }}
 th, td {{ text-align: left; padding: 0.5rem; border-bottom: 1px solid #e0e0e0; }}
 th {{ font-weight: 600; color: #555; font-size: 0.85rem; text-transform: uppercase; }}
@@ -350,8 +360,17 @@ pre {{ white-space: pre-wrap; word-break: break-word; }}
 </style>
 </head>
 <body>
-<nav><a href="/">localflow</a> | <a href="/graph">graph</a></nav>
-{body}
+<div class="app">
+  <aside class="sidebar">
+    <a href="/" class="logo">&#x1f504; <span>localflow</span></a>
+    <ul class="nav-links">
+      <li><a href="/">&#x1f3e0; <span>Home</span></a></li>
+      <li><a href="/graph">&#x1f4ca; <span>Graph</span></a></li>
+    </ul>
+    <button class="sidebar-toggle" onclick="document.body.classList.toggle('sidebar-collapsed')">&#x2630;</button>
+  </aside>
+  <main class="main">{body}</main>
+</div>
 </body>
 </html>"#
     )
