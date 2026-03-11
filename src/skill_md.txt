@@ -305,7 +305,9 @@ Include this in the plan:
   2. For each unchecked item:
      - If achieved: `localflow dod check <id> <index>`
      - If not achieved: go back and implement it
-  3. Once all DoD items are checked, use `AskUserQuestion` to ask the user for completion approval
+  3. All DoD items must be checked before proceeding to PR/merge
+- Create PR and merge (all DoD items must be checked before this step)
+- Use `AskUserQuestion` to ask the user for completion approval
 - Complete the task: `localflow complete <id>`
 - Delete the worktree (using `/wth` skill)
 ```
