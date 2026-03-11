@@ -93,4 +93,27 @@ CANC_ID="$(echo "$CANC_OUT" | jq -r '.id')"
 run_lf cancel "$CANC_ID" >/dev/null
 assert_exit_code 1 run_lf cancel "$CANC_ID"
 
+# ===== [8] Invalid priority value =====
+
+echo "[8] Invalid priority value"
+assert_exit_code 1 run_lf add --title "Bad Priority" --priority p5
+ERR_OUT="$(run_lf --output json add --title "Bad Priority" --priority p5 2>&1 || true)"
+assert_contains "$ERR_OUT" "invalid priority" "invalid priority error message"
+
+# ===== [9] Invalid status filter in list =====
+
+echo "[9] Invalid status filter in list"
+assert_exit_code 1 run_lf list --status blah
+ERR_OUT="$(run_lf --output json list --status blah 2>&1 || true)"
+assert_contains "$ERR_OUT" "invalid" "invalid status filter error message"
+
+# ===== [10] Invalid JSON input via --from-json =====
+
+echo "[10] Invalid JSON input via --from-json"
+INVALID_JSON_OUT="$(echo "not json" | run_lf --output json add --from-json 2>&1 || true)"
+assert_contains "$INVALID_JSON_OUT" "error" "malformed JSON returns error"
+
+EMPTY_JSON_OUT="$(echo '{}' | run_lf --output json add --from-json 2>&1 || true)"
+assert_contains "$EMPTY_JSON_OUT" "error" "empty JSON object (missing title) returns error"
+
 test_summary
