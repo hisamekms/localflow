@@ -20,3 +20,5 @@ Thumbs.db
 *.local.*
 *.local
 *.local/
+.localflow/
+worktrees/
