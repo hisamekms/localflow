@@ -68,8 +68,38 @@ OUT="$(run_lf --output json edit "$TASK_ID" --remove-definition-of-done "item1")
 DOD="$(echo "$OUT" | jq -r '.definition_of_done | length')"
 assert_eq "0" "$DOD" "remove-definition-of-done item1"
 
-# 5. Non-existent task ID
-echo "[5] Non-existent task ID"
+# 5. Array field operations (in_scope)
+echo "[5] Array field operations (in_scope)"
+
+OUT="$(run_lf --output json edit "$TASK_ID" --add-in-scope "scope1" --add-in-scope "scope2")"
+IN_SCOPE="$(echo "$OUT" | jq -c '.in_scope | sort')"
+assert_eq '["scope1","scope2"]' "$IN_SCOPE" "add-in-scope scope1 and scope2"
+
+OUT="$(run_lf --output json edit "$TASK_ID" --remove-in-scope "scope1")"
+IN_SCOPE="$(echo "$OUT" | jq -c '.in_scope')"
+assert_eq '["scope2"]' "$IN_SCOPE" "remove-in-scope scope1"
+
+OUT="$(run_lf --output json edit "$TASK_ID" --set-in-scope new_s1 new_s2)"
+IN_SCOPE="$(echo "$OUT" | jq -c '.in_scope | sort')"
+assert_eq '["new_s1","new_s2"]' "$IN_SCOPE" "set-in-scope replaces all"
+
+# 6. Array field operations (out_of_scope)
+echo "[6] Array field operations (out_of_scope)"
+
+OUT="$(run_lf --output json edit "$TASK_ID" --add-out-of-scope "out1" --add-out-of-scope "out2")"
+OUT_SCOPE="$(echo "$OUT" | jq -c '.out_of_scope | sort')"
+assert_eq '["out1","out2"]' "$OUT_SCOPE" "add-out-of-scope out1 and out2"
+
+OUT="$(run_lf --output json edit "$TASK_ID" --remove-out-of-scope "out1")"
+OUT_SCOPE="$(echo "$OUT" | jq -c '.out_of_scope')"
+assert_eq '["out2"]' "$OUT_SCOPE" "remove-out-of-scope out1"
+
+OUT="$(run_lf --output json edit "$TASK_ID" --set-out-of-scope new_o1 new_o2)"
+OUT_SCOPE="$(echo "$OUT" | jq -c '.out_of_scope | sort')"
+assert_eq '["new_o1","new_o2"]' "$OUT_SCOPE" "set-out-of-scope replaces all"
+
+# 7. Non-existent task ID
+echo "[7] Non-existent task ID"
 assert_exit_code 1 run_lf --output json edit 9999 --title "X"
 
 test_summary
