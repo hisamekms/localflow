@@ -296,7 +296,12 @@ Include this in the plan:
 
 ```
 # Post-completion
-- When implementation is done, use `AskUserQuestion` to ask the user for completion approval
+- When implementation is done, verify DoD items:
+  1. Run `localflow get <id>` and check `definition_of_done` for unchecked items
+  2. For each unchecked item:
+     - If achieved: `localflow dod check <id> <index>`
+     - If not achieved: go back and implement it
+  3. Once all DoD items are checked, use `AskUserQuestion` to ask the user for completion approval
 - Complete the task: `localflow complete <id>`
 - Delete the worktree (using `/wth` skill)
 ```
