@@ -20,7 +20,10 @@ struct AppState {
 
 #[derive(serde::Deserialize)]
 struct ListQuery {
-    status: Option<String>,
+    #[serde(default)]
+    status: Vec<String>,
+    #[serde(default)]
+    tag: Vec<String>,
 }
 
 pub async fn serve(project_root: PathBuf, port: u16, host: bool) -> Result<()> {
@@ -57,16 +60,20 @@ async fn index_handler(
 ) -> Result<Html<String>, StatusCode> {
     let root = state.project_root.clone();
     let status_filter = query.status.clone();
+    let tag_filter = query.tag.clone();
 
     let tasks = tokio::task::spawn_blocking(move || {
         let conn = db::open_db(&root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let statuses = status_filter
+            .iter()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse::<TaskStatus>())
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+        let tags: Vec<String> = tag_filter.into_iter().filter(|t| !t.is_empty()).collect();
         let filter = crate::models::ListTasksFilter {
-            status: status_filter
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .map(|s| s.parse::<TaskStatus>())
-                .transpose()
-                .map_err(|_| StatusCode::BAD_REQUEST)?,
+            statuses,
+            tags,
             ..Default::default()
         };
         db::list_tasks(&conn, &filter).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -74,7 +81,25 @@ async fn index_handler(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
 
-    let body = render_task_list(&tasks, &query);
+    // Collect all tags from all tasks (unfiltered) for the filter UI
+    let root2 = state.project_root.clone();
+    let all_tags = tokio::task::spawn_blocking(move || {
+        let conn = db::open_db(&root2).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let all_tasks = db::list_tasks(&conn, &crate::models::ListTasksFilter::default())
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let mut tags: Vec<String> = all_tasks
+            .iter()
+            .flat_map(|t| t.tags.iter().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        tags.sort();
+        Ok::<_, StatusCode>(tags)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+
+    let body = render_task_list(&tasks, &query, &all_tags);
     Ok(Html(layout("Tasks", &body)))
 }
 
@@ -151,7 +176,12 @@ tr:hover {{ background: #f0f0f0; }}
 ul.tag-list {{ list-style: none; padding: 0; display: flex; gap: 0.5rem; flex-wrap: wrap; }}
 ul.tag-list li {{ background: #e8e8e8; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.85rem; }}
 select {{ padding: 0.35rem 0.5rem; border-radius: 4px; border: 1px solid #ccc; }}
-.filter-form {{ margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }}
+.filter-form-multi {{ margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }}
+.filter-group {{ display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }}
+.filter-label {{ font-weight: 600; font-size: 0.85rem; color: #555; min-width: 60px; }}
+.filter-options {{ display: flex; gap: 0.75rem; flex-wrap: wrap; }}
+.filter-checkbox {{ font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; gap: 0.25rem; }}
+.tag-pill {{ display: inline-block; background: #e8e8e8; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.8rem; }}
 .empty {{ text-align: center; padding: 2rem; color: #888; }}
 pre {{ white-space: pre-wrap; word-break: break-word; }}
 .markdown h1, .markdown h2, .markdown h3, .markdown h4 {{ margin: 0.75rem 0 0.5rem; }}
@@ -179,31 +209,55 @@ pre {{ white-space: pre-wrap; word-break: break-word; }}
     )
 }
 
-fn render_task_list(tasks: &[Task], query: &ListQuery) -> String {
-    let current_status = query.status.as_deref().unwrap_or("");
-    let statuses = ["", "draft", "todo", "in_progress", "completed", "canceled"];
-    let labels = ["All", "Draft", "Todo", "In Progress", "Completed", "Canceled"];
+fn render_task_list(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> String {
+    let statuses = ["draft", "todo", "in_progress", "completed", "canceled"];
+    let labels = ["Draft", "Todo", "In Progress", "Completed", "Canceled"];
 
-    let options: String = statuses
+    let status_checkboxes: String = statuses
         .iter()
         .zip(labels.iter())
         .map(|(val, label)| {
-            let selected = if *val == current_status {
-                " selected"
+            let checked = if query.status.iter().any(|s| s == val) {
+                " checked"
             } else {
                 ""
             };
-            format!(r#"<option value="{val}"{selected}>{label}</option>"#)
+            format!(
+                r#"<label class="filter-checkbox"><input type="checkbox" name="status" value="{val}" onchange="this.form.submit()"{checked}> {label}</label>"#
+            )
         })
         .collect::<Vec<_>>()
         .join("\n");
 
+    let tag_checkboxes: String = if all_tags.is_empty() {
+        String::new()
+    } else {
+        let cbs: String = all_tags
+            .iter()
+            .map(|tag| {
+                let checked = if query.tag.iter().any(|t| t == tag) {
+                    " checked"
+                } else {
+                    ""
+                };
+                let escaped = escape_html(tag);
+                format!(
+                    r#"<label class="filter-checkbox"><input type="checkbox" name="tag" value="{escaped}" onchange="this.form.submit()"{checked}> {escaped}</label>"#
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            r#"<div class="filter-group"><span class="filter-label">Tags:</span>
+<div class="filter-options">{cbs}</div></div>"#
+        )
+    };
+
     let filter = format!(
-        r#"<form class="filter-form" method="get" action="/">
-<label for="status">Status:</label>
-<select name="status" id="status" onchange="this.form.submit()">
-{options}
-</select>
+        r#"<form class="filter-form-multi" method="get" action="/">
+<div class="filter-group"><span class="filter-label">Status:</span>
+<div class="filter-options">{status_checkboxes}</div></div>
+{tag_checkboxes}
 </form>"#
     );
 
@@ -218,6 +272,15 @@ fn render_task_list(tasks: &[Task], query: &ListQuery) -> String {
             let status = status_badge(t.status);
             let priority = priority_badge(t.priority);
             let created = escape_html(&t.created_at.split('T').next().unwrap_or(&t.created_at));
+            let tags_html = if t.tags.is_empty() {
+                String::new()
+            } else {
+                t.tags
+                    .iter()
+                    .map(|tag| format!(r#"<span class="tag-pill">{}</span>"#, escape_html(tag)))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
             format!(
                 r#"<tr>
 <td>{}</td>
@@ -225,8 +288,9 @@ fn render_task_list(tasks: &[Task], query: &ListQuery) -> String {
 <td>{}</td>
 <td>{}</td>
 <td>{}</td>
+<td>{}</td>
 </tr>"#,
-                t.id, t.id, title, status, priority, created
+                t.id, t.id, title, status, priority, tags_html, created
             )
         })
         .collect();
@@ -234,7 +298,7 @@ fn render_task_list(tasks: &[Task], query: &ListQuery) -> String {
     format!(
         r#"{filter}
 <table>
-<thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Created</th></tr></thead>
+<thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Tags</th><th>Created</th></tr></thead>
 <tbody>
 {rows}
 </tbody>

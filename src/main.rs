@@ -78,12 +78,12 @@ enum Command {
     },
     /// List tasks
     List {
-        /// Filter by status (draft, todo, in_progress, completed, canceled)
+        /// Filter by status (draft, todo, in_progress, completed, canceled); repeatable
         #[arg(long)]
-        status: Option<String>,
-        /// Filter by tag
+        status: Vec<String>,
+        /// Filter by tag; repeatable
         #[arg(long)]
-        tag: Option<String>,
+        tag: Vec<String>,
         /// Filter by dependency (show tasks that depend on this task ID)
         #[arg(long)]
         depends_on: Option<i64>,
@@ -620,22 +620,23 @@ fn expand_branch_template(branch: &str, task_id: i64) -> String {
 fn cmd_list(
     output: &OutputFormat,
     project_root: Option<&std::path::Path>,
-    status: Option<String>,
-    tag: Option<String>,
+    status: Vec<String>,
+    tag: Vec<String>,
     depends_on: Option<i64>,
     ready: bool,
 ) -> Result<()> {
     let root = resolve_project_root(project_root)?;
     let conn = db::open_db(&root)?;
 
-    let status = status
+    let statuses = status
+        .into_iter()
         .map(|s| s.parse::<TaskStatus>())
-        .transpose()
+        .collect::<std::result::Result<Vec<_>, _>>()
         .context("invalid status value")?;
 
     let filter = ListTasksFilter {
-        status,
-        tag,
+        statuses,
+        tags: tag,
         depends_on,
         ready,
     };
@@ -1422,7 +1423,8 @@ mod tests {
     #[test]
     fn parse_list_with_filters() {
         let cli = Cli::parse_from([
-            "localflow", "list", "--status", "todo", "--tag", "rust", "--depends-on", "3",
+            "localflow", "list", "--status", "todo", "--status", "in_progress",
+            "--tag", "rust", "--tag", "web", "--depends-on", "3",
             "--ready",
         ]);
         match cli.command {
@@ -1432,8 +1434,8 @@ mod tests {
                 depends_on,
                 ready,
             } => {
-                assert_eq!(status.as_deref(), Some("todo"));
-                assert_eq!(tag.as_deref(), Some("rust"));
+                assert_eq!(status, vec!["todo", "in_progress"]);
+                assert_eq!(tag, vec!["rust", "web"]);
                 assert_eq!(depends_on, Some(3));
                 assert!(ready);
             }

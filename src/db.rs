@@ -463,16 +463,23 @@ pub fn list_tasks(conn: &Connection, filter: &ListTasksFilter) -> Result<Vec<Tas
     let mut conditions = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
-    if let Some(status) = filter.status {
-        conditions.push("t.status = ?".to_string());
-        param_values.push(Box::new(status.to_string()));
+    if !filter.statuses.is_empty() {
+        let placeholders: Vec<&str> = filter.statuses.iter().map(|_| "?").collect();
+        conditions.push(format!("t.status IN ({})", placeholders.join(", ")));
+        for s in &filter.statuses {
+            param_values.push(Box::new(s.to_string()));
+        }
     }
 
-    if let Some(ref tag) = filter.tag {
-        conditions.push(
-            "EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND tt.tag = ?)".to_string(),
-        );
-        param_values.push(Box::new(tag.clone()));
+    if !filter.tags.is_empty() {
+        let placeholders: Vec<&str> = filter.tags.iter().map(|_| "?").collect();
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND tt.tag IN ({}))",
+            placeholders.join(", ")
+        ));
+        for tag in &filter.tags {
+            param_values.push(Box::new(tag.clone()));
+        }
     }
 
     if let Some(dep_id) = filter.depends_on {
@@ -1033,8 +1040,8 @@ mod tests {
         let drafts = list_tasks(
             &conn,
             &ListTasksFilter {
-                status: Some(TaskStatus::Draft),
-                tag: None,
+                statuses: vec![TaskStatus::Draft],
+                tags: vec![],
                 depends_on: None,
                 ready: false,
             },
@@ -1046,8 +1053,8 @@ mod tests {
         let todos = list_tasks(
             &conn,
             &ListTasksFilter {
-                status: Some(TaskStatus::Todo),
-                tag: None,
+                statuses: vec![TaskStatus::Todo],
+                tags: vec![],
                 depends_on: None,
                 ready: false,
             },
@@ -1075,8 +1082,8 @@ mod tests {
         let result = list_tasks(
             &conn,
             &ListTasksFilter {
-                status: None,
-                tag: Some("rust".to_string()),
+                statuses: vec![],
+                tags: vec!["rust".to_string()],
                 depends_on: None,
                 ready: false,
             },
@@ -1172,8 +1179,8 @@ mod tests {
         let result = list_tasks(
             &conn,
             &ListTasksFilter {
-                status: None,
-                tag: None,
+                statuses: vec![],
+                tags: vec![],
                 depends_on: None,
                 ready: true,
             },

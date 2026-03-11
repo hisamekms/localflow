@@ -186,8 +186,8 @@ pub struct UpdateTaskParams {
 }
 
 pub struct ListTasksFilter {
-    pub status: Option<TaskStatus>,
-    pub tag: Option<String>,
+    pub statuses: Vec<TaskStatus>,
+    pub tags: Vec<String>,
     pub depends_on: Option<i64>,
     pub ready: bool,
 }
@@ -210,8 +210,8 @@ pub struct UpdateTaskArrayParams {
 impl Default for ListTasksFilter {
     fn default() -> Self {
         Self {
-            status: None,
-            tag: None,
+            statuses: vec![],
+            tags: vec![],
             depends_on: None,
             ready: false,
         }
