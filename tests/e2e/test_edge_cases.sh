@@ -60,9 +60,22 @@ OUT="$(run_lf --output json deps add "$A_ID" --on "$B_ID")"
 DEP_COUNT="$(echo "$OUT" | jq -r '.dependencies | length')"
 assert_eq "1" "$DEP_COUNT" "deps add twice results in 1 dependency"
 
-# ===== [5] Re-complete a completed task =====
+# ===== [5] Complete from invalid status (draft / todo) =====
 
-echo "[5] Re-complete a completed task"
+echo "[5] Complete from draft status"
+DRAFT_OUT="$(run_lf --output json add --title "Complete from Draft")"
+DRAFT_ID="$(echo "$DRAFT_OUT" | jq -r '.id')"
+assert_exit_code 1 run_lf complete "$DRAFT_ID"
+
+echo "[5b] Complete from todo status"
+TODO_OUT="$(run_lf --output json add --title "Complete from Todo")"
+TODO_ID="$(echo "$TODO_OUT" | jq -r '.id')"
+run_lf edit "$TODO_ID" --status todo >/dev/null
+assert_exit_code 1 run_lf complete "$TODO_ID"
+
+# ===== [6] Re-complete a completed task =====
+
+echo "[6] Re-complete a completed task"
 COMP_OUT="$(run_lf --output json add --title "Complete Twice")"
 COMP_ID="$(echo "$COMP_OUT" | jq -r '.id')"
 
@@ -71,9 +84,9 @@ run_lf edit "$COMP_ID" --status in-progress >/dev/null
 run_lf complete "$COMP_ID" >/dev/null
 assert_exit_code 1 run_lf complete "$COMP_ID"
 
-# ===== [6] Re-cancel a canceled task =====
+# ===== [7] Re-cancel a canceled task =====
 
-echo "[6] Re-cancel a canceled task"
+echo "[7] Re-cancel a canceled task"
 CANC_OUT="$(run_lf --output json add --title "Cancel Twice")"
 CANC_ID="$(echo "$CANC_OUT" | jq -r '.id')"
 
