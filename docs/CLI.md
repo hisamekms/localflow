@@ -35,7 +35,7 @@ localflow list --ready            # Todo tasks with all deps met
 localflow list --tag backend      # Filter by tag
 ```
 
-Status values use kebab-case in CLI flags: `todo`, `in-progress`, `completed`, `canceled`.
+Status values use snake_case in CLI flags: `todo`, `in_progress`, `completed`, `canceled`, `draft`.
 
 ## `get <id>` – Task details
 

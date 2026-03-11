@@ -35,7 +35,7 @@ localflow list --ready            # 依存解決済みのtodoタスク
 localflow list --tag backend      # タグで絞り込み
 ```
 
-CLIフラグのステータス値はケバブケース: `todo`, `in-progress`, `completed`, `canceled`
+CLIフラグのステータス値はスネークケース: `todo`, `in_progress`, `completed`, `canceled`, `draft`
 
 ## `get <id>` – タスク詳細
 

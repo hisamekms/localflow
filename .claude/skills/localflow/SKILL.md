@@ -50,7 +50,7 @@ localflow add --title "Title" --priority p1 --details "Details"
 # List tasks (with filters)
 localflow --output text list
 localflow list --status todo
-localflow list --status in-progress    # CLI uses kebab-case for status values
+localflow list --status in_progress    # CLI uses snake_case for multi-word status values
 localflow list --ready                 # todo tasks with all deps completed
 localflow list --tag backend
 
@@ -84,7 +84,7 @@ localflow deps list <task_id>
 - `--output text|json` and `--dry-run` are **global flags** — place them before the subcommand: `localflow --output text list`, `localflow --dry-run edit 1 --status todo`
 - `--dry-run` shows what would happen without actually executing the command. Available for all state-changing commands (`add`, `edit`, `complete`, `cancel`, `next`, `deps add/remove/set`, `dod check/uncheck`). Read-only commands (`list`, `get`, `deps list`) ignore it.
 - **DoD items have a checked state.** `complete` will fail if any DoD items are unchecked. Use `dod check <task_id> <index>` (1-based index) to mark items before completing. Tasks with no DoD items can complete freely.
-- Status values in CLI flags use **kebab-case**: `todo`, `in-progress`, `completed`, `canceled` (JSON output uses snake_case: `in_progress`)
+- Status values in CLI flags use **snake_case**: `todo`, `in_progress`, `completed`, `canceled`, `draft`
 - `get` only outputs JSON (no `--output text` support)
 - New tasks start in `draft` status. Status transitions: draft → todo → in_progress → completed. Any active status → canceled.
 - Priority levels: `p0` (highest) through `p3` (lowest). Default is `p2`.
@@ -200,7 +200,7 @@ Check existing active tasks for potential dependencies:
 
 ```bash
 localflow list --status todo
-localflow list --status in-progress
+localflow list --status in_progress
 ```
 
 Review the list to identify tasks the new task should depend on.
@@ -273,7 +273,7 @@ localflow get <id>
 Then transition:
 
 ```bash
-localflow edit <id> --status in-progress
+localflow edit <id> --status in_progress
 ```
 
 ### Execution Steps
