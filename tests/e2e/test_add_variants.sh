@@ -95,8 +95,51 @@ assert_json_field "$ADD_FILE" '.priority' "P3" "from-json-file: priority"
 FILE_DOD="$(echo "$ADD_FILE" | jq -c '[.definition_of_done[].content]')"
 assert_eq '["done1"]' "$FILE_DOD" "from-json-file: definition_of_done"
 
-# 5. Error cases
-echo "[5] Error cases"
+# 5. --from-json with all fields (in_scope, out_of_scope, branch, dependencies)
+echo "[5] Add from JSON with all fields"
+# Create a dependency for the JSON task
+JSON_DEP_OUT="$(run_lf --output json add --title "JSON Dep")"
+JSON_DEP_ID="$(echo "$JSON_DEP_OUT" | jq -r '.id')"
+
+ADD_JSON_FULL="$(cat <<JSONEOF | run_lf --output json add --from-json
+{
+  "title": "JSON Full Fields",
+  "background": "json-bg-full",
+  "details": "json-details-full",
+  "priority": "P1",
+  "tags": ["x", "y"],
+  "definition_of_done": ["check1", "check2"],
+  "in_scope": ["scope-in-1", "scope-in-2"],
+  "out_of_scope": ["scope-out-1"],
+  "branch": "feature/json-test",
+  "dependencies": [$JSON_DEP_ID]
+}
+JSONEOF
+)"
+
+assert_json_field "$ADD_JSON_FULL" '.title' "JSON Full Fields" "from-json-full: title"
+assert_json_field "$ADD_JSON_FULL" '.background' "json-bg-full" "from-json-full: background"
+assert_json_field "$ADD_JSON_FULL" '.details' "json-details-full" "from-json-full: details"
+assert_json_field "$ADD_JSON_FULL" '.priority' "P1" "from-json-full: priority"
+assert_json_field "$ADD_JSON_FULL" '.branch' "feature/json-test" "from-json-full: branch"
+
+FULL_TAGS="$(echo "$ADD_JSON_FULL" | jq -c '.tags')"
+assert_eq '["x","y"]' "$FULL_TAGS" "from-json-full: tags"
+
+FULL_DOD="$(echo "$ADD_JSON_FULL" | jq -c '[.definition_of_done[].content]')"
+assert_eq '["check1","check2"]' "$FULL_DOD" "from-json-full: definition_of_done"
+
+FULL_IN="$(echo "$ADD_JSON_FULL" | jq -c '.in_scope')"
+assert_eq '["scope-in-1","scope-in-2"]' "$FULL_IN" "from-json-full: in_scope"
+
+FULL_OUT="$(echo "$ADD_JSON_FULL" | jq -c '.out_of_scope')"
+assert_eq '["scope-out-1"]' "$FULL_OUT" "from-json-full: out_of_scope"
+
+FULL_DEPS="$(echo "$ADD_JSON_FULL" | jq -c '.dependencies')"
+assert_eq "[$JSON_DEP_ID]" "$FULL_DEPS" "from-json-full: dependencies"
+
+# 6. Error cases
+echo "[6] Error cases"
 # No title
 assert_exit_code 1 run_lf add
 # Non-existent dependency
