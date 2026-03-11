@@ -290,9 +290,14 @@ Generate a branch name from the task title. Use the `/wth` skill to create a wor
 
 Use `EnterPlanMode` to create an implementation plan. Investigate the codebase based on the task's description.
 
-Include a Post-completion section in the plan:
+Include a Pre-start section and a Post-completion section in the plan:
 
 ```
+# Pre-start
+- Save this plan to the task:
+  `localflow edit <id> --plan "The approved implementation plan text"`
+- This must be done before starting implementation.
+
 # Post-completion
 - When implementation is done, verify DoD items:
   1. Run `localflow get <id>` and check `definition_of_done` for unchecked items
@@ -307,18 +312,6 @@ Include a Post-completion section in the plan:
 ```
 
 Wait for the user to approve the plan.
-
-#### Step 4: Save Plan
-
-After approval, register the plan to the task. This must be done before starting implementation.
-
-```bash
-localflow edit <id> --plan "The approved implementation plan text"
-```
-
-#### Step 5: Implement
-
-Follow the approved plan. Use the standard coding workflow.
 
 ---
 
