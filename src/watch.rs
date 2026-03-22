@@ -30,6 +30,7 @@ pub struct UnblockedTask {
     pub id: i64,
     pub title: String,
     pub priority: Priority,
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -142,6 +143,7 @@ fn detect_events(
                 id: t.id,
                 title: t.title.clone(),
                 priority: t.priority,
+                metadata: t.metadata.clone(),
             })
             .collect();
         Some(unblocked_list)
@@ -733,6 +735,123 @@ on_task_completed = "echo completed"
         assert_eq!(unblocked.len(), 1);
         assert_eq!(unblocked[0].id, 2);
         assert_eq!(unblocked[0].title, "Blocked");
+        assert!(unblocked[0].metadata.is_none());
+    }
+
+    #[test]
+    fn unblocked_task_includes_metadata() {
+        let (_dir, conn) = setup_db();
+
+        // Create task 1 (will be completed)
+        db::create_task(
+            &conn,
+            &crate::models::CreateTaskParams {
+                title: "Dependency".into(),
+                background: None,
+                description: None,
+                priority: None,
+                definition_of_done: vec![],
+                in_scope: vec![],
+                out_of_scope: vec![],
+                branch: None,
+                metadata: None,
+                tags: vec![],
+                dependencies: vec![],
+            },
+        )
+        .unwrap();
+        let update_none = |status| crate::models::UpdateTaskParams {
+            status: Some(status),
+            title: None,
+            background: None,
+            description: None,
+            plan: None,
+            priority: None,
+            assignee_session_id: None,
+            started_at: None,
+            completed_at: None,
+            canceled_at: None,
+            cancel_reason: None,
+            branch: None,
+            metadata: None,
+        };
+        db::update_task(&conn, 1, &update_none(TaskStatus::Todo)).unwrap();
+        db::update_task(&conn, 1, &update_none(TaskStatus::InProgress)).unwrap();
+        db::update_task(&conn, 1, &update_none(TaskStatus::Completed)).unwrap();
+
+        // Create task 2 (depends on task 1) with metadata
+        let meta = serde_json::json!({"env": "staging", "priority_override": true});
+        db::create_task(
+            &conn,
+            &crate::models::CreateTaskParams {
+                title: "Blocked with meta".into(),
+                background: None,
+                description: None,
+                priority: None,
+                definition_of_done: vec![],
+                in_scope: vec![],
+                out_of_scope: vec![],
+                branch: None,
+                metadata: Some(meta.clone()),
+                tags: vec![],
+                dependencies: vec![],
+            },
+        )
+        .unwrap();
+        db::update_task(
+            &conn,
+            2,
+            &crate::models::UpdateTaskParams {
+                status: Some(TaskStatus::Todo),
+                title: None,
+                background: None,
+                description: None,
+                plan: None,
+                priority: None,
+                assignee_session_id: None,
+                started_at: None,
+                completed_at: None,
+                canceled_at: None,
+                cancel_reason: None,
+                branch: None,
+                metadata: None,
+            },
+        )
+        .unwrap();
+        db::add_dependency(&conn, 2, 1).unwrap();
+
+        let prev_ready_ids = HashSet::new();
+        let mut known_ids = HashSet::new();
+        known_ids.insert(1);
+        let mut statuses = HashMap::new();
+        statuses.insert(1, TaskStatus::InProgress);
+        let config = Config {
+            hooks: HooksConfig {
+                on_task_added: None,
+                on_task_completed: Some("echo".into()),
+            },
+        };
+
+        let task1 = db::get_task(&conn, 1).unwrap();
+        let events = detect_events(
+            &known_ids,
+            &statuses,
+            &[task1],
+            &config,
+            &conn,
+            &prev_ready_ids,
+        );
+
+        assert_eq!(events.len(), 1);
+        let unblocked = events[0].unblocked_tasks.as_ref().unwrap();
+        assert_eq!(unblocked.len(), 1);
+        assert_eq!(unblocked[0].id, 2);
+        assert_eq!(unblocked[0].metadata, Some(meta));
+
+        // Verify metadata appears in JSON serialization
+        let json = serde_json::to_string(&events[0]).unwrap();
+        assert!(json.contains("\"metadata\""));
+        assert!(json.contains("staging"));
     }
 
     #[test]
