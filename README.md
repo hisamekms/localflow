@@ -15,6 +15,7 @@ Works as a Claude Code skill to let AI agents manage and execute project tasks.
 - **Smart next-task selection**: Picks the highest-priority ready task automatically
 - **Dual output**: JSON (for AI/automation) and human-readable text
 - **Claude Code skill**: `/localflow` skill for seamless AI-driven task management
+- **Watch hooks**: Run custom commands on task events (add, complete)
 - **Zero setup**: SQLite database auto-created on first run
 
 > **Note**: localflow stores data in `.localflow/` under your project root. Add `.localflow/` to your `.gitignore` to avoid committing local data.
@@ -89,6 +90,26 @@ Visualize task dependencies as a text-based graph.
 /localflow complete 3
 ```
 Mark task #3 as completed (checks DoD items first).
+
+## Watch Hooks
+
+`localflow watch` monitors task events and runs custom commands when tasks are added or completed. Configure hooks in `.localflow/config.toml`:
+
+```toml
+[hooks]
+# Single command
+on_task_added = "echo 'New task' | notify-send -"
+
+# Multiple commands per event
+on_task_completed = [
+  "curl -X POST https://example.com/webhook",
+  "echo 'Task done!' >> /tmp/tasks.log"
+]
+```
+
+Hooks receive the event payload as JSON on stdin and are executed via `sh -c`. Run the watcher with `localflow watch` (foreground) or `localflow watch -d` (daemon).
+
+For full details on options, event payloads, and logging, see [CLI Reference – Watch](docs/CLI.md#watch--watch-for-task-events-and-run-hooks).
 
 ## CLI Reference
 
