@@ -175,10 +175,32 @@ pub struct Config {
     pub hooks: HooksConfig,
 }
 
+mod string_or_vec {
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrVec {
+            String(String),
+            Vec(Vec<String>),
+        }
+        match StringOrVec::deserialize(deserializer)? {
+            StringOrVec::String(s) => Ok(vec![s]),
+            StringOrVec::Vec(v) => Ok(v),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct HooksConfig {
-    pub on_task_added: Option<String>,
-    pub on_task_completed: Option<String>,
+    #[serde(default, deserialize_with = "string_or_vec::deserialize")]
+    pub on_task_added: Vec<String>,
+    #[serde(default, deserialize_with = "string_or_vec::deserialize")]
+    pub on_task_completed: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -279,13 +301,13 @@ fn detect_events(
 
     for task in tasks {
         if !known_ids.contains(&task.id) {
-            if config.hooks.on_task_added.is_some() {
+            if !config.hooks.on_task_added.is_empty() {
                 raw_events.push(("task_added", task, false));
             }
         }
         if task.status == TaskStatus::Completed {
             if let Some(prev) = statuses.get(&task.id) {
-                if *prev != TaskStatus::Completed && config.hooks.on_task_completed.is_some() {
+                if *prev != TaskStatus::Completed && !config.hooks.on_task_completed.is_empty() {
                     raw_events.push(("task_completed", task, true));
                     has_completed = true;
                 }
@@ -324,12 +346,12 @@ fn detect_events(
 }
 
 fn fire_event(config: &Config, event: &WatchEvent, logger: &mut WatchLogger) {
-    let command = match event.event.as_str() {
-        "task_added" => config.hooks.on_task_added.as_deref(),
-        "task_completed" => config.hooks.on_task_completed.as_deref(),
-        _ => None,
+    let commands = match event.event.as_str() {
+        "task_added" => &config.hooks.on_task_added,
+        "task_completed" => &config.hooks.on_task_completed,
+        _ => return,
     };
-    if let Some(cmd) = command {
+    for cmd in commands {
         if let Err(e) = execute_hook(cmd, event, logger) {
             eprintln!("hook error ({}): {:#}", event.event, e);
             logger.log("ERROR", &format!("hook error ({}): {:#}", event.event, e));
@@ -343,7 +365,7 @@ pub fn run_watch_loop(project_root: &Path, interval_secs: u64, log_file: Option<
         let mut logger = WatchLogger::new(log_file)?;
 
         let config = load_config(project_root)?;
-        if config.hooks.on_task_added.is_none() && config.hooks.on_task_completed.is_none() {
+        if config.hooks.on_task_added.is_empty() && config.hooks.on_task_completed.is_empty() {
             eprintln!("warning: no hooks configured in .localflow/config.toml");
         }
 
@@ -490,8 +512,8 @@ mod tests {
     fn load_config_missing_file() {
         let dir = tempfile::tempdir().unwrap();
         let config = load_config(dir.path()).unwrap();
-        assert!(config.hooks.on_task_added.is_none());
-        assert!(config.hooks.on_task_completed.is_none());
+        assert!(config.hooks.on_task_added.is_empty());
+        assert!(config.hooks.on_task_completed.is_empty());
     }
 
     #[test]
@@ -510,11 +532,8 @@ on_task_completed = "echo completed"
         .unwrap();
 
         let config = load_config(dir.path()).unwrap();
-        assert_eq!(config.hooks.on_task_added.as_deref(), Some("echo added"));
-        assert_eq!(
-            config.hooks.on_task_completed.as_deref(),
-            Some("echo completed")
-        );
+        assert_eq!(config.hooks.on_task_added, vec!["echo added"]);
+        assert_eq!(config.hooks.on_task_completed, vec!["echo completed"]);
     }
 
     #[test]
@@ -525,8 +544,8 @@ on_task_completed = "echo completed"
         std::fs::write(localflow_dir.join("config.toml"), "[hooks]\n").unwrap();
 
         let config = load_config(dir.path()).unwrap();
-        assert!(config.hooks.on_task_added.is_none());
-        assert!(config.hooks.on_task_completed.is_none());
+        assert!(config.hooks.on_task_added.is_empty());
+        assert!(config.hooks.on_task_completed.is_empty());
     }
 
     #[test]
@@ -681,8 +700,8 @@ on_task_completed = "echo completed"
         let prev_ready_ids = HashSet::new();
         let config = Config {
             hooks: HooksConfig {
-                on_task_added: Some("echo".into()),
-                on_task_completed: None,
+                on_task_added: vec!["echo".into()],
+                on_task_completed: vec![],
             },
         };
         let task = Task {
@@ -724,8 +743,8 @@ on_task_completed = "echo completed"
         let prev_ready_ids = HashSet::new();
         let config = Config {
             hooks: HooksConfig {
-                on_task_added: None,
-                on_task_completed: Some("echo".into()),
+                on_task_added: vec![],
+                on_task_completed: vec!["echo".into()],
             },
         };
         let task = Task {
@@ -767,8 +786,8 @@ on_task_completed = "echo completed"
         let prev_ready_ids = HashSet::new();
         let config = Config {
             hooks: HooksConfig {
-                on_task_added: Some("echo".into()),
-                on_task_completed: Some("echo".into()),
+                on_task_added: vec!["echo".into()],
+                on_task_completed: vec!["echo".into()],
             },
         };
         let task = Task {
@@ -886,8 +905,8 @@ on_task_completed = "echo completed"
         statuses.insert(1, TaskStatus::InProgress);
         let config = Config {
             hooks: HooksConfig {
-                on_task_added: None,
-                on_task_completed: Some("echo".into()),
+                on_task_added: vec![],
+                on_task_completed: vec!["echo".into()],
             },
         };
 
@@ -998,8 +1017,8 @@ on_task_completed = "echo completed"
         statuses.insert(1, TaskStatus::InProgress);
         let config = Config {
             hooks: HooksConfig {
-                on_task_added: None,
-                on_task_completed: Some("echo".into()),
+                on_task_added: vec![],
+                on_task_completed: vec!["echo".into()],
             },
         };
 
@@ -1101,8 +1120,8 @@ on_task_completed = "echo completed"
         let prev_ready_ids = HashSet::new();
         let config = Config {
             hooks: HooksConfig {
-                on_task_added: Some("echo".into()),
-                on_task_completed: None,
+                on_task_added: vec!["echo".into()],
+                on_task_completed: vec![],
             },
         };
         let task = Task {
@@ -1178,5 +1197,87 @@ on_task_completed = "echo completed"
         let content = std::fs::read_to_string(&log_path).unwrap();
         assert!(content.starts_with("existing content\n"));
         assert!(content.contains("[INFO] new line"));
+    }
+
+    #[test]
+    fn parse_hooks_string_value() {
+        let toml_str = r#"
+[hooks]
+on_task_added = "echo added"
+on_task_completed = "echo completed"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.hooks.on_task_added, vec!["echo added"]);
+        assert_eq!(config.hooks.on_task_completed, vec!["echo completed"]);
+    }
+
+    #[test]
+    fn parse_hooks_array_value() {
+        let toml_str = r#"
+[hooks]
+on_task_added = ["echo first", "echo second"]
+on_task_completed = ["notify", "log"]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.hooks.on_task_added,
+            vec!["echo first", "echo second"]
+        );
+        assert_eq!(config.hooks.on_task_completed, vec!["notify", "log"]);
+    }
+
+    #[test]
+    fn parse_hooks_missing_fields() {
+        let toml_str = "[hooks]\n";
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.hooks.on_task_added.is_empty());
+        assert!(config.hooks.on_task_completed.is_empty());
+    }
+
+    #[test]
+    fn fire_event_executes_multiple_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker1 = dir.path().join("hook1.txt");
+        let marker2 = dir.path().join("hook2.txt");
+        let cmd1 = format!("echo hook1 > {}", marker1.display());
+        let cmd2 = format!("echo hook2 > {}", marker2.display());
+
+        let config = Config {
+            hooks: HooksConfig {
+                on_task_added: vec![cmd1, cmd2],
+                on_task_completed: vec![],
+            },
+        };
+
+        let (_db_dir, conn) = setup_db();
+        let task = Task {
+            id: 1,
+            title: "Test".into(),
+            background: None,
+            description: None,
+            plan: None,
+            priority: crate::models::Priority::P2,
+            status: TaskStatus::Draft,
+            assignee_session_id: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            started_at: None,
+            completed_at: None,
+            canceled_at: None,
+            cancel_reason: None,
+            branch: None,
+            metadata: None,
+            definition_of_done: vec![],
+            in_scope: vec![],
+            out_of_scope: vec![],
+            tags: vec![],
+            dependencies: vec![],
+        };
+        let event = build_event("task_added", &task, &conn, None);
+        let mut logger = WatchLogger::new(None).unwrap();
+        fire_event(&config, &event, &mut logger);
+
+        assert!(marker1.exists(), "first hook should have run");
+        assert!(marker2.exists(), "second hook should have run");
     }
 }
