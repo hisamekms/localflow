@@ -19,7 +19,7 @@ enum OutputFormat {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "localflow", about = "Local task management CLI")]
+#[command(name = "localflow", about = "Local task management CLI", version)]
 struct Cli {
     /// Output format
     #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
