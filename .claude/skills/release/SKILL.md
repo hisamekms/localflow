@@ -68,10 +68,43 @@ git push origin HEAD
 git push origin v<version>
 ```
 
-### Step 6: 完了報告
+### Step 6: リリースワークフローの完了待ち
+
+```bash
+# ワークフローの実行IDを取得
+gh run list --workflow=release.yml --limit 1
+
+# 完了を待つ
+gh run watch <run_id> --exit-status
+```
+
+### Step 7: リリースノートの編集
+
+ワークフロー完了後、GitHub リリースに Highlights セクションを追加する。
+
+1. 現在のリリースノートを確認する：
+
+```bash
+gh release view v<version> --json body
+```
+
+2. `git log <last-tag>..v<version> --oneline` の内容から主な変更点をまとめ、既存のリリースノートの先頭に Highlights セクションを追加する：
+
+```bash
+gh release edit v<version> --notes "$(cat <<'EOF'
+## Highlights
+
+- **機能名** — 概要説明
+- ...
+
+<既存のリリースノート>
+EOF
+)"
+```
+
+### Step 8: 完了報告
 
 リリースが完了したら以下を報告する：
 
 - リリースバージョン（例: v0.2.0）
-- GitHub Actions の release ワークフローが起動されることの案内
-- `gh run list --workflow=release.yml --limit 1` でワークフローの状態を確認して表示
+- リリースページの URL
