@@ -208,6 +208,10 @@ enum Command {
         /// Run as background daemon
         #[arg(short = 'd', long)]
         daemon: bool,
+
+        /// Log file path (default: .localflow/watch.log when running as daemon)
+        #[arg(long)]
+        log_file: Option<PathBuf>,
     },
     /// Install a skill
     SkillInstall {
@@ -545,12 +549,13 @@ fn run(cli: Cli) -> Result<()> {
             action,
             interval,
             daemon,
+            log_file,
         } => {
             let root = resolve_project_root(cli.project_root.as_deref())?;
             match action {
                 Some(WatchAction::Stop) => localflow::watch::stop_daemon(&root),
-                None if daemon => localflow::watch::start_daemon(&root, interval),
-                None => localflow::watch::run_watch_loop(&root, interval),
+                None if daemon => localflow::watch::start_daemon(&root, interval, log_file.as_deref()),
+                None => localflow::watch::run_watch_loop(&root, interval, log_file.as_deref()),
             }
         }
         Command::Web { port, host } => {
