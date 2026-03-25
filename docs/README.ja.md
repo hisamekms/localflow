@@ -90,6 +90,23 @@ localflow skill-install
 ```
 タスク#3を完了としてマーク（DoD項目を先にチェックします）。
 
+## ワークフロー設定
+
+`.localflow/config.toml`の`[workflow]`セクションでタスク完了時の動作を制御できます：
+
+```toml
+[workflow]
+completion_mode = "pr_then_complete"  # または "merge_then_complete"（デフォルト）
+require_review = true                 # デフォルト: false
+```
+
+| 設定 | 値 | 説明 |
+|------|------|------|
+| `completion_mode` | `merge_then_complete`（デフォルト）, `pr_then_complete` | `pr_then_complete`の場合、`complete`コマンドが`gh`でPRのマージ状況を検証 |
+| `require_review` | `true`, `false`（デフォルト） | `true`の場合、PRの承認も検証 |
+
+`localflow config`で現在の設定を表示、`localflow config --init`でテンプレートを生成できます。
+
 ## CLIリファレンス
 
 CLIを直接使用する場合は[CLIリファレンス](CLI.ja.md)を参照してください。

@@ -146,6 +146,7 @@ pub struct Task {
     pub canceled_at: Option<String>,
     pub cancel_reason: Option<String>,
     pub branch: Option<String>,
+    pub pr_url: Option<String>,
     pub metadata: Option<serde_json::Value>,
     pub definition_of_done: Vec<DodItem>,
     pub in_scope: Vec<String>,
@@ -167,6 +168,7 @@ pub struct CreateTaskParams {
     #[serde(default)]
     pub out_of_scope: Vec<String>,
     pub branch: Option<String>,
+    pub pr_url: Option<String>,
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
     #[serde(default)]
@@ -188,6 +190,7 @@ pub struct UpdateTaskParams {
     pub canceled_at: Option<Option<String>>,
     pub cancel_reason: Option<Option<String>>,
     pub branch: Option<Option<String>>,
+    pub pr_url: Option<Option<String>>,
     pub metadata: Option<Option<serde_json::Value>>,
 }
 

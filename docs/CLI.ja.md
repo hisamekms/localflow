@@ -71,15 +71,22 @@ localflow edit 1 --set-tags "a" "b"         # 全置換
 
 # 完了定義（Definition of Done）
 localflow edit 1 --add-definition-of-done "ユニットテストを書く"
+
+# PR URL
+localflow edit 1 --pr-url "https://github.com/org/repo/pull/42"
+localflow edit 1 --clear-pr-url
 ```
 
 ## `complete <id>` – タスク完了
 
 ```bash
 localflow complete 1
+localflow complete 1 --skip-pr-check    # PR検証をスキップ
 ```
 
 未チェックのDoD項目がある場合は失敗します。先に `dod check` でマークしてください。
+
+`completion_mode = "pr_then_complete"` 設定時は、PRがマージ済みであることも検証します（`require_review = true` の場合は承認も確認）。`--skip-pr-check` で検証をスキップできます。
 
 ## `cancel <id>` – タスクキャンセル
 
@@ -102,6 +109,16 @@ localflow deps remove 5 --on 3     # 依存を削除
 localflow deps set 5 --on 1 2 3    # 依存を一括設定
 localflow deps list 5              # タスク5の依存一覧
 ```
+
+## `config` – 設定の表示・初期化
+
+```bash
+localflow config              # 現在の設定を表示（JSON）
+localflow --output text config # 現在の設定を表示（テキスト）
+localflow config --init       # テンプレート .localflow/config.toml を生成
+```
+
+現在の設定値（未設定項目はデフォルト値）を表示します。`--init` でコメント付きテンプレートファイルを生成します。
 
 ## `skill-install` – Claude Code連携
 

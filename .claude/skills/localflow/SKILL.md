@@ -63,9 +63,11 @@ localflow next
 # Edit task fields
 localflow edit <id> --title "New Title" --status todo --add-tag backend
 localflow edit <id> --add-definition-of-done "Write unit tests"
+localflow edit <id> --pr-url "https://github.com/org/repo/pull/42"
 
 # Complete / Cancel
 localflow complete <id>                    # fails if unchecked DoD items exist
+localflow complete <id> --skip-pr-check    # bypass PR merge/review checks
 localflow cancel <id> --reason "Reason text"
 
 # Definition of Done (DoD) check/uncheck (1-based index)
@@ -77,6 +79,10 @@ localflow deps add <task_id> --on <dep_id>
 localflow deps remove <task_id> --on <dep_id>
 localflow deps set <task_id> --on <dep_id1> <dep_id2>
 localflow deps list <task_id>
+
+# Configuration
+localflow config                           # show current configuration
+localflow config --init                    # generate template config.toml
 ```
 
 ### Important CLI details
@@ -88,6 +94,11 @@ localflow deps list <task_id>
 - `get` only outputs JSON (no `--output text` support)
 - New tasks start in `draft` status. Status transitions: draft → todo → in_progress → completed. Any active status → canceled.
 - Priority levels: `p0` (highest) through `p3` (lowest). Default is `p2`.
+- **Workflow configuration** (`[workflow]` in `.localflow/config.toml`):
+  - `completion_mode`: `merge_then_complete` (default) or `pr_then_complete`
+  - `require_review`: `true`/`false` (default: `false`)
+  - When `completion_mode = "pr_then_complete"`, `complete` requires `pr_url` to be set and the PR to be merged (checked via `gh`). Use `--skip-pr-check` to bypass.
+  - When `require_review = true`, the PR must also be approved.
 
 ---
 
@@ -307,6 +318,7 @@ Include this in the plan:
      - If not achieved: go back and implement it
   3. All DoD items must be checked before proceeding to PR/merge
 - Create PR and merge (all DoD items must be checked before this step)
+- After creating the PR, save the PR URL: `localflow edit <id> --pr-url <pr_url>`
 - Use `AskUserQuestion` to ask the user for completion approval
 - Complete the task: `localflow complete <id>`
 - Delete the worktree (using `/wth` skill)
@@ -331,6 +343,13 @@ localflow get <id>
    - Show the unchecked items to the user
    - Check them off one by one with `localflow dod check <id> <index>` (1-based index)
    - Then proceed to complete
+3. Check the workflow configuration (`localflow config`):
+   - If `completion_mode = "pr_then_complete"`:
+     - Ensure `pr_url` is set on the task (`localflow edit <id> --pr-url <url>`)
+     - The PR must be merged before `localflow complete <id>` will succeed
+     - If `require_review = true`, the PR must also have approval
+     - Use `--skip-pr-check` to bypass these checks if needed
+   - If `completion_mode = "merge_then_complete"` (default): no PR checks are performed
 
 ```bash
 localflow complete <id>
