@@ -169,10 +169,42 @@ impl WatchLogger {
     }
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub hooks: HooksConfig,
+    #[serde(default)]
+    pub workflow: WorkflowConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionMode {
+    MergeThenComplete,
+    PrThenComplete,
+}
+
+impl Default for CompletionMode {
+    fn default() -> Self {
+        CompletionMode::MergeThenComplete
+    }
+}
+
+impl std::fmt::Display for CompletionMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompletionMode::MergeThenComplete => write!(f, "merge_then_complete"),
+            CompletionMode::PrThenComplete => write!(f, "pr_then_complete"),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct WorkflowConfig {
+    #[serde(default)]
+    pub completion_mode: CompletionMode,
+    #[serde(default)]
+    pub require_review: bool,
 }
 
 mod string_or_vec {
@@ -195,7 +227,7 @@ mod string_or_vec {
     }
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct HooksConfig {
     #[serde(default, deserialize_with = "string_or_vec::deserialize")]
     pub on_task_added: Vec<String>,
@@ -567,6 +599,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+                pr_url: None,
             metadata: None,
             definition_of_done: vec![],
             in_scope: vec![],
@@ -605,6 +638,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+                pr_url: None,
             metadata: None,
             definition_of_done: vec![],
             in_scope: vec![],
@@ -634,6 +668,7 @@ on_task_completed = "echo completed"
                 in_scope: vec![],
                 out_of_scope: vec![],
                 branch: None,
+                pr_url: None,
                 metadata: None,
                 tags: vec![],
                 dependencies: vec![],
@@ -661,6 +696,7 @@ on_task_completed = "echo completed"
                 in_scope: vec![],
                 out_of_scope: vec![],
                 branch: None,
+                pr_url: None,
                 metadata: None,
                 tags: vec![],
                 dependencies: vec![],
@@ -683,6 +719,7 @@ on_task_completed = "echo completed"
                 canceled_at: None,
                 cancel_reason: None,
                 branch: None,
+                pr_url: None,
                 metadata: None,
             },
         )
@@ -699,6 +736,7 @@ on_task_completed = "echo completed"
         let statuses = HashMap::new();
         let prev_ready_ids = HashSet::new();
         let config = Config {
+            workflow: Default::default(),
             hooks: HooksConfig {
                 on_task_added: vec!["echo".into()],
                 on_task_completed: vec![],
@@ -720,6 +758,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+                pr_url: None,
             metadata: None,
             definition_of_done: vec![],
             in_scope: vec![],
@@ -742,6 +781,7 @@ on_task_completed = "echo completed"
         statuses.insert(1, TaskStatus::InProgress);
         let prev_ready_ids = HashSet::new();
         let config = Config {
+            workflow: Default::default(),
             hooks: HooksConfig {
                 on_task_added: vec![],
                 on_task_completed: vec!["echo".into()],
@@ -763,6 +803,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+                pr_url: None,
             metadata: None,
             definition_of_done: vec![],
             in_scope: vec![],
@@ -785,6 +826,7 @@ on_task_completed = "echo completed"
         statuses.insert(1, TaskStatus::Todo);
         let prev_ready_ids = HashSet::new();
         let config = Config {
+            workflow: Default::default(),
             hooks: HooksConfig {
                 on_task_added: vec!["echo".into()],
                 on_task_completed: vec!["echo".into()],
@@ -806,6 +848,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+                pr_url: None,
             metadata: None,
             definition_of_done: vec![],
             in_scope: vec![],
@@ -833,6 +876,7 @@ on_task_completed = "echo completed"
                 in_scope: vec![],
                 out_of_scope: vec![],
                 branch: None,
+                pr_url: None,
                 metadata: None,
                 tags: vec![],
                 dependencies: vec![],
@@ -852,6 +896,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+                pr_url: None,
             metadata: None,
         };
         db::update_task(&conn, 1, &update_none(TaskStatus::Todo)).unwrap();
@@ -869,6 +914,7 @@ on_task_completed = "echo completed"
                 in_scope: vec![],
                 out_of_scope: vec![],
                 branch: None,
+                pr_url: None,
                 metadata: None,
                 tags: vec![],
                 dependencies: vec![],
@@ -891,6 +937,7 @@ on_task_completed = "echo completed"
                 canceled_at: None,
                 cancel_reason: None,
                 branch: None,
+                pr_url: None,
                 metadata: None,
             },
         )
@@ -904,6 +951,7 @@ on_task_completed = "echo completed"
         let mut statuses = HashMap::new();
         statuses.insert(1, TaskStatus::InProgress);
         let config = Config {
+            workflow: Default::default(),
             hooks: HooksConfig {
                 on_task_added: vec![],
                 on_task_completed: vec!["echo".into()],
@@ -944,6 +992,7 @@ on_task_completed = "echo completed"
                 in_scope: vec![],
                 out_of_scope: vec![],
                 branch: None,
+                pr_url: None,
                 metadata: None,
                 tags: vec![],
                 dependencies: vec![],
@@ -963,6 +1012,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+                pr_url: None,
             metadata: None,
         };
         db::update_task(&conn, 1, &update_none(TaskStatus::Todo)).unwrap();
@@ -982,6 +1032,7 @@ on_task_completed = "echo completed"
                 in_scope: vec![],
                 out_of_scope: vec![],
                 branch: None,
+                pr_url: None,
                 metadata: Some(meta.clone()),
                 tags: vec![],
                 dependencies: vec![],
@@ -1004,6 +1055,7 @@ on_task_completed = "echo completed"
                 canceled_at: None,
                 cancel_reason: None,
                 branch: None,
+                pr_url: None,
                 metadata: None,
             },
         )
@@ -1016,6 +1068,7 @@ on_task_completed = "echo completed"
         let mut statuses = HashMap::new();
         statuses.insert(1, TaskStatus::InProgress);
         let config = Config {
+            workflow: Default::default(),
             hooks: HooksConfig {
                 on_task_added: vec![],
                 on_task_completed: vec!["echo".into()],
@@ -1119,6 +1172,7 @@ on_task_completed = "echo completed"
         let statuses = HashMap::new();
         let prev_ready_ids = HashSet::new();
         let config = Config {
+            workflow: Default::default(),
             hooks: HooksConfig {
                 on_task_added: vec!["echo".into()],
                 on_task_completed: vec![],
@@ -1140,6 +1194,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+                pr_url: None,
             metadata: None,
             definition_of_done: vec![],
             in_scope: vec![],
@@ -1243,6 +1298,7 @@ on_task_completed = ["notify", "log"]
         let cmd2 = format!("echo hook2 > {}", marker2.display());
 
         let config = Config {
+            workflow: Default::default(),
             hooks: HooksConfig {
                 on_task_added: vec![cmd1, cmd2],
                 on_task_completed: vec![],
@@ -1266,6 +1322,7 @@ on_task_completed = ["notify", "log"]
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+                pr_url: None,
             metadata: None,
             definition_of_done: vec![],
             in_scope: vec![],

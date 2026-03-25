@@ -75,15 +75,22 @@ localflow edit 1 --set-tags "a" "b"         # Replace all
 
 # Definition of Done
 localflow edit 1 --add-definition-of-done "Write unit tests"
+
+# PR URL
+localflow edit 1 --pr-url "https://github.com/org/repo/pull/42"
+localflow edit 1 --clear-pr-url
 ```
 
 ## `complete <id>` – Complete a task
 
 ```bash
 localflow complete 1
+localflow complete 1 --skip-pr-check    # Bypass PR merge/review checks
 ```
 
 Fails if any DoD items are unchecked. Use `dod check` to mark items before completing.
+
+When `completion_mode = "pr_then_complete"` in config, also verifies the PR is merged (and approved if `require_review = true`). Use `--skip-pr-check` to bypass.
 
 ## `cancel <id>` – Cancel a task
 
@@ -106,6 +113,16 @@ localflow deps remove 5 --on 3     # Remove dependency
 localflow deps set 5 --on 1 2 3    # Set exact dependencies
 localflow deps list 5              # List dependencies of task 5
 ```
+
+## `config` – Show or initialize configuration
+
+```bash
+localflow config              # Show current configuration (JSON)
+localflow --output text config # Show current configuration (text)
+localflow config --init       # Generate a template .localflow/config.toml
+```
+
+Shows current configuration values (including defaults for missing settings). Use `--init` to generate a commented template file.
 
 ## `skill-install` – Claude Code integration
 

@@ -131,6 +131,11 @@ enum Command {
         branch: Option<String>,
         #[arg(long)]
         clear_branch: bool,
+        /// PR URL associated with this task
+        #[arg(long)]
+        pr_url: Option<String>,
+        #[arg(long)]
+        clear_pr_url: bool,
         /// Arbitrary JSON metadata
         #[arg(long)]
         metadata: Option<String>,
@@ -168,6 +173,9 @@ enum Command {
     Complete {
         /// Task ID
         id: i64,
+        /// Skip PR merge/review verification
+        #[arg(long)]
+        skip_pr_check: bool,
     },
     /// Cancel a task
     Cancel {
@@ -221,6 +229,13 @@ enum Command {
         /// Skip confirmation prompts
         #[arg(long)]
         yes: bool,
+    },
+    /// Show or initialize workflow configuration
+    #[command(name = "config")]
+    Config {
+        /// Generate a template config.toml
+        #[arg(long)]
+        init: bool,
     },
 }
 
@@ -376,6 +391,8 @@ fn run(cli: Cli) -> Result<()> {
             status,
             branch,
             clear_branch,
+            pr_url,
+            clear_pr_url,
             metadata,
             clear_metadata,
             set_tags,
@@ -428,6 +445,11 @@ fn run(cli: Cli) -> Result<()> {
                 } else if let Some(ref b) = branch {
                     operations.push(format!("Update task #{}: set branch to \"{}\"", id, b));
                 }
+                if clear_pr_url {
+                    operations.push(format!("Update task #{}: clear pr_url", id));
+                } else if let Some(ref url) = pr_url {
+                    operations.push(format!("Update task #{}: set pr_url to \"{}\"", id, url));
+                }
                 if clear_metadata {
                     operations.push(format!("Update task #{}: clear metadata", id));
                 } else if let Some(ref m) = metadata {
@@ -479,6 +501,11 @@ fn run(cli: Cli) -> Result<()> {
                 canceled_at: None,
                 cancel_reason: None,
                 branch: branch_value,
+                pr_url: if clear_pr_url {
+                    Some(None)
+                } else {
+                    pr_url.map(Some)
+                },
                 metadata: if clear_metadata {
                     Some(None)
                 } else {
@@ -533,6 +560,9 @@ fn run(cli: Cli) -> Result<()> {
                     if let Some(ref branch) = task.branch {
                         println!("  branch: {branch}");
                     }
+                    if let Some(ref pr_url) = task.pr_url {
+                        println!("  pr_url: {pr_url}");
+                    }
                     if let Some(ref meta) = task.metadata {
                         println!("  metadata: {}", serde_json::to_string(meta)?);
                     }
@@ -543,7 +573,7 @@ fn run(cli: Cli) -> Result<()> {
             }
             Ok(())
         }
-        Command::Complete { id } => cmd_complete(&cli, id),
+        Command::Complete { id, skip_pr_check } => cmd_complete(&cli, id, skip_pr_check),
         Command::Cancel { id, ref reason } => cmd_cancel(&cli, id, reason.clone()),
         Command::Dod { ref command } => cmd_dod(&cli, command),
         Command::Deps { ref command } => cmd_deps(&cli, command),
@@ -574,6 +604,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::SkillInstall { ref output_dir, yes } => {
             skill_install(&cli, output_dir.clone(), yes)
         }
+        Command::Config { init } => cmd_config(&cli, init),
     }
 }
 
@@ -632,6 +663,7 @@ fn cmd_add(
             in_scope,
             out_of_scope,
             branch,
+            pr_url: None,
             metadata: metadata_val,
             tags: tag,
             dependencies: depends_on,
@@ -702,6 +734,7 @@ fn cmd_add(
                 canceled_at: None,
                 cancel_reason: None,
                 branch: Some(Some(expanded)),
+                pr_url: None,
                 metadata: None,
             },
         )?
@@ -797,6 +830,9 @@ fn cmd_get(
             if let Some(ref branch) = task.branch {
                 println!("Branch:   {branch}");
             }
+            if let Some(ref pr_url) = task.pr_url {
+                println!("PR URL:   {pr_url}");
+            }
             if let Some(ref assignee) = task.assignee_session_id {
                 println!("Assignee: {assignee}");
             }
@@ -882,6 +918,7 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+            pr_url: None,
             metadata: None,
         },
     )?;
@@ -898,9 +935,10 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_complete(cli: &Cli, id: i64) -> Result<()> {
+fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let conn = db::open_db(&root)?;
+    let config = localflow::watch::load_config(&root)?;
 
     let task = db::get_task(&conn, id)?;
     task.status.transition_to(TaskStatus::Completed)?;
@@ -916,6 +954,22 @@ fn cmd_complete(cli: &Cli, id: i64) -> Result<()> {
             id,
             unchecked.len()
         );
+    }
+
+    // PR workflow checks
+    if !skip_pr_check
+        && config.workflow.completion_mode
+            == localflow::watch::CompletionMode::PrThenComplete
+    {
+        let pr_url = task.pr_url.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "cannot complete task #{}: completion_mode is pr_then_complete but no pr_url is set. \
+                 Use `localflow edit {} --pr-url <url>` to set it.",
+                id, id
+            )
+        })?;
+
+        verify_pr_status(pr_url, config.workflow.require_review)?;
     }
 
     if cli.dry_run {
@@ -942,6 +996,7 @@ fn cmd_complete(cli: &Cli, id: i64) -> Result<()> {
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+            pr_url: None,
             metadata: None,
         },
     )?;
@@ -952,6 +1007,55 @@ fn cmd_complete(cli: &Cli, id: i64) -> Result<()> {
         }
         OutputFormat::Text => {
             println!("Completed task #{}: {}", updated.id, updated.title);
+        }
+    }
+
+    Ok(())
+}
+
+fn verify_pr_status(pr_url: &str, require_review: bool) -> Result<()> {
+    let mut args = vec!["pr", "view", pr_url, "--json", "state"];
+    if require_review {
+        args[4] = "state,reviewDecision";
+    }
+
+    let output = std::process::Command::new("gh")
+        .args(&args)
+        .output()
+        .context(
+            "failed to run 'gh' CLI. gh is required for pr_then_complete mode. \
+             Install it from https://cli.github.com/",
+        )?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("gh pr view failed: {}", stderr.trim());
+    }
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("failed to parse gh output")?;
+
+    let state = json["state"].as_str().unwrap_or("");
+    if state != "MERGED" {
+        bail!(
+            "cannot complete task: PR is not merged (current state: {}). \
+             Merge the PR first, then run complete again.",
+            state
+        );
+    }
+
+    if require_review {
+        let decision = json["reviewDecision"].as_str().unwrap_or("");
+        if decision != "APPROVED" {
+            bail!(
+                "cannot complete task: PR has not been approved (reviewDecision: {}). \
+                 Get the PR reviewed and approved, then run complete again.",
+                if decision.is_empty() {
+                    "none"
+                } else {
+                    decision
+                }
+            );
         }
     }
 
@@ -992,6 +1096,7 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
             canceled_at: Some(Some(now)),
             cancel_reason: reason.map(Some),
             branch: None,
+            pr_url: None,
             metadata: None,
         },
     )?;
@@ -1004,6 +1109,79 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
             println!("Canceled task #{}: {}", updated.id, updated.title);
             if let Some(ref r) = updated.cancel_reason {
                 println!("  reason: {r}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+const CONFIG_TEMPLATE: &str = r#"# localflow configuration
+# See: https://github.com/hisamekms/localflow
+
+[hooks]
+# on_task_added = "echo 'task added'"
+# on_task_completed = "echo 'task completed'"
+
+[workflow]
+# completion_mode = "merge_then_complete"  # or "pr_then_complete"
+# require_review = false
+"#;
+
+fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+
+    if init {
+        let localflow_dir = root.join(".localflow");
+        fs::create_dir_all(&localflow_dir)?;
+        let config_path = localflow_dir.join("config.toml");
+        if config_path.exists() {
+            bail!(".localflow/config.toml already exists. Remove it first to re-initialize.");
+        }
+        fs::write(&config_path, CONFIG_TEMPLATE)?;
+        match cli.output {
+            OutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::json!({"path": config_path.display().to_string(), "action": "created"})
+                );
+            }
+            OutputFormat::Text => {
+                println!("Created {}", config_path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    let config = localflow::watch::load_config(&root)?;
+    match cli.output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&config)?);
+        }
+        OutputFormat::Text => {
+            println!("Configuration (.localflow/config.toml):");
+            println!("  [workflow]");
+            println!(
+                "    completion_mode: {}",
+                config.workflow.completion_mode
+            );
+            println!("    require_review: {}", config.workflow.require_review);
+            println!("  [hooks]");
+            if config.hooks.on_task_added.is_empty() {
+                println!("    on_task_added: (none)");
+            } else {
+                println!(
+                    "    on_task_added: {}",
+                    config.hooks.on_task_added.join(", ")
+                );
+            }
+            if config.hooks.on_task_completed.is_empty() {
+                println!("    on_task_completed: (none)");
+            } else {
+                println!(
+                    "    on_task_completed: {}",
+                    config.hooks.on_task_completed.join(", ")
+                );
             }
         }
     }
@@ -1678,7 +1856,7 @@ mod tests {
     #[test]
     fn parse_complete_subcommand() {
         let cli = Cli::parse_from(["localflow", "complete", "1"]);
-        assert!(matches!(cli.command, Command::Complete { id: 1 }));
+        assert!(matches!(cli.command, Command::Complete { id: 1, .. }));
     }
 
     #[test]
@@ -1909,6 +2087,7 @@ mod tests {
             "localflow deps list",
             "localflow dod check",
             "localflow dod uncheck",
+            "localflow config",
         ];
         for cmd in commands {
             assert!(

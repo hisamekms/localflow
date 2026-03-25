@@ -111,6 +111,28 @@ Hooks receive the event payload as JSON on stdin and are executed via `sh -c`. R
 
 For full details on options, event payloads, and logging, see [CLI Reference – Watch](docs/CLI.md#watch--watch-for-task-events-and-run-hooks).
 
+## Workflow Configuration
+
+Control task completion behavior via `[workflow]` in `.localflow/config.toml`:
+
+```toml
+[workflow]
+completion_mode = "pr_then_complete"  # or "merge_then_complete" (default)
+require_review = true                 # default: false
+```
+
+| Setting | Values | Description |
+|---------|--------|-------------|
+| `completion_mode` | `merge_then_complete` (default), `pr_then_complete` | When `pr_then_complete`, `complete` verifies the PR is merged via `gh` |
+| `require_review` | `true`, `false` (default) | When `true`, `complete` also verifies PR approval |
+
+Use `localflow config` to view current settings, or `localflow config --init` to generate a template.
+
+When `completion_mode = "pr_then_complete"`:
+1. Set the PR URL on the task: `localflow edit <id> --pr-url <url>`
+2. The PR must be merged before `localflow complete <id>` succeeds
+3. Use `--skip-pr-check` to bypass verification when needed
+
 ## CLI Reference
 
 For direct CLI usage, see [CLI Reference](docs/CLI.md).
