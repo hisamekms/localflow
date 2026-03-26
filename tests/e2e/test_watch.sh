@@ -26,10 +26,12 @@ create_config() {
 }
 
 # Helper: start watch in background, store PID
+# Needs brief sleep after process check to allow initial snapshot poll
 start_watch() {
   run_lf watch --interval 1 >/dev/null 2>&1 &
   WATCH_PID=$!
-  sleep 2
+  wait_for "watch process started" 5 "kill -0 $WATCH_PID"
+  sleep 1
 }
 
 # Helper: stop watch background process
@@ -49,8 +51,8 @@ start_watch
 # Add a task (this should trigger on_task_added)
 run_lf add --title "Watch Test Task" >/dev/null 2>&1
 
-# Wait for poll cycle
-sleep 2
+# Wait for hook to fire
+wait_for "hook output created" 5 "[ -f '$HOOK_OUTPUT' ]"
 stop_watch
 
 # Verify hook output
@@ -84,8 +86,8 @@ start_watch
 # Complete the task (should trigger on_task_completed)
 run_lf complete "$TASK_ID" >/dev/null 2>&1
 
-# Wait for poll cycle
-sleep 2
+# Wait for hook to fire
+wait_for "completed hook output" 5 "[ -f '$HOOK_OUTPUT' ]"
 stop_watch
 
 if [[ -f "$HOOK_OUTPUT" ]]; then
@@ -110,7 +112,7 @@ PID_FILE="$TEST_PROJECT_ROOT/.localflow/watch.pid"
 # Start daemon
 run_lf watch -d --interval 1 >/dev/null 2>&1
 
-sleep 1
+wait_for "PID file created" 5 "[ -f '$PID_FILE' ]"
 
 # PID file should exist
 if [[ -f "$PID_FILE" ]]; then
@@ -132,7 +134,7 @@ if [[ -f "$PID_FILE" ]]; then
   run_lf watch stop >/dev/null 2>&1
 
   # Wait for process to exit
-  sleep 1
+  wait_for "daemon stopped" 5 "! kill -0 $DAEMON_PID"
 
   # PID file should be removed
   if [[ ! -f "$PID_FILE" ]]; then
@@ -164,7 +166,9 @@ setup_test_env
 
 run_lf watch --interval 1 2>"$TEST_DIR/watch_stderr.log" &
 WATCH_PID=$!
-sleep 2
+wait_for "watch process started" 5 "kill -0 $WATCH_PID"
+# Give it a moment to write stderr
+sleep 0.5
 kill "$WATCH_PID" 2>/dev/null || true
 wait "$WATCH_PID" 2>/dev/null || true
 
@@ -191,7 +195,7 @@ start_watch
 
 run_lf add --title "JSON Check" --priority p1 >/dev/null 2>&1
 
-sleep 2
+wait_for "hook output created" 5 "[ -f '$HOOK_OUTPUT' ]"
 stop_watch
 
 if [[ -f "$HOOK_OUTPUT" ]]; then
@@ -228,8 +232,10 @@ echo "[8] watch status with daemon running"
 setup_test_env
 create_config "echo added" ""
 
+PID_FILE="$TEST_PROJECT_ROOT/.localflow/watch.pid"
+
 run_lf watch -d --interval 2 >/dev/null 2>&1
-sleep 1
+wait_for "daemon PID file" 5 "[ -f '$PID_FILE' ]"
 
 STATUS_JSON="$(run_lf --output json watch status 2>&1)"
 STATUS_VAL="$(echo "$STATUS_JSON" | jq -r '.status')"
@@ -271,22 +277,26 @@ setup_test_env
 create_config "echo added" ""
 
 LOG_FILE="$TEST_PROJECT_ROOT/.localflow/watch.log"
+PID_FILE="$TEST_PROJECT_ROOT/.localflow/watch.pid"
 
 # Start daemon
 run_lf watch -d --interval 1 >/dev/null 2>&1
 
-sleep 1
+wait_for "daemon started" 5 "[ -f '$PID_FILE' ]"
+sleep 1  # allow initial snapshot
 
 # Add a task to trigger an event
 run_lf add --title "Log Test Task" >/dev/null 2>&1
 
-# Wait for poll cycle
-sleep 3
+# Wait for log file to have event content
+wait_for "log has event" 10 "grep -q 'task_added' '$LOG_FILE'"
 
 # Stop daemon
+DAEMON_PID="$(jq -r '.pid' "$PID_FILE" 2>/dev/null || echo "")"
 run_lf watch stop >/dev/null 2>&1
-
-sleep 1
+if [[ -n "$DAEMON_PID" ]]; then
+  wait_for "daemon stopped" 5 "! kill -0 $DAEMON_PID" || true
+fi
 
 if [[ -f "$LOG_FILE" ]]; then
   echo "  PASS: default log file created"
@@ -319,11 +329,12 @@ CUSTOM_LOG="$TEST_DIR/custom_watch.log"
 
 run_lf watch --interval 1 --log-file "$CUSTOM_LOG" >/dev/null 2>&1 &
 WATCH_PID=$!
-sleep 2
+wait_for "watch process started" 5 "kill -0 $WATCH_PID"
+wait_for "custom log created" 5 "[ -f '$CUSTOM_LOG' ]"
 
 run_lf add --title "Custom Log Task" >/dev/null 2>&1
 
-sleep 2
+wait_for "custom log has event" 5 "grep -q 'task_added' '$CUSTOM_LOG'"
 kill "$WATCH_PID" 2>/dev/null || true
 wait "$WATCH_PID" 2>/dev/null || true
 
@@ -349,11 +360,12 @@ CUSTOM_LOG="$TEST_DIR/hook_exec.log"
 
 run_lf watch --interval 1 --log-file "$CUSTOM_LOG" >/dev/null 2>&1 &
 WATCH_PID=$!
-sleep 2
+wait_for "watch process started" 5 "kill -0 $WATCH_PID"
+wait_for "log file created" 5 "[ -f '$CUSTOM_LOG' ]"
 
 run_lf add --title "Hook Log Task" >/dev/null 2>&1
 
-sleep 2
+wait_for "hook executed in log" 5 "grep -q 'hook executed' '$CUSTOM_LOG'"
 kill "$WATCH_PID" 2>/dev/null || true
 wait "$WATCH_PID" 2>/dev/null || true
 

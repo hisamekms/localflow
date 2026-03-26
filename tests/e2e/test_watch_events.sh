@@ -27,13 +27,14 @@ on_task_canceled = "cat >> $HOOK_LOG"
 EOF
 
 # Start watch daemon
+PID_FILE="$TEST_PROJECT_ROOT/.localflow/watch.pid"
 run_lf watch -d --interval 1 >/dev/null 2>&1
-sleep 2
+wait_for "daemon started" 5 "[ -f '$PID_FILE' ]"
 
 # 1. Create a task → should fire task_added
 echo "[1] task_added event"
 TASK_ID="$(run_lf --output json add --title "Watch test" | jq -r '.id')"
-sleep 3
+wait_for "task_added event" 5 "grep -q '\"event\":\"task_added\"' '$HOOK_LOG'"
 
 if [ -f "$HOOK_LOG" ]; then
   ADDED_EVENT="$(grep -c '"event":"task_added"' "$HOOK_LOG" 2>/dev/null || echo 0)"
@@ -52,7 +53,7 @@ fi
 # 2. Ready the task → should fire task_ready
 echo "[2] task_ready event"
 run_lf ready "$TASK_ID" >/dev/null
-sleep 3
+wait_for "task_ready event" 5 "grep -q '\"event\":\"task_ready\"' '$HOOK_LOG'"
 
 READY_EVENT="$(grep -c '"event":"task_ready"' "$HOOK_LOG" 2>/dev/null || echo 0)"
 if [ "$READY_EVENT" -ge 1 ]; then
@@ -76,7 +77,7 @@ fi
 # 3. Start the task → should fire task_started
 echo "[3] task_started event"
 run_lf start "$TASK_ID" >/dev/null
-sleep 3
+wait_for "task_started event" 5 "grep -q '\"event\":\"task_started\"' '$HOOK_LOG'"
 
 STARTED_EVENT="$(grep -c '"event":"task_started"' "$HOOK_LOG" 2>/dev/null || echo 0)"
 if [ "$STARTED_EVENT" -ge 1 ]; then
@@ -99,7 +100,7 @@ fi
 # 4. Complete the task → should fire task_completed
 echo "[4] task_completed event"
 run_lf complete "$TASK_ID" >/dev/null
-sleep 3
+wait_for "task_completed event" 5 "grep -q '\"event\":\"task_completed\"' '$HOOK_LOG'"
 
 COMPLETED_EVENT="$(grep -c '"event":"task_completed"' "$HOOK_LOG" 2>/dev/null || echo 0)"
 if [ "$COMPLETED_EVENT" -ge 1 ]; then
@@ -113,9 +114,9 @@ fi
 # 5. Create and cancel a task → should fire task_canceled
 echo "[5] task_canceled event"
 TASK2_ID="$(run_lf --output json add --title "Cancel watch" | jq -r '.id')"
-sleep 2
+wait_for "task2 added event" 10 "grep -q 'Cancel watch' '$HOOK_LOG'"
 run_lf cancel "$TASK2_ID" >/dev/null
-sleep 3
+wait_for "task_canceled event" 5 "grep -q '\"event\":\"task_canceled\"' '$HOOK_LOG'"
 
 CANCELED_EVENT="$(grep -c '"event":"task_canceled"' "$HOOK_LOG" 2>/dev/null || echo 0)"
 if [ "$CANCELED_EVENT" -ge 1 ]; then

@@ -110,6 +110,25 @@ assert_json_field() {
   fi
 }
 
+# Wait for a condition to become true (polling with timeout)
+# Usage: wait_for "description" timeout_seconds "condition_command"
+wait_for() {
+  local description="$1"
+  local timeout="${2:-5}"
+  local condition="$3"
+  local attempts=$(( timeout * 5 ))  # 0.2s interval
+  local i=0
+
+  while ! eval "$condition" 2>/dev/null; do
+    if [[ $i -ge $attempts ]]; then
+      echo "  TIMEOUT: $description (${timeout}s)" >&2
+      return 1
+    fi
+    sleep 0.2
+    i=$((i + 1))
+  done
+}
+
 # Print test summary and exit with 1 if any failures
 test_summary() {
   local total=$((PASS_COUNT + FAIL_COUNT))
