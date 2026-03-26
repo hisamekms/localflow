@@ -238,21 +238,21 @@ enum Command {
     },
     /// Start a read-only web viewer
     Web {
-        /// Port to listen on
-        #[arg(long, default_value_t = 3141)]
-        port: u16,
-        /// Expose to all network interfaces (bind 0.0.0.0 instead of 127.0.0.1)
+        /// Port to listen on (env: LOCALFLOW_PORT, default: 3141)
         #[arg(long)]
-        host: bool,
+        port: Option<u16>,
+        /// Bind address, e.g. 0.0.0.0 or 192.168.1.5 (env: LOCALFLOW_HOST, default: 127.0.0.1)
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Start a JSON REST API server
     Serve {
-        /// Port to listen on
-        #[arg(long, default_value_t = 3142)]
-        port: u16,
-        /// Expose to all network interfaces (bind 0.0.0.0 instead of 127.0.0.1)
+        /// Port to listen on (env: LOCALFLOW_PORT, default: 3142)
         #[arg(long)]
-        host: bool,
+        port: Option<u16>,
+        /// Bind address, e.g. 0.0.0.0 or 192.168.1.5 (env: LOCALFLOW_HOST, default: 127.0.0.1)
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Install a skill
     SkillInstall {
@@ -634,17 +634,23 @@ fn run(cli: Cli) -> Result<()> {
         Command::Dod { ref command } => cmd_dod(&cli, command),
         Command::Deps { ref command } => cmd_deps(&cli, command),
         Command::Web { port, host } => {
+            let effective_port = port
+                .or_else(|| std::env::var("LOCALFLOW_PORT").ok().and_then(|v| v.parse().ok()))
+                .unwrap_or(3141);
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let _ = db::SqliteBackend::new(&root)?; // web always uses SQLite directly
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(localflow::web::serve(root, port, host))?;
+            rt.block_on(localflow::web::serve(root, effective_port, host))?;
             Ok(())
         }
         Command::Serve { port, host } => {
+            let effective_port = port
+                .or_else(|| std::env::var("LOCALFLOW_PORT").ok().and_then(|v| v.parse().ok()))
+                .unwrap_or(3142);
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let _ = db::open_db(&root)?; // validate DB exists
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(localflow::api::serve(root, port, host))?;
+            rt.block_on(localflow::api::serve(root, effective_port, host))?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {
