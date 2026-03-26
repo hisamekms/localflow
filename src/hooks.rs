@@ -455,6 +455,11 @@ pub fn compute_unblocked(
 mod tests {
     use super::*;
     use crate::db::SqliteBackend;
+    use std::sync::Mutex;
+
+    /// Mutex to serialize tests that modify environment variables.
+    /// `std::env::set_var` is not thread-safe, so env-var tests must not run concurrently.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     fn setup_db() -> (tempfile::TempDir, SqliteBackend) {
         let dir = tempfile::tempdir().unwrap();
@@ -464,6 +469,7 @@ mod tests {
 
     #[test]
     fn load_config_missing_file() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let config = load_config(dir.path(), None).unwrap();
         assert!(config.hooks.on_task_added.is_empty());
@@ -472,6 +478,7 @@ mod tests {
 
     #[test]
     fn load_config_valid_toml() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let localflow_dir = dir.path().join(".localflow");
         std::fs::create_dir_all(&localflow_dir).unwrap();
@@ -492,6 +499,7 @@ on_task_completed = "echo completed"
 
     #[test]
     fn load_config_empty_hooks() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let localflow_dir = dir.path().join(".localflow");
         std::fs::create_dir_all(&localflow_dir).unwrap();
@@ -956,6 +964,7 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn env_override_completion_mode() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_COMPLETION_MODE").ok();
             std::env::set_var("LOCALFLOW_COMPLETION_MODE", "pr_then_complete");
@@ -970,6 +979,7 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn env_override_auto_merge() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_AUTO_MERGE").ok();
             std::env::set_var("LOCALFLOW_AUTO_MERGE", "false");
@@ -987,6 +997,7 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn env_override_hook_mode() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_HOOK_MODE").ok();
             std::env::set_var("LOCALFLOW_HOOK_MODE", "client");
@@ -1004,6 +1015,7 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn env_override_api_url() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_API_URL").ok();
             std::env::set_var("LOCALFLOW_API_URL", "http://remote:3142");
@@ -1018,6 +1030,7 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn env_override_hooks_append() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_HOOK_ON_TASK_ADDED").ok();
             std::env::set_var("LOCALFLOW_HOOK_ON_TASK_ADDED", "env-hook");
@@ -1035,6 +1048,7 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn env_override_empty_values_ignored() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig_url = std::env::var("LOCALFLOW_API_URL").ok();
             let orig_hook = std::env::var("LOCALFLOW_HOOK_ON_TASK_ADDED").ok();
@@ -1056,6 +1070,7 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn load_config_no_file_with_env_overrides() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_COMPLETION_MODE").ok();
             std::env::set_var("LOCALFLOW_COMPLETION_MODE", "pr_then_complete");
@@ -1101,6 +1116,7 @@ auto_merge = false
 
     #[test]
     fn load_config_env_var_path() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let config_file = tmp.path().join("env-config.toml");
         std::fs::write(
@@ -1126,6 +1142,7 @@ auto_merge = false
 
     #[test]
     fn load_config_explicit_overrides_env_var() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
 
         let env_config = tmp.path().join("env-config.toml");
@@ -1163,6 +1180,7 @@ auto_merge = false
 
     #[test]
     fn load_config_env_var_not_found() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_CONFIG").ok();
