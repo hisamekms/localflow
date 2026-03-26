@@ -93,21 +93,28 @@ Mark task #3 as completed (checks DoD items first).
 
 ## Watch Hooks
 
-`localflow watch` monitors task events and runs custom commands when tasks are added or completed. Configure hooks in `.localflow/config.toml`:
+`localflow watch` monitors task events and runs custom commands. Configure hooks in `.localflow/config.toml`:
 
 ```toml
 [hooks]
-# Single command
 on_task_added = "echo 'New task' | notify-send -"
-
-# Multiple commands per event
+on_task_ready = "echo 'Task ready'"
+on_task_started = "echo 'Task started'"
 on_task_completed = [
   "curl -X POST https://example.com/webhook",
   "echo 'Task done!' >> /tmp/tasks.log"
 ]
+on_task_canceled = "echo 'Task canceled'"
 ```
 
-Hooks receive the event payload as JSON on stdin and are executed via `sh -c`. Run the watcher with `localflow watch` (foreground) or `localflow watch -d` (daemon).
+Hooks receive the event payload as JSON on stdin and are executed via `sh -c`. Use `jq` to extract fields:
+
+```bash
+# Log status transitions
+on_task_started = "jq -r '\"\\(.task.title): \\(.from_status) → \\(.task.status)\"' >> /tmp/transitions.log"
+```
+
+Run the watcher with `localflow watch` (foreground) or `localflow watch -d` (daemon).
 
 For full details on options, event payloads, and logging, see [CLI Reference – Watch](docs/CLI.md#watch--watch-for-task-events-and-run-hooks).
 

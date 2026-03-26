@@ -175,13 +175,19 @@ localflow watch status                    # デーモンの状態を表示
 ```toml
 [hooks]
 on_task_added = "echo '新しいタスク' | notify-send -"
+on_task_ready = "echo 'タスク準備完了'"
+on_task_started = "echo 'タスク開始'"
 on_task_completed = "curl -X POST https://example.com/webhook"
+on_task_canceled = "echo 'タスクキャンセル'"
 ```
 
 | フック | トリガー |
 |------|---------|
 | `on_task_added` | 新しいタスクがデータベースに追加された |
+| `on_task_ready` | タスクが `todo` ステータスに遷移した |
+| `on_task_started` | タスクが `in_progress` ステータスに遷移した |
 | `on_task_completed` | タスクが `completed` ステータスに遷移した |
+| `on_task_canceled` | タスクが `canceled` ステータスに遷移した |
 
 フックは **stdin** でイベントペイロード（JSON）を受け取り、`sh -c` で実行されます。
 
@@ -194,9 +200,33 @@ on_task_completed = "curl -X POST https://example.com/webhook"
 ```json
 {
   "event_id": "550e8400-e29b-41d4-a716-446655440000",
-  "event": "task_added",
+  "event": "task_started",
   "timestamp": "2026-03-24T12:00:00Z",
-  "task": { },
+  "task": {
+    "id": 3,
+    "title": "Write unit tests",
+    "background": null,
+    "description": "Add tests for the API module",
+    "plan": null,
+    "priority": "P1",
+    "status": "in_progress",
+    "assignee_session_id": null,
+    "created_at": "2026-03-24T10:00:00Z",
+    "updated_at": "2026-03-24T12:00:00Z",
+    "started_at": "2026-03-24T12:00:00Z",
+    "completed_at": null,
+    "canceled_at": null,
+    "cancel_reason": null,
+    "branch": null,
+    "pr_url": null,
+    "metadata": null,
+    "definition_of_done": [],
+    "in_scope": [],
+    "out_of_scope": [],
+    "tags": [],
+    "dependencies": [1]
+  },
+  "from_status": "todo",
   "stats": { "draft": 1, "todo": 3, "in_progress": 1, "completed": 5 },
   "ready_count": 2,
   "unblocked_tasks": null
@@ -206,9 +236,10 @@ on_task_completed = "curl -X POST https://example.com/webhook"
 | フィールド | 型 | 説明 |
 |-------|------|-------------|
 | `event_id` | string | UUID v4 一意識別子 |
-| `event` | string | `"task_added"` または `"task_completed"` |
+| `event` | string | `"task_added"`, `"task_ready"`, `"task_started"`, `"task_completed"`, `"task_canceled"` のいずれか |
 | `timestamp` | string | ISO 8601（RFC 3339）タイムスタンプ |
 | `task` | object | タスクオブジェクト全体（`localflow get` と同じスキーマ） |
+| `from_status` | string \| null | 遷移前のステータス（例: `"todo"`, `"in_progress"`）。`task_added` イベントでは存在しない。 |
 | `stats` | object | ステータス別タスク数（`{"todo": 3, "completed": 5, ...}`） |
 | `ready_count` | integer | 依存解決済みの `todo` タスク数 |
 | `unblocked_tasks` | array \| null | このイベントで新たにブロック解除されたタスク（`task_completed` のみ） |
@@ -223,6 +254,27 @@ on_task_completed = "curl -X POST https://example.com/webhook"
 | `title` | string | タスクタイトル |
 | `priority` | string | `"P0"` – `"P3"` |
 | `metadata` | object \| null | タスクメタデータ（任意のJSON） |
+
+### フックスクリプトの例
+
+フックコマンドはstdinでイベントペイロード（JSON）を受け取ります。`jq` などのツールでフィールドを抽出できます:
+
+```bash
+# タスクタイトルを抽出して通知
+on_task_added = "jq -r '.task.title' | xargs notify-send 'New Task:'"
+
+# ステータス遷移をログに記録
+on_task_started = "jq -r '\"[\\(.timestamp)] \\(.task.title): \\(.from_status) → \\(.task.status)\"' >> /tmp/transitions.log"
+
+# todoからの遷移時のみWebhookを送信
+on_task_started = "jq -e '.from_status == \"todo\"' > /dev/null && curl -X POST https://example.com/webhook"
+
+# 1つのイベントに複数コマンド
+on_task_completed = [
+  "jq -r '.task.title' | xargs notify-send 'Task Completed:'",
+  "curl -s -X POST -H 'Content-Type: application/json' -d @- https://example.com/webhook"
+]
+```
 
 ### ログ出力
 

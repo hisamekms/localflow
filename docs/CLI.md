@@ -179,13 +179,19 @@ Create `.localflow/config.toml` to define hooks:
 ```toml
 [hooks]
 on_task_added = "echo 'New task' | notify-send -"
+on_task_ready = "echo 'Task ready'"
+on_task_started = "echo 'Task started'"
 on_task_completed = "curl -X POST https://example.com/webhook"
+on_task_canceled = "echo 'Task canceled'"
 ```
 
 | Hook | Trigger |
 |------|---------|
 | `on_task_added` | A new task appears in the database |
+| `on_task_ready` | A task transitions to `todo` status |
+| `on_task_started` | A task transitions to `in_progress` status |
 | `on_task_completed` | A task transitions to `completed` status |
+| `on_task_canceled` | A task transitions to `canceled` status |
 
 Hooks receive the full event payload as JSON on **stdin** and are executed via `sh -c`.
 
@@ -198,9 +204,33 @@ The JSON object passed to hooks on stdin:
 ```json
 {
   "event_id": "550e8400-e29b-41d4-a716-446655440000",
-  "event": "task_added",
+  "event": "task_started",
   "timestamp": "2026-03-24T12:00:00Z",
-  "task": { },
+  "task": {
+    "id": 3,
+    "title": "Write unit tests",
+    "background": null,
+    "description": "Add tests for the API module",
+    "plan": null,
+    "priority": "P1",
+    "status": "in_progress",
+    "assignee_session_id": null,
+    "created_at": "2026-03-24T10:00:00Z",
+    "updated_at": "2026-03-24T12:00:00Z",
+    "started_at": "2026-03-24T12:00:00Z",
+    "completed_at": null,
+    "canceled_at": null,
+    "cancel_reason": null,
+    "branch": null,
+    "pr_url": null,
+    "metadata": null,
+    "definition_of_done": [],
+    "in_scope": [],
+    "out_of_scope": [],
+    "tags": [],
+    "dependencies": [1]
+  },
+  "from_status": "todo",
   "stats": { "draft": 1, "todo": 3, "in_progress": 1, "completed": 5 },
   "ready_count": 2,
   "unblocked_tasks": null
@@ -210,9 +240,10 @@ The JSON object passed to hooks on stdin:
 | Field | Type | Description |
 |-------|------|-------------|
 | `event_id` | string | UUID v4 unique identifier |
-| `event` | string | `"task_added"` or `"task_completed"` |
+| `event` | string | `"task_added"`, `"task_ready"`, `"task_started"`, `"task_completed"`, or `"task_canceled"` |
 | `timestamp` | string | ISO 8601 (RFC 3339) timestamp |
 | `task` | object | Full task object (same schema as `localflow get`) |
+| `from_status` | string \| null | Previous status before the transition (e.g. `"todo"`, `"in_progress"`). Absent for `task_added` events. |
 | `stats` | object | Task count by status (`{"todo": 3, "completed": 5, ...}`) |
 | `ready_count` | integer | Number of `todo` tasks with all dependencies met |
 | `unblocked_tasks` | array \| null | Tasks newly unblocked by this event (only on `task_completed`) |
@@ -227,6 +258,27 @@ Present only in `task_completed` events when completing a task unblocks other ta
 | `title` | string | Task title |
 | `priority` | string | `"P0"` – `"P3"` |
 | `metadata` | object \| null | Task metadata (arbitrary JSON) |
+
+### Hook Script Examples
+
+Hook commands receive the event payload as JSON on stdin. Use tools like `jq` to extract fields:
+
+```bash
+# Extract the task title
+on_task_added = "jq -r '.task.title' | xargs notify-send 'New Task:'"
+
+# Log task status transitions with previous status
+on_task_started = "jq -r '\"[\\(.timestamp)] \\(.task.title): \\(.from_status) → \\(.task.status)\"' >> /tmp/transitions.log"
+
+# Send a webhook only when a task moves from todo
+on_task_started = "jq -e '.from_status == \"todo\"' > /dev/null && curl -X POST https://example.com/webhook"
+
+# Multiple commands per event
+on_task_completed = [
+  "jq -r '.task.title' | xargs notify-send 'Task Completed:'",
+  "curl -s -X POST -H 'Content-Type: application/json' -d @- https://example.com/webhook"
+]
+```
 
 ### Logging
 

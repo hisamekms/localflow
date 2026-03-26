@@ -90,6 +90,33 @@ localflow skill-install
 ```
 タスク#3を完了としてマーク（DoD項目を先にチェックします）。
 
+## Watch Hooks
+
+`localflow watch` はタスクイベントを監視し、カスタムコマンドを実行します。`.localflow/config.toml` でフックを設定します:
+
+```toml
+[hooks]
+on_task_added = "echo '新しいタスク' | notify-send -"
+on_task_ready = "echo 'タスク準備完了'"
+on_task_started = "echo 'タスク開始'"
+on_task_completed = [
+  "curl -X POST https://example.com/webhook",
+  "echo 'タスク完了' >> /tmp/tasks.log"
+]
+on_task_canceled = "echo 'タスクキャンセル'"
+```
+
+フックはstdinでイベントペイロード（JSON）を受け取り、`sh -c` で実行されます。`jq` でフィールドを抽出できます:
+
+```bash
+# ステータス遷移をログに記録
+on_task_started = "jq -r '\"\\(.task.title): \\(.from_status) → \\(.task.status)\"' >> /tmp/transitions.log"
+```
+
+`localflow watch`（フォアグラウンド）または `localflow watch -d`（デーモン）で監視を開始します。
+
+詳細は [CLIリファレンス – Watch](CLI.ja.md#watch--タスクイベントの監視とフック実行) を参照してください。
+
 ## ワークフロー設定
 
 `.localflow/config.toml`の`[workflow]`セクションでタスク完了時の動作を制御できます：
