@@ -214,6 +214,15 @@ enum Command {
         #[arg(long)]
         host: bool,
     },
+    /// Start a JSON REST API server
+    Serve {
+        /// Port to listen on
+        #[arg(long, default_value_t = 3142)]
+        port: u16,
+        /// Expose to all network interfaces (bind 0.0.0.0 instead of 127.0.0.1)
+        #[arg(long)]
+        host: bool,
+    },
     /// Install a skill
     SkillInstall {
         /// Output directory for SKILL.md
@@ -598,6 +607,13 @@ fn run(cli: Cli) -> Result<()> {
             let _ = db::open_db(&root)?; // validate DB exists
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(localflow::web::serve(root, port, host))?;
+            Ok(())
+        }
+        Command::Serve { port, host } => {
+            let root = resolve_project_root(cli.project_root.as_deref())?;
+            let _ = db::open_db(&root)?; // validate DB exists
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(localflow::api::serve(root, port, host))?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {
