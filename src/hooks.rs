@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use chrono::Utc;
@@ -136,16 +136,43 @@ pub struct HookEvent {
     pub unblocked_tasks: Option<Vec<UnblockedTask>>,
 }
 
-pub fn load_config(project_root: &Path) -> Result<Config> {
-    let config_path = project_root.join(".localflow").join("config.toml");
+pub fn load_config(project_root: &Path, explicit_config: Option<&Path>) -> Result<Config> {
+    let config_path = resolve_config_path(project_root, explicit_config);
     let config = if config_path.exists() {
         let content = std::fs::read_to_string(&config_path)
-            .context("failed to read .localflow/config.toml")?;
-        toml::from_str(&content).context("failed to parse config.toml")?
+            .with_context(|| format!("failed to read config file: {}", config_path.display()))?;
+        toml::from_str(&content)
+            .with_context(|| format!("failed to parse config file: {}", config_path.display()))?
+    } else if explicit_config.is_some()
+        || std::env::var("LOCALFLOW_CONFIG")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .is_some()
+    {
+        // Explicit path was given but file doesn't exist — that's an error
+        bail!(
+            "config file not found: {}",
+            config_path.display()
+        );
     } else {
         Config::default()
     };
     Ok(apply_env_overrides(config))
+}
+
+fn resolve_config_path(project_root: &Path, explicit: Option<&Path>) -> PathBuf {
+    // 1. Explicit CLI flag (--config) takes top priority
+    if let Some(path) = explicit {
+        return path.to_path_buf();
+    }
+    // 2. LOCALFLOW_CONFIG env var
+    if let Ok(val) = std::env::var("LOCALFLOW_CONFIG") {
+        if !val.is_empty() {
+            return PathBuf::from(val);
+        }
+    }
+    // 3. Default: project_root/.localflow/config.toml
+    project_root.join(".localflow").join("config.toml")
 }
 
 fn apply_env_overrides(mut config: Config) -> Config {
@@ -428,6 +455,11 @@ pub fn compute_unblocked(
 mod tests {
     use super::*;
     use crate::db::SqliteBackend;
+    use std::sync::Mutex;
+
+    /// Mutex to serialize tests that modify environment variables.
+    /// `std::env::set_var` is not thread-safe, so env-var tests must not run concurrently.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     fn setup_db() -> (tempfile::TempDir, SqliteBackend) {
         let dir = tempfile::tempdir().unwrap();
@@ -437,14 +469,16 @@ mod tests {
 
     #[test]
     fn load_config_missing_file() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let config = load_config(dir.path()).unwrap();
+        let config = load_config(dir.path(), None).unwrap();
         assert!(config.hooks.on_task_added.is_empty());
         assert!(config.hooks.on_task_completed.is_empty());
     }
 
     #[test]
     fn load_config_valid_toml() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let localflow_dir = dir.path().join(".localflow");
         std::fs::create_dir_all(&localflow_dir).unwrap();
@@ -458,19 +492,20 @@ on_task_completed = "echo completed"
         )
         .unwrap();
 
-        let config = load_config(dir.path()).unwrap();
+        let config = load_config(dir.path(), None).unwrap();
         assert_eq!(config.hooks.on_task_added, vec!["echo added"]);
         assert_eq!(config.hooks.on_task_completed, vec!["echo completed"]);
     }
 
     #[test]
     fn load_config_empty_hooks() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let localflow_dir = dir.path().join(".localflow");
         std::fs::create_dir_all(&localflow_dir).unwrap();
         std::fs::write(localflow_dir.join("config.toml"), "[hooks]\n").unwrap();
 
-        let config = load_config(dir.path()).unwrap();
+        let config = load_config(dir.path(), None).unwrap();
         assert!(config.hooks.on_task_added.is_empty());
         assert!(config.hooks.on_task_completed.is_empty());
     }
@@ -929,6 +964,7 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn env_override_completion_mode() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_COMPLETION_MODE").ok();
             std::env::set_var("LOCALFLOW_COMPLETION_MODE", "pr_then_complete");
@@ -943,6 +979,7 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn env_override_auto_merge() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_AUTO_MERGE").ok();
             std::env::set_var("LOCALFLOW_AUTO_MERGE", "false");
@@ -960,6 +997,7 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn env_override_hook_mode() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_HOOK_MODE").ok();
             std::env::set_var("LOCALFLOW_HOOK_MODE", "client");
@@ -977,6 +1015,7 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn env_override_api_url() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_API_URL").ok();
             std::env::set_var("LOCALFLOW_API_URL", "http://remote:3142");
@@ -991,6 +1030,7 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn env_override_hooks_append() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_HOOK_ON_TASK_ADDED").ok();
             std::env::set_var("LOCALFLOW_HOOK_ON_TASK_ADDED", "env-hook");
@@ -1008,6 +1048,7 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn env_override_empty_values_ignored() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig_url = std::env::var("LOCALFLOW_API_URL").ok();
             let orig_hook = std::env::var("LOCALFLOW_HOOK_ON_TASK_ADDED").ok();
@@ -1029,15 +1070,130 @@ on_task_completed = ["notify", "log"]
 
     #[test]
     fn load_config_no_file_with_env_overrides() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_COMPLETION_MODE").ok();
             std::env::set_var("LOCALFLOW_COMPLETION_MODE", "pr_then_complete");
             let tmp = tempfile::tempdir().unwrap();
-            let config = load_config(tmp.path()).unwrap();
+            let config = load_config(tmp.path(), None).unwrap();
             assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
             match orig {
                 Some(v) => std::env::set_var("LOCALFLOW_COMPLETION_MODE", v),
                 None => std::env::remove_var("LOCALFLOW_COMPLETION_MODE"),
+            }
+        }
+    }
+
+    #[test]
+    fn load_config_explicit_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_file = tmp.path().join("custom-config.toml");
+        std::fs::write(
+            &config_file,
+            r#"
+[workflow]
+completion_mode = "pr_then_complete"
+auto_merge = false
+"#,
+        )
+        .unwrap();
+        let config = load_config(tmp.path(), Some(&config_file)).unwrap();
+        assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
+        assert!(!config.workflow.auto_merge);
+    }
+
+    #[test]
+    fn load_config_explicit_path_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nonexistent.toml");
+        let result = load_config(tmp.path(), Some(&missing));
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("config file not found"),
+            "should report missing config file"
+        );
+    }
+
+    #[test]
+    fn load_config_env_var_path() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_file = tmp.path().join("env-config.toml");
+        std::fs::write(
+            &config_file,
+            r#"
+[workflow]
+auto_merge = false
+"#,
+        )
+        .unwrap();
+
+        unsafe {
+            let orig = std::env::var("LOCALFLOW_CONFIG").ok();
+            std::env::set_var("LOCALFLOW_CONFIG", config_file.to_str().unwrap());
+            let config = load_config(tmp.path(), None).unwrap();
+            assert!(!config.workflow.auto_merge);
+            match orig {
+                Some(v) => std::env::set_var("LOCALFLOW_CONFIG", v),
+                None => std::env::remove_var("LOCALFLOW_CONFIG"),
+            }
+        }
+    }
+
+    #[test]
+    fn load_config_explicit_overrides_env_var() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+
+        let env_config = tmp.path().join("env-config.toml");
+        std::fs::write(
+            &env_config,
+            r#"
+[workflow]
+auto_merge = true
+"#,
+        )
+        .unwrap();
+
+        let cli_config = tmp.path().join("cli-config.toml");
+        std::fs::write(
+            &cli_config,
+            r#"
+[workflow]
+auto_merge = false
+"#,
+        )
+        .unwrap();
+
+        unsafe {
+            let orig = std::env::var("LOCALFLOW_CONFIG").ok();
+            std::env::set_var("LOCALFLOW_CONFIG", env_config.to_str().unwrap());
+            let config = load_config(tmp.path(), Some(&cli_config)).unwrap();
+            // CLI flag should take priority over env var
+            assert!(!config.workflow.auto_merge);
+            match orig {
+                Some(v) => std::env::set_var("LOCALFLOW_CONFIG", v),
+                None => std::env::remove_var("LOCALFLOW_CONFIG"),
+            }
+        }
+    }
+
+    #[test]
+    fn load_config_env_var_not_found() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe {
+            let orig = std::env::var("LOCALFLOW_CONFIG").ok();
+            std::env::set_var("LOCALFLOW_CONFIG", "/nonexistent/path/config.toml");
+            let result = load_config(tmp.path(), None);
+            assert!(result.is_err());
+            assert!(
+                result.unwrap_err().to_string().contains("config file not found"),
+                "should report missing config file from env var"
+            );
+            match orig {
+                Some(v) => std::env::set_var("LOCALFLOW_CONFIG", v),
+                None => std::env::remove_var("LOCALFLOW_CONFIG"),
             }
         }
     }
