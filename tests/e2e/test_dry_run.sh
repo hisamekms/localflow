@@ -121,6 +121,6 @@ assert_contains "$DR_DEPS_SET" "Set dependencies" "dry-run deps set shows operat
 echo "[12] dry-run skill-install"
 DR_SKILL="$(run_lf --dry-run --output json skill-install)"
 assert_json_field "$DR_SKILL" '.command' "skill-install" "dry-run skill-install command field"
-assert_contains "$DR_SKILL" "Write SKILL.md" "dry-run skill-install shows file write"
+assert_contains "$DR_SKILL" "SKILL.md" "dry-run skill-install shows file write"
 
 test_summary

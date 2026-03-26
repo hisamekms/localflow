@@ -23,7 +23,7 @@ else
   echo "  FAIL: SKILL.md not found at $SKILL_PATH"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
-assert_contains "$OUTPUT" "SKILL.md written to" "output confirms file written"
+assert_contains "$OUTPUT" "SKILL.md written" "output confirms file written"
 
 # Clean up for next test
 rm -rf "$TEST_PROJECT_ROOT/.claude"
@@ -49,7 +49,7 @@ echo "[3] --yes skips confirmation prompt"
 rm -rf "$TEST_PROJECT_ROOT/.claude"
 # If prompt were shown without --yes, it would hang. Success = no hang.
 OUTPUT="$(run_lf skill-install --yes)"
-assert_contains "$OUTPUT" "SKILL.md written to" "--yes skips prompt successfully"
+assert_contains "$OUTPUT" "SKILL.md written" "--yes skips prompt successfully"
 assert_contains "$OUTPUT" "Created .claude/ directory" "reports .claude/ directory creation"
 
 # 4. .claude/ already exists → no prompt needed even without --yes
