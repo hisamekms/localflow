@@ -137,15 +137,13 @@ Generates a skill definition under `.claude/skills/localflow/` for Claude Code i
 ```bash
 localflow web                # Listen on 127.0.0.1:3141
 localflow web --port 8080    # Listen on 127.0.0.1:8080
-localflow web --host         # Listen on 0.0.0.0:3141 (all interfaces)
+localflow web --host 0.0.0.0 # Listen on 0.0.0.0:3141 (all interfaces)
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--port <PORT>` | Port to listen on (default: `3141`) |
-| `--host` | Expose to all network interfaces (bind `0.0.0.0` instead of `127.0.0.1`) |
-
-The `--host` flag can also be set via the `LOCALFLOW_WEB_HOST` environment variable (any non-empty value other than `0` or `false` enables it).
+| `--port <PORT>` | Port to listen on (env: `LOCALFLOW_PORT`, default: `3141`) |
+| `--host <ADDR>` | Bind address, e.g. `0.0.0.0` or `192.168.1.5` (env: `LOCALFLOW_HOST`, default: `127.0.0.1`) |
 
 ## Hooks – Automatic actions on task state changes
 
