@@ -160,6 +160,58 @@ localflow web --host 0.0.0.0 # Listen on 0.0.0.0:3141 (all interfaces)
 | `--port <PORT>` | Port to listen on (env: `LOCALFLOW_PORT`, default: `3141`) |
 | `--host <ADDR>` | Bind address, e.g. `0.0.0.0` or `192.168.1.5` (env: `LOCALFLOW_HOST`, default: `127.0.0.1`) |
 
+## Docker
+
+### Dockerfile
+
+```dockerfile
+FROM debian:bookworm-slim
+ARG LOCALFLOW_VERSION=0.10.0
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+  && rm -rf /var/lib/apt/lists/* \
+  && case "${TARGETARCH}" in \
+       amd64) TARGET="x86_64-unknown-linux-musl" ;; \
+       arm64) TARGET="aarch64-unknown-linux-musl" ;; \
+       *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+     esac \
+  && curl -fsSL "https://github.com/hisamekms/localflow/releases/download/v${LOCALFLOW_VERSION}/localflow-v${LOCALFLOW_VERSION}-${TARGET}.tar.gz" \
+     | tar xz -C /usr/local/bin localflow
+WORKDIR /project
+ENTRYPOINT ["localflow"]
+```
+
+> **Note**: `TARGETARCH` is automatically set by Docker BuildKit based on the build platform. This Dockerfile supports both `amd64` and `arm64`.
+
+### Build and run
+
+```bash
+# Build the image
+docker build -t localflow .
+
+# Run a one-off command
+docker run --rm -v "$(pwd)/.localflow:/project/.localflow" localflow list
+
+# Start the API server
+docker run --rm -p 3142:3142 \
+  -v "$(pwd)/.localflow:/project/.localflow" \
+  localflow serve --host 0.0.0.0
+```
+
+### Data persistence with volume mounts
+
+localflow stores its SQLite database and configuration in the `.localflow/` directory. Mount this directory as a volume to persist data across container runs:
+
+```
+-v "$(pwd)/.localflow:/project/.localflow"
+```
+
+This mount includes:
+- `tasks.db` – the SQLite database
+- `config.toml` – hook and workflow configuration
+
+Without a volume mount, all data is lost when the container stops.
+
 ## Hooks – Automatic actions on task state changes
 
 Hooks are shell commands that run automatically when CLI commands change task state. They fire inline (no daemon required) as fire-and-forget child processes, so they never block the CLI.
