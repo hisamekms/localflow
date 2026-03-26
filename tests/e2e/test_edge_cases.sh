@@ -70,7 +70,7 @@ assert_exit_code 1 run_lf complete "$DRAFT_ID"
 echo "[5b] Complete from todo status"
 TODO_OUT="$(run_lf --output json add --title "Complete from Todo")"
 TODO_ID="$(echo "$TODO_OUT" | jq -r '.id')"
-run_lf edit "$TODO_ID" --status todo >/dev/null
+run_lf ready "$TODO_ID" >/dev/null
 assert_exit_code 1 run_lf complete "$TODO_ID"
 
 # ===== [6] Re-complete a completed task =====
@@ -79,8 +79,8 @@ echo "[6] Re-complete a completed task"
 COMP_OUT="$(run_lf --output json add --title "Complete Twice")"
 COMP_ID="$(echo "$COMP_OUT" | jq -r '.id')"
 
-run_lf edit "$COMP_ID" --status todo >/dev/null
-run_lf edit "$COMP_ID" --status in-progress >/dev/null
+run_lf ready "$COMP_ID" >/dev/null
+run_lf start "$COMP_ID" >/dev/null
 run_lf complete "$COMP_ID" >/dev/null
 assert_exit_code 1 run_lf complete "$COMP_ID"
 

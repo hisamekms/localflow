@@ -14,8 +14,8 @@ create_in_progress_task() {
   out="$(run_lf add --title "$1")"
   local id
   id="$(echo "$out" | jq -r '.id')"
-  run_lf edit "$id" --status todo > /dev/null
-  run_lf edit "$id" --status in-progress > /dev/null
+  run_lf ready "$id" > /dev/null
+  run_lf start "$id" > /dev/null
   echo "$id"
 }
 

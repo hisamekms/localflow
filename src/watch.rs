@@ -245,7 +245,13 @@ pub struct HooksConfig {
     #[serde(default, deserialize_with = "string_or_vec::deserialize")]
     pub on_task_added: Vec<String>,
     #[serde(default, deserialize_with = "string_or_vec::deserialize")]
+    pub on_task_ready: Vec<String>,
+    #[serde(default, deserialize_with = "string_or_vec::deserialize")]
+    pub on_task_started: Vec<String>,
+    #[serde(default, deserialize_with = "string_or_vec::deserialize")]
     pub on_task_completed: Vec<String>,
+    #[serde(default, deserialize_with = "string_or_vec::deserialize")]
+    pub on_task_canceled: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -264,6 +270,8 @@ pub struct WatchEvent {
     pub task: Task,
     pub stats: HashMap<String, i64>,
     pub ready_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unblocked_tasks: Option<Vec<UnblockedTask>>,
 }
@@ -317,6 +325,7 @@ fn build_event(
     event_name: &str,
     task: &Task,
     conn: &Connection,
+    from_status: Option<TaskStatus>,
     unblocked: Option<Vec<UnblockedTask>>,
 ) -> WatchEvent {
     let stats = db::task_stats(conn).unwrap_or_default();
@@ -328,6 +337,7 @@ fn build_event(
         task: task.clone(),
         stats,
         ready_count,
+        from_status: from_status.map(|s| s.to_string()),
         unblocked_tasks: unblocked,
     }
 }
@@ -342,20 +352,36 @@ fn detect_events(
     prev_ready_ids: &HashSet<i64>,
 ) -> Vec<WatchEvent> {
     let mut has_completed = false;
-    let mut raw_events: Vec<(&str, &Task, bool)> = Vec::new();
+    // (event_name, task, from_status, is_completed)
+    let mut raw_events: Vec<(&str, &Task, Option<TaskStatus>, bool)> = Vec::new();
 
     for task in tasks {
         if !known_ids.contains(&task.id) {
             if !config.hooks.on_task_added.is_empty() {
-                raw_events.push(("task_added", task, false));
+                raw_events.push(("task_added", task, None, false));
             }
+            continue;
         }
-        if task.status == TaskStatus::Completed {
-            if let Some(prev) = statuses.get(&task.id) {
-                if *prev != TaskStatus::Completed && !config.hooks.on_task_completed.is_empty() {
-                    raw_events.push(("task_completed", task, true));
+
+        if let Some(&prev) = statuses.get(&task.id) {
+            if prev == task.status {
+                continue;
+            }
+            match task.status {
+                TaskStatus::Todo if !config.hooks.on_task_ready.is_empty() => {
+                    raw_events.push(("task_ready", task, Some(prev), false));
+                }
+                TaskStatus::InProgress if !config.hooks.on_task_started.is_empty() => {
+                    raw_events.push(("task_started", task, Some(prev), false));
+                }
+                TaskStatus::Completed if !config.hooks.on_task_completed.is_empty() => {
+                    raw_events.push(("task_completed", task, Some(prev), true));
                     has_completed = true;
                 }
+                TaskStatus::Canceled if !config.hooks.on_task_canceled.is_empty() => {
+                    raw_events.push(("task_canceled", task, Some(prev), false));
+                }
+                _ => {}
             }
         }
     }
@@ -379,13 +405,13 @@ fn detect_events(
 
     raw_events
         .into_iter()
-        .map(|(name, task, is_completed)| {
+        .map(|(name, task, from_status, is_completed)| {
             let ub = if is_completed {
                 unblocked.clone()
             } else {
                 None
             };
-            build_event(name, task, conn, ub)
+            build_event(name, task, conn, from_status, ub)
         })
         .collect()
 }
@@ -393,7 +419,10 @@ fn detect_events(
 fn fire_event(config: &Config, event: &WatchEvent, logger: &mut WatchLogger) {
     let commands = match event.event.as_str() {
         "task_added" => &config.hooks.on_task_added,
+        "task_ready" => &config.hooks.on_task_ready,
+        "task_started" => &config.hooks.on_task_started,
         "task_completed" => &config.hooks.on_task_completed,
+        "task_canceled" => &config.hooks.on_task_canceled,
         _ => return,
     };
     for cmd in commands {
@@ -410,7 +439,12 @@ pub fn run_watch_loop(project_root: &Path, interval_secs: u64, log_file: Option<
         let mut logger = WatchLogger::new(log_file)?;
 
         let config = load_config(project_root)?;
-        if config.hooks.on_task_added.is_empty() && config.hooks.on_task_completed.is_empty() {
+        if config.hooks.on_task_added.is_empty()
+            && config.hooks.on_task_ready.is_empty()
+            && config.hooks.on_task_started.is_empty()
+            && config.hooks.on_task_completed.is_empty()
+            && config.hooks.on_task_canceled.is_empty()
+        {
             eprintln!("warning: no hooks configured in .localflow/config.toml");
         }
 
@@ -620,7 +654,7 @@ on_task_completed = "echo completed"
             tags: vec![],
             dependencies: vec![],
         };
-        let event = build_event("task_added", &task, &conn, None);
+        let event = build_event("task_added", &task, &conn, None, None);
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"event\":\"task_added\""));
         assert!(json.contains("\"id\":1"));
@@ -659,7 +693,7 @@ on_task_completed = "echo completed"
             tags: vec![],
             dependencies: vec![],
         };
-        let event = build_event("task_added", &task, &conn, None);
+        let event = build_event("task_added", &task, &conn, None, None);
         // Validate UUID v4 format
         assert!(Uuid::parse_str(&event.event_id).is_ok());
         // Validate ISO 8601 timestamp
@@ -689,7 +723,7 @@ on_task_completed = "echo completed"
         )
         .unwrap();
         let task = db::get_task(&conn, 1).unwrap();
-        let event = build_event("task_added", &task, &conn, None);
+        let event = build_event("task_added", &task, &conn, None, None);
         assert!(event.stats.contains_key("draft"));
         assert_eq!(*event.stats.get("draft").unwrap(), 1);
     }
@@ -716,29 +750,9 @@ on_task_completed = "echo completed"
             },
         )
         .unwrap();
-        db::update_task(
-            &conn,
-            1,
-            &crate::models::UpdateTaskParams {
-                status: Some(TaskStatus::Todo),
-                title: None,
-                background: None,
-                description: None,
-                plan: None,
-                priority: None,
-                assignee_session_id: None,
-                started_at: None,
-                completed_at: None,
-                canceled_at: None,
-                cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        )
-        .unwrap();
+        db::ready_task(&conn, 1).unwrap();
         let task = db::get_task(&conn, 1).unwrap();
-        let event = build_event("task_added", &task, &conn, None);
+        let event = build_event("task_added", &task, &conn, None, None);
         assert_eq!(event.ready_count, 1);
     }
 
@@ -753,6 +767,7 @@ on_task_completed = "echo completed"
             hooks: HooksConfig {
                 on_task_added: vec!["echo".into()],
                 on_task_completed: vec![],
+                ..Default::default()
             },
         };
         let task = Task {
@@ -798,6 +813,7 @@ on_task_completed = "echo completed"
             hooks: HooksConfig {
                 on_task_added: vec![],
                 on_task_completed: vec!["echo".into()],
+                ..Default::default()
             },
         };
         let task = Task {
@@ -843,6 +859,7 @@ on_task_completed = "echo completed"
             hooks: HooksConfig {
                 on_task_added: vec!["echo".into()],
                 on_task_completed: vec!["echo".into()],
+                ..Default::default()
             },
         };
         let task = Task {
@@ -896,25 +913,9 @@ on_task_completed = "echo completed"
             },
         )
         .unwrap();
-        let update_none = |status| crate::models::UpdateTaskParams {
-            status: Some(status),
-            title: None,
-            background: None,
-            description: None,
-            plan: None,
-            priority: None,
-            assignee_session_id: None,
-            started_at: None,
-            completed_at: None,
-            canceled_at: None,
-            cancel_reason: None,
-            branch: None,
-                pr_url: None,
-            metadata: None,
-        };
-        db::update_task(&conn, 1, &update_none(TaskStatus::Todo)).unwrap();
-        db::update_task(&conn, 1, &update_none(TaskStatus::InProgress)).unwrap();
-        db::update_task(&conn, 1, &update_none(TaskStatus::Completed)).unwrap();
+        db::ready_task(&conn, 1).unwrap();
+        db::start_task(&conn, 1, None, "2025-01-01T00:00:00Z").unwrap();
+        db::complete_task(&conn, 1, "2025-01-01T00:00:00Z").unwrap();
 
         db::create_task(
             &conn,
@@ -934,27 +935,7 @@ on_task_completed = "echo completed"
             },
         )
         .unwrap();
-        db::update_task(
-            &conn,
-            2,
-            &crate::models::UpdateTaskParams {
-                status: Some(TaskStatus::Todo),
-                title: None,
-                background: None,
-                description: None,
-                plan: None,
-                priority: None,
-                assignee_session_id: None,
-                started_at: None,
-                completed_at: None,
-                canceled_at: None,
-                cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        )
-        .unwrap();
+        db::ready_task(&conn, 2).unwrap();
         db::add_dependency(&conn, 2, 1).unwrap();
 
         // Before completion, task 2 was not ready (prev_ready_ids is empty)
@@ -968,6 +949,7 @@ on_task_completed = "echo completed"
             hooks: HooksConfig {
                 on_task_added: vec![],
                 on_task_completed: vec!["echo".into()],
+                ..Default::default()
             },
         };
 
@@ -1012,25 +994,9 @@ on_task_completed = "echo completed"
             },
         )
         .unwrap();
-        let update_none = |status| crate::models::UpdateTaskParams {
-            status: Some(status),
-            title: None,
-            background: None,
-            description: None,
-            plan: None,
-            priority: None,
-            assignee_session_id: None,
-            started_at: None,
-            completed_at: None,
-            canceled_at: None,
-            cancel_reason: None,
-            branch: None,
-                pr_url: None,
-            metadata: None,
-        };
-        db::update_task(&conn, 1, &update_none(TaskStatus::Todo)).unwrap();
-        db::update_task(&conn, 1, &update_none(TaskStatus::InProgress)).unwrap();
-        db::update_task(&conn, 1, &update_none(TaskStatus::Completed)).unwrap();
+        db::ready_task(&conn, 1).unwrap();
+        db::start_task(&conn, 1, None, "2025-01-01T00:00:00Z").unwrap();
+        db::complete_task(&conn, 1, "2025-01-01T00:00:00Z").unwrap();
 
         // Create task 2 (depends on task 1) with metadata
         let meta = serde_json::json!({"env": "staging", "priority_override": true});
@@ -1052,27 +1018,7 @@ on_task_completed = "echo completed"
             },
         )
         .unwrap();
-        db::update_task(
-            &conn,
-            2,
-            &crate::models::UpdateTaskParams {
-                status: Some(TaskStatus::Todo),
-                title: None,
-                background: None,
-                description: None,
-                plan: None,
-                priority: None,
-                assignee_session_id: None,
-                started_at: None,
-                completed_at: None,
-                canceled_at: None,
-                cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        )
-        .unwrap();
+        db::ready_task(&conn, 2).unwrap();
         db::add_dependency(&conn, 2, 1).unwrap();
 
         let prev_ready_ids = HashSet::new();
@@ -1085,6 +1031,7 @@ on_task_completed = "echo completed"
             hooks: HooksConfig {
                 on_task_added: vec![],
                 on_task_completed: vec!["echo".into()],
+                ..Default::default()
             },
         };
 
@@ -1189,6 +1136,7 @@ on_task_completed = "echo completed"
             hooks: HooksConfig {
                 on_task_added: vec!["echo".into()],
                 on_task_completed: vec![],
+                ..Default::default()
             },
         };
         let task = Task {
@@ -1315,6 +1263,7 @@ on_task_completed = ["notify", "log"]
             hooks: HooksConfig {
                 on_task_added: vec![cmd1, cmd2],
                 on_task_completed: vec![],
+                ..Default::default()
             },
         };
 
@@ -1343,7 +1292,7 @@ on_task_completed = ["notify", "log"]
             tags: vec![],
             dependencies: vec![],
         };
-        let event = build_event("task_added", &task, &conn, None);
+        let event = build_event("task_added", &task, &conn, None, None);
         let mut logger = WatchLogger::new(None).unwrap();
         fire_event(&config, &event, &mut logger);
 

@@ -45,8 +45,8 @@ assert_exit_code 1 run_lf --output json dod check "$TASK_ID" 3
 echo "[3] Complete blocked by unchecked DoD"
 
 # Move task to in_progress (draft -> todo -> in_progress)
-run_lf --output json edit "$TASK_ID" --status todo >/dev/null
-run_lf --output json edit "$TASK_ID" --status in-progress >/dev/null
+run_lf --output json ready "$TASK_ID" >/dev/null
+run_lf --output json start "$TASK_ID" >/dev/null
 
 # Attempt complete with unchecked items should fail
 assert_exit_code 1 run_lf --output json complete "$TASK_ID"
@@ -65,8 +65,8 @@ echo "[5] Complete without DoD items"
 
 ADD_NODOD="$(run_lf --output json add --title "No DoD Task")"
 NODOD_ID="$(echo "$ADD_NODOD" | jq -r '.id')"
-run_lf --output json edit "$NODOD_ID" --status todo >/dev/null
-run_lf --output json edit "$NODOD_ID" --status in-progress >/dev/null
+run_lf --output json ready "$NODOD_ID" >/dev/null
+run_lf --output json start "$NODOD_ID" >/dev/null
 
 OUT="$(run_lf --output json complete "$NODOD_ID")"
 assert_json_field "$OUT" '.status' "completed" "complete without DoD items"

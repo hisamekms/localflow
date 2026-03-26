@@ -20,10 +20,10 @@ P2_ID="$(run_lf --output json add --title "P2 task" --priority p2 | jq -r '.id')
 P0_ID="$(run_lf --output json add --title "P0 task" --priority p0 | jq -r '.id')"
 
 # Set all to todo
-run_lf edit "$P3_ID" --status todo >/dev/null
-run_lf edit "$P1_ID" --status todo >/dev/null
-run_lf edit "$P2_ID" --status todo >/dev/null
-run_lf edit "$P0_ID" --status todo >/dev/null
+run_lf ready "$P3_ID" >/dev/null
+run_lf ready "$P1_ID" >/dev/null
+run_lf ready "$P2_ID" >/dev/null
+run_lf ready "$P0_ID" >/dev/null
 
 NEXT1="$(run_lf --output json next)"
 NEXT1_ID="$(echo "$NEXT1" | jq -r '.id')"
@@ -53,8 +53,8 @@ echo "[2] Same priority: earlier created task first"
 FIRST_ID="$(run_lf --output json add --title "First same-pri" --priority p2 | jq -r '.id')"
 SECOND_ID="$(run_lf --output json add --title "Second same-pri" --priority p2 | jq -r '.id')"
 
-run_lf edit "$FIRST_ID" --status todo >/dev/null
-run_lf edit "$SECOND_ID" --status todo >/dev/null
+run_lf ready "$FIRST_ID" >/dev/null
+run_lf ready "$SECOND_ID" >/dev/null
 
 NEXT_SAME="$(run_lf --output json next)"
 NEXT_SAME_ID="$(echo "$NEXT_SAME" | jq -r '.id')"
@@ -72,7 +72,7 @@ run_lf complete "$SECOND_ID" >/dev/null
 echo "[3] --session-id is recorded"
 
 SID_TASK_ID="$(run_lf --output json add --title "Session task" | jq -r '.id')"
-run_lf edit "$SID_TASK_ID" --status todo >/dev/null
+run_lf ready "$SID_TASK_ID" >/dev/null
 
 SID_OUTPUT="$(run_lf --output json next --session-id "test-session-42")"
 SID_ACTUAL="$(echo "$SID_OUTPUT" | jq -r '.assignee_session_id')"
@@ -89,8 +89,8 @@ echo "[4] Dependency filtering: unmet deps skipped"
 DEP_ID="$(run_lf --output json add --title "Dependency" --priority p2 | jq -r '.id')"
 BLOCKED_ID="$(run_lf --output json add --title "Blocked task" --priority p0 | jq -r '.id')"
 
-run_lf edit "$DEP_ID" --status todo >/dev/null
-run_lf edit "$BLOCKED_ID" --status todo >/dev/null
+run_lf ready "$DEP_ID" >/dev/null
+run_lf ready "$BLOCKED_ID" >/dev/null
 
 # Blocked depends on Dep (Dep is not completed)
 run_lf deps add "$BLOCKED_ID" --on "$DEP_ID" >/dev/null
@@ -141,8 +141,8 @@ BLOCKER_ID="$(run_lf --output json add --title "Blocker" | jq -r '.id')"
 BLOCKED1_ID="$(run_lf --output json add --title "Blocked 1" | jq -r '.id')"
 BLOCKED2_ID="$(run_lf --output json add --title "Blocked 2" | jq -r '.id')"
 
-run_lf edit "$BLOCKED1_ID" --status todo >/dev/null
-run_lf edit "$BLOCKED2_ID" --status todo >/dev/null
+run_lf ready "$BLOCKED1_ID" >/dev/null
+run_lf ready "$BLOCKED2_ID" >/dev/null
 
 run_lf deps add "$BLOCKED1_ID" --on "$BLOCKER_ID" >/dev/null
 run_lf deps add "$BLOCKED2_ID" --on "$BLOCKER_ID" >/dev/null

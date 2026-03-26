@@ -25,11 +25,11 @@ assert_contains "$LIST_TEXT" "#$TASK_ID" "list text contains task ID"
 assert_contains "$LIST_TEXT" "Text Test Task" "list text contains task title"
 assert_contains "$LIST_TEXT" "draft" "list text contains status"
 
-# 3. edit --output text (transition to todo, then in_progress for later tests)
-echo "[3] edit text output"
-EDIT_TEXT="$(run_lf --output text edit "$TASK_ID" --status todo)"
-assert_contains "$EDIT_TEXT" "Updated task" "edit text contains 'Updated task'"
-assert_contains "$EDIT_TEXT" "todo" "edit text contains new status"
+# 3. ready --output text (transition to todo)
+echo "[3] ready text output"
+EDIT_TEXT="$(run_lf --output text ready "$TASK_ID")"
+assert_contains "$EDIT_TEXT" "Ready task" "ready text contains 'Ready task'"
+assert_contains "$EDIT_TEXT" "$TASK_ID" "ready text contains task id"
 
 # 4. next --output text
 echo "[4] next text output"

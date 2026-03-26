@@ -75,8 +75,8 @@ create_config "" "cat > $HOOK_OUTPUT"
 
 # Create and move task to in_progress first
 TASK_ID="$(run_lf --output json add --title "Complete Me" 2>/dev/null | jq -r '.id')"
-run_lf edit "$TASK_ID" --status todo >/dev/null 2>&1
-run_lf edit "$TASK_ID" --status in-progress >/dev/null 2>&1
+run_lf ready "$TASK_ID" >/dev/null 2>&1
+run_lf start "$TASK_ID" >/dev/null 2>&1
 
 # Start watch (initial snapshot captures task as in_progress)
 start_watch

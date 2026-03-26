@@ -183,7 +183,6 @@ pub struct UpdateTaskParams {
     pub description: Option<Option<String>>,
     pub plan: Option<Option<String>>,
     pub priority: Option<Priority>,
-    pub status: Option<TaskStatus>,
     pub assignee_session_id: Option<Option<String>>,
     pub started_at: Option<Option<String>>,
     pub completed_at: Option<Option<String>>,
