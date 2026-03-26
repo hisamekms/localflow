@@ -128,6 +128,21 @@ localflow skill-install
 
 Claude Code連携用のスキル定義を `.claude/skills/localflow/` に生成します。
 
+## `serve` – JSON APIサーバーを起動
+
+```bash
+localflow serve                # 127.0.0.1:3142 でリッスン
+localflow serve --port 8080    # 127.0.0.1:8080 でリッスン
+localflow serve --host 0.0.0.0 # 0.0.0.0:3142 でリッスン（全インターフェース）
+```
+
+| オプション | 説明 |
+|--------|-------------|
+| `--port <PORT>` | リッスンポート（環境変数: `LOCALFLOW_PORT`、デフォルト: `3142`） |
+| `--host <ADDR>` | バインドアドレス（例: `0.0.0.0`, `192.168.1.5`）（環境変数: `LOCALFLOW_HOST`、デフォルト: `127.0.0.1`） |
+
+`/api/v1/...` 配下で全タスク操作（CRUD、ステータス遷移、依存関係、DoD、設定、統計）をJSON REST APIとして提供します。CLIと同様にhooksが発火します。
+
 ## `web` – 読み取り専用Webビューアを起動
 
 ```bash
@@ -219,6 +234,53 @@ on_task_completed = ["notify-send '完了'", "curl https://example.com/done"]
 | `INFO` | 通常の操作（起動、イベント検出、フック実行成功） |
 | `WARN` | フックが非ゼロ終了コードを返した |
 | `ERROR` | フックの実行に失敗した |
+
+## 環境変数
+
+全設定は **CLIフラグ > 環境変数 > config.toml > デフォルト値** の優先順位で適用されます。
+
+### サーバー
+
+| 変数 | 説明 | デフォルト |
+|------|------|----------|
+| `LOCALFLOW_PORT` | `web` / `serve` コマンドのポート | `3141`（web）/ `3142`（serve） |
+| `LOCALFLOW_HOST` | バインドアドレス（例: `0.0.0.0`, `192.168.1.5`） | `127.0.0.1` |
+| `LOCALFLOW_PROJECT_ROOT` | プロジェクトルートディレクトリ | 自動検出 |
+
+### ワークフロー
+
+| 変数 | 説明 | デフォルト |
+|------|------|----------|
+| `LOCALFLOW_COMPLETION_MODE` | `merge_then_complete` または `pr_then_complete` | `merge_then_complete` |
+| `LOCALFLOW_AUTO_MERGE` | `true` または `false` | `true` |
+
+### バックエンド
+
+| 変数 | 説明 | デフォルト |
+|------|------|----------|
+| `LOCALFLOW_API_URL` | APIサーバーURL（設定するとSQLiteの代わりにHTTPバックエンドを使用） | _（未設定 = SQLite）_ |
+| `LOCALFLOW_HOOK_MODE` | `server`、`client`、または `both` | `server` |
+
+### フック
+
+| 変数 | 説明 |
+|------|------|
+| `LOCALFLOW_HOOK_ON_TASK_ADDED` | タスク作成時に実行するシェルコマンド |
+| `LOCALFLOW_HOOK_ON_TASK_READY` | タスクがready時に実行するシェルコマンド |
+| `LOCALFLOW_HOOK_ON_TASK_STARTED` | タスク開始時に実行するシェルコマンド |
+| `LOCALFLOW_HOOK_ON_TASK_COMPLETED` | タスク完了時に実行するシェルコマンド |
+| `LOCALFLOW_HOOK_ON_TASK_CANCELED` | タスクキャンセル時に実行するシェルコマンド |
+
+フック環境変数は `config.toml` の `[hooks]` セクションの設定をオーバーライドします。
+
+### 例: Dockerデプロイ
+
+```bash
+docker run -e LOCALFLOW_PORT=8080 \
+  -e LOCALFLOW_HOST=0.0.0.0 \
+  -e LOCALFLOW_HOOK_ON_TASK_COMPLETED="curl -X POST https://example.com/webhook" \
+  localflow serve
+```
 
 ## ステータス遷移
 

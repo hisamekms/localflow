@@ -132,6 +132,21 @@ localflow skill-install
 
 Generates a skill definition under `.claude/skills/localflow/` for Claude Code integration.
 
+## `serve` – Start the JSON API server
+
+```bash
+localflow serve                # Listen on 127.0.0.1:3142
+localflow serve --port 8080    # Listen on 127.0.0.1:8080
+localflow serve --host 0.0.0.0 # Listen on 0.0.0.0:3142 (all interfaces)
+```
+
+| Option | Description |
+|--------|-------------|
+| `--port <PORT>` | Port to listen on (env: `LOCALFLOW_PORT`, default: `3142`) |
+| `--host <ADDR>` | Bind address, e.g. `0.0.0.0` or `192.168.1.5` (env: `LOCALFLOW_HOST`, default: `127.0.0.1`) |
+
+Provides a full JSON REST API under `/api/v1/...` for all task operations (CRUD, status transitions, dependencies, DoD, config, stats). Hooks fire the same way as CLI commands.
+
 ## `web` – Start a read-only web viewer
 
 ```bash
@@ -223,6 +238,53 @@ Present only in `task_completed` events when completing a task unblocks other ta
 | `INFO` | Normal operations (start, event detection, successful hook execution) |
 | `WARN` | Hook returned non-zero exit code |
 | `ERROR` | Hook execution failure |
+
+## Environment Variables
+
+All settings follow the precedence: **CLI flag > environment variable > config.toml > default**.
+
+### Server
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LOCALFLOW_PORT` | Port for `web` and `serve` commands | `3141` (web) / `3142` (serve) |
+| `LOCALFLOW_HOST` | Bind address (e.g. `0.0.0.0`, `192.168.1.5`) | `127.0.0.1` |
+| `LOCALFLOW_PROJECT_ROOT` | Project root directory | Auto-detected |
+
+### Workflow
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LOCALFLOW_COMPLETION_MODE` | `merge_then_complete` or `pr_then_complete` | `merge_then_complete` |
+| `LOCALFLOW_AUTO_MERGE` | `true` or `false` | `true` |
+
+### Backend
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LOCALFLOW_API_URL` | API server URL (enables HTTP backend instead of SQLite) | _(unset = SQLite)_ |
+| `LOCALFLOW_HOOK_MODE` | `server`, `client`, or `both` | `server` |
+
+### Hooks
+
+| Variable | Description |
+|----------|-------------|
+| `LOCALFLOW_HOOK_ON_TASK_ADDED` | Shell command to run when a task is created |
+| `LOCALFLOW_HOOK_ON_TASK_READY` | Shell command to run when a task becomes ready |
+| `LOCALFLOW_HOOK_ON_TASK_STARTED` | Shell command to run when a task is started |
+| `LOCALFLOW_HOOK_ON_TASK_COMPLETED` | Shell command to run when a task is completed |
+| `LOCALFLOW_HOOK_ON_TASK_CANCELED` | Shell command to run when a task is canceled |
+
+Hook environment variables override the corresponding `[hooks]` section in `config.toml`.
+
+### Example: Docker deployment
+
+```bash
+docker run -e LOCALFLOW_PORT=8080 \
+  -e LOCALFLOW_HOST=0.0.0.0 \
+  -e LOCALFLOW_HOOK_ON_TASK_COMPLETED="curl -X POST https://example.com/webhook" \
+  localflow serve
+```
 
 ## Status Transitions
 
