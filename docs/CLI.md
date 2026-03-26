@@ -147,30 +147,9 @@ localflow web --host         # Listen on 0.0.0.0:3141 (all interfaces)
 
 The `--host` flag can also be set via the `LOCALFLOW_WEB_HOST` environment variable (any non-empty value other than `0` or `false` enables it).
 
-## `watch` – Watch for task events and run hooks
+## Hooks – Automatic actions on task state changes
 
-Polls the task database for changes and runs configured hooks when events are detected.
-
-```bash
-localflow watch                           # Foreground (5s interval)
-localflow watch --interval 10             # Custom polling interval
-localflow watch -d                        # Start as background daemon
-localflow watch -d --interval 10          # Daemon with custom interval
-localflow watch --log-file /tmp/watch.log # Custom log file path
-localflow watch stop                      # Stop the daemon
-localflow watch status                    # Show daemon status
-```
-
-| Option | Description |
-|--------|-------------|
-| `--interval <SECONDS>` | Polling interval in seconds (default: `5`) |
-| `-d, --daemon` | Run as background daemon |
-| `--log-file <PATH>` | Log file path (default: `.localflow/watch.log` when running as daemon) |
-
-| Subcommand | Description |
-|------------|-------------|
-| `stop` | Stop a running daemon |
-| `status` | Show daemon status (running/stopped, PID, uptime) |
+Hooks are shell commands that run automatically when CLI commands change task state. They fire inline (no daemon required) as fire-and-forget child processes, so they never block the CLI.
 
 ### Configuration
 
@@ -179,17 +158,28 @@ Create `.localflow/config.toml` to define hooks:
 ```toml
 [hooks]
 on_task_added = "echo 'New task' | notify-send -"
+on_task_ready = "curl -X POST https://example.com/ready"
+on_task_started = "slack-notify started"
 on_task_completed = "curl -X POST https://example.com/webhook"
+on_task_canceled = "echo canceled"
+```
+
+Multiple commands per event are supported as arrays:
+
+```toml
+[hooks]
+on_task_completed = ["notify-send 'Done'", "curl https://example.com/done"]
 ```
 
 | Hook | Trigger |
 |------|---------|
-| `on_task_added` | A new task appears in the database |
-| `on_task_completed` | A task transitions to `completed` status |
+| `on_task_added` | `localflow add` creates a new task |
+| `on_task_ready` | `localflow ready` transitions a task from draft to todo |
+| `on_task_started` | `localflow start` or `localflow next` starts a task |
+| `on_task_completed` | `localflow complete` completes a task |
+| `on_task_canceled` | `localflow cancel` cancels a task |
 
 Hooks receive the full event payload as JSON on **stdin** and are executed via `sh -c`.
-
-> Events are only detected when the corresponding hook is configured.
 
 ### Event Payload
 
@@ -198,20 +188,22 @@ The JSON object passed to hooks on stdin:
 ```json
 {
   "event_id": "550e8400-e29b-41d4-a716-446655440000",
-  "event": "task_added",
+  "event": "task_completed",
   "timestamp": "2026-03-24T12:00:00Z",
+  "from_status": "in_progress",
   "task": { },
   "stats": { "draft": 1, "todo": 3, "in_progress": 1, "completed": 5 },
   "ready_count": 2,
-  "unblocked_tasks": null
+  "unblocked_tasks": [{ "id": 3, "title": "Next task", "priority": "P1", "metadata": null }]
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `event_id` | string | UUID v4 unique identifier |
-| `event` | string | `"task_added"` or `"task_completed"` |
+| `event` | string | Event name (e.g. `"task_added"`, `"task_completed"`) |
 | `timestamp` | string | ISO 8601 (RFC 3339) timestamp |
+| `from_status` | string \| null | Previous status before the transition |
 | `task` | object | Full task object (same schema as `localflow get`) |
 | `stats` | object | Task count by status (`{"todo": 3, "completed": 5, ...}`) |
 | `ready_count` | integer | Number of `todo` tasks with all dependencies met |
@@ -227,20 +219,6 @@ Present only in `task_completed` events when completing a task unblocks other ta
 | `title` | string | Task title |
 | `priority` | string | `"P0"` – `"P3"` |
 | `metadata` | object \| null | Task metadata (arbitrary JSON) |
-
-### Logging
-
-When running as a daemon (`-d`), logs are written to `.localflow/watch.log` by default. Use `--log-file` to override the path. In foreground mode, `--log-file` enables file logging.
-
-Log format:
-
-```
-[2026-03-24T12:00:00Z] [INFO] watch started (interval: 5s)
-[2026-03-24T12:00:05Z] [INFO] event detected: task_added task #1 "Write docs"
-[2026-03-24T12:00:05Z] [INFO] hook executed: task_added (exit: 0)
-[2026-03-24T12:00:10Z] [WARN] hook executed: task_completed (exit: 1)
-[2026-03-24T12:00:15Z] [ERROR] hook failed: task_added: No such file or directory
-```
 
 | Level | Description |
 |-------|-------------|

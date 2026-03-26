@@ -91,9 +91,9 @@ Visualize task dependencies as a text-based graph.
 ```
 Mark task #3 as completed (checks DoD items first).
 
-## Watch Hooks
+## Hooks
 
-`localflow watch` monitors task events and runs custom commands when tasks are added or completed. Configure hooks in `.localflow/config.toml`:
+Hooks are shell commands that run automatically when CLI commands change task state. No daemon required — they fire inline as fire-and-forget child processes. Configure in `.localflow/config.toml`:
 
 ```toml
 [hooks]
@@ -107,9 +107,9 @@ on_task_completed = [
 ]
 ```
 
-Hooks receive the event payload as JSON on stdin and are executed via `sh -c`. Run the watcher with `localflow watch` (foreground) or `localflow watch -d` (daemon).
+Hooks receive the event payload as JSON on stdin and are executed via `sh -c`. All five lifecycle events are supported: `on_task_added`, `on_task_ready`, `on_task_started`, `on_task_completed`, `on_task_canceled`.
 
-For full details on options, event payloads, and logging, see [CLI Reference – Watch](docs/CLI.md#watch--watch-for-task-events-and-run-hooks).
+For full details on event payloads, see [CLI Reference – Hooks](docs/CLI.md#hooks--automatic-actions-on-task-state-changes).
 
 ## Workflow Configuration
 
