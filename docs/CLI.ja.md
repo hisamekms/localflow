@@ -156,6 +156,58 @@ localflow web --host 0.0.0.0 # 0.0.0.0:3141 でリッスン（全インターフ
 | `--port <PORT>` | リッスンポート（環境変数: `LOCALFLOW_PORT`、デフォルト: `3141`） |
 | `--host <ADDR>` | バインドアドレス（例: `0.0.0.0`, `192.168.1.5`）（環境変数: `LOCALFLOW_HOST`、デフォルト: `127.0.0.1`） |
 
+## Docker
+
+### Dockerfile
+
+```dockerfile
+FROM debian:bookworm-slim
+ARG LOCALFLOW_VERSION=0.10.0
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+  && rm -rf /var/lib/apt/lists/* \
+  && case "${TARGETARCH}" in \
+       amd64) TARGET="x86_64-unknown-linux-musl" ;; \
+       arm64) TARGET="aarch64-unknown-linux-musl" ;; \
+       *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+     esac \
+  && curl -fsSL "https://github.com/hisamekms/localflow/releases/download/v${LOCALFLOW_VERSION}/localflow-v${LOCALFLOW_VERSION}-${TARGET}.tar.gz" \
+     | tar xz -C /usr/local/bin localflow
+WORKDIR /project
+ENTRYPOINT ["localflow"]
+```
+
+> **注意**: `TARGETARCH` はDocker BuildKitがビルドプラットフォームに基づいて自動設定します。このDockerfileは `amd64` と `arm64` の両方に対応しています。
+
+### ビルドと実行
+
+```bash
+# イメージをビルド
+docker build -t localflow .
+
+# コマンドを実行
+docker run --rm -v "$(pwd)/.localflow:/project/.localflow" localflow list
+
+# APIサーバーを起動
+docker run --rm -p 3142:3142 \
+  -v "$(pwd)/.localflow:/project/.localflow" \
+  localflow serve --host 0.0.0.0
+```
+
+### ボリュームマウントによるデータ永続化
+
+localflowはSQLiteデータベースと設定を `.localflow/` ディレクトリに保存します。コンテナ間でデータを永続化するには、このディレクトリをボリュームとしてマウントしてください:
+
+```
+-v "$(pwd)/.localflow:/project/.localflow"
+```
+
+マウント対象:
+- `tasks.db` – SQLiteデータベース
+- `config.toml` – フックとワークフローの設定
+
+ボリュームマウントなしでは、コンテナ停止時にすべてのデータが失われます。
+
 ## フック – タスク状態変更時の自動アクション
 
 フックはCLIコマンドがタスク状態を変更した際に自動実行されるシェルコマンドです。デーモン不要で、fire-and-forget（発火後即座に制御を返す）方式で子プロセスとして実行されるため、CLIをブロックしません。
