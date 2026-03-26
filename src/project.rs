@@ -3,8 +3,21 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 pub fn resolve_project_root(explicit: Option<&Path>) -> Result<PathBuf> {
+    // 1. Explicit CLI flag takes top priority
+    if let Some(path) = explicit {
+        return Ok(path.to_path_buf());
+    }
+
+    // 2. LOCALFLOW_PROJECT_ROOT env var
+    if let Ok(val) = std::env::var("LOCALFLOW_PROJECT_ROOT") {
+        if !val.is_empty() {
+            return Ok(PathBuf::from(val));
+        }
+    }
+
+    // 3. Search upward from current directory
     let start_dir = std::env::current_dir()?;
-    resolve_from(explicit, &start_dir)
+    resolve_from(None, &start_dir)
 }
 
 fn resolve_from(explicit: Option<&Path>, start_dir: &Path) -> Result<PathBuf> {

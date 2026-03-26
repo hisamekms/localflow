@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::extract::{Path, State};
 use axum_extra::extract::Query;
 use axum::http::StatusCode;
@@ -27,7 +27,7 @@ struct ListQuery {
     tag: Vec<String>,
 }
 
-pub async fn serve(project_root: PathBuf, port: u16, host: bool) -> Result<()> {
+pub async fn serve(project_root: PathBuf, port: u16, host: Option<String>) -> Result<()> {
     let state = AppState {
         project_root: Arc::new(project_root),
     };
@@ -38,24 +38,21 @@ pub async fn serve(project_root: PathBuf, port: u16, host: bool) -> Result<()> {
         .route("/graph", get(graph_handler))
         .with_state(state);
 
-    let expose = host
-        || std::env::var("LOCALFLOW_WEB_HOST")
-            .map(|v| !v.is_empty() && v != "0" && v != "false")
-            .unwrap_or(false);
-    let ip = if expose {
-        [0, 0, 0, 0]
-    } else {
-        [127, 0, 0, 1]
-    };
-    let addr = std::net::SocketAddr::from((ip, port));
-    if expose {
+    let bind_addr_str = host
+        .or_else(|| std::env::var("LOCALFLOW_HOST").ok().filter(|v| !v.is_empty()))
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let bind_ip: std::net::IpAddr = bind_addr_str
+        .parse()
+        .with_context(|| format!("invalid bind address: {bind_addr_str}"))?;
+    let addr = std::net::SocketAddr::new(bind_ip, port);
+    if bind_ip.is_unspecified() {
         let device_ip = get_local_ip()
             .map(|ip| ip.to_string())
             .unwrap_or_else(|| "0.0.0.0".to_string());
         eprintln!("Listening on http://localhost:{port}");
         eprintln!("             http://{device_ip}:{port}");
     } else {
-        eprintln!("Listening on http://localhost:{port}");
+        eprintln!("Listening on http://{bind_ip}:{port}");
     }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

@@ -138,13 +138,80 @@ pub struct HookEvent {
 
 pub fn load_config(project_root: &Path) -> Result<Config> {
     let config_path = project_root.join(".localflow").join("config.toml");
-    if !config_path.exists() {
-        return Ok(Config::default());
+    let config = if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path)
+            .context("failed to read .localflow/config.toml")?;
+        toml::from_str(&content).context("failed to parse config.toml")?
+    } else {
+        Config::default()
+    };
+    Ok(apply_env_overrides(config))
+}
+
+fn apply_env_overrides(mut config: Config) -> Config {
+    // Workflow settings
+    if let Ok(val) = std::env::var("LOCALFLOW_COMPLETION_MODE") {
+        match val.as_str() {
+            "merge_then_complete" => {
+                config.workflow.completion_mode = CompletionMode::MergeThenComplete
+            }
+            "pr_then_complete" => {
+                config.workflow.completion_mode = CompletionMode::PrThenComplete
+            }
+            other => eprintln!("warning: unknown LOCALFLOW_COMPLETION_MODE={other}, ignoring"),
+        }
     }
-    let content =
-        std::fs::read_to_string(&config_path).context("failed to read .localflow/config.toml")?;
-    let config: Config = toml::from_str(&content).context("failed to parse config.toml")?;
-    Ok(config)
+    if let Ok(val) = std::env::var("LOCALFLOW_AUTO_MERGE") {
+        match val.to_lowercase().as_str() {
+            "true" | "1" | "yes" => config.workflow.auto_merge = true,
+            "false" | "0" | "no" => config.workflow.auto_merge = false,
+            other => eprintln!("warning: unknown LOCALFLOW_AUTO_MERGE={other}, ignoring"),
+        }
+    }
+
+    // Backend settings
+    if let Ok(val) = std::env::var("LOCALFLOW_API_URL") {
+        if !val.is_empty() {
+            config.backend.api_url = Some(val);
+        }
+    }
+    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_MODE") {
+        match val.to_lowercase().as_str() {
+            "server" => config.backend.hook_mode = HookMode::Server,
+            "client" => config.backend.hook_mode = HookMode::Client,
+            "both" => config.backend.hook_mode = HookMode::Both,
+            other => eprintln!("warning: unknown LOCALFLOW_HOOK_MODE={other}, ignoring"),
+        }
+    }
+
+    // Hook commands (append to existing config.toml entries)
+    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_ADDED") {
+        if !val.is_empty() {
+            config.hooks.on_task_added.push(val);
+        }
+    }
+    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_READY") {
+        if !val.is_empty() {
+            config.hooks.on_task_ready.push(val);
+        }
+    }
+    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_STARTED") {
+        if !val.is_empty() {
+            config.hooks.on_task_started.push(val);
+        }
+    }
+    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_COMPLETED") {
+        if !val.is_empty() {
+            config.hooks.on_task_completed.push(val);
+        }
+    }
+    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_CANCELED") {
+        if !val.is_empty() {
+            config.hooks.on_task_canceled.push(val);
+        }
+    }
+
+    config
 }
 
 pub fn build_event(
@@ -858,5 +925,120 @@ on_task_completed = ["notify", "log"]
         assert_eq!(json["event"], "task_added");
         assert_eq!(json["task"]["id"], 42);
         assert_eq!(json["task"]["title"], "Hook stdin test");
+    }
+
+    #[test]
+    fn env_override_completion_mode() {
+        unsafe {
+            let orig = std::env::var("LOCALFLOW_COMPLETION_MODE").ok();
+            std::env::set_var("LOCALFLOW_COMPLETION_MODE", "pr_then_complete");
+            let config = apply_env_overrides(Config::default());
+            assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
+            match orig {
+                Some(v) => std::env::set_var("LOCALFLOW_COMPLETION_MODE", v),
+                None => std::env::remove_var("LOCALFLOW_COMPLETION_MODE"),
+            }
+        }
+    }
+
+    #[test]
+    fn env_override_auto_merge() {
+        unsafe {
+            let orig = std::env::var("LOCALFLOW_AUTO_MERGE").ok();
+            std::env::set_var("LOCALFLOW_AUTO_MERGE", "false");
+            let config = apply_env_overrides(Config::default());
+            assert!(!config.workflow.auto_merge);
+            std::env::set_var("LOCALFLOW_AUTO_MERGE", "0");
+            let config = apply_env_overrides(Config::default());
+            assert!(!config.workflow.auto_merge);
+            match orig {
+                Some(v) => std::env::set_var("LOCALFLOW_AUTO_MERGE", v),
+                None => std::env::remove_var("LOCALFLOW_AUTO_MERGE"),
+            }
+        }
+    }
+
+    #[test]
+    fn env_override_hook_mode() {
+        unsafe {
+            let orig = std::env::var("LOCALFLOW_HOOK_MODE").ok();
+            std::env::set_var("LOCALFLOW_HOOK_MODE", "client");
+            let config = apply_env_overrides(Config::default());
+            assert_eq!(config.backend.hook_mode, HookMode::Client);
+            std::env::set_var("LOCALFLOW_HOOK_MODE", "both");
+            let config = apply_env_overrides(Config::default());
+            assert_eq!(config.backend.hook_mode, HookMode::Both);
+            match orig {
+                Some(v) => std::env::set_var("LOCALFLOW_HOOK_MODE", v),
+                None => std::env::remove_var("LOCALFLOW_HOOK_MODE"),
+            }
+        }
+    }
+
+    #[test]
+    fn env_override_api_url() {
+        unsafe {
+            let orig = std::env::var("LOCALFLOW_API_URL").ok();
+            std::env::set_var("LOCALFLOW_API_URL", "http://remote:3142");
+            let config = apply_env_overrides(Config::default());
+            assert_eq!(config.backend.api_url, Some("http://remote:3142".to_string()));
+            match orig {
+                Some(v) => std::env::set_var("LOCALFLOW_API_URL", v),
+                None => std::env::remove_var("LOCALFLOW_API_URL"),
+            }
+        }
+    }
+
+    #[test]
+    fn env_override_hooks_append() {
+        unsafe {
+            let orig = std::env::var("LOCALFLOW_HOOK_ON_TASK_ADDED").ok();
+            std::env::set_var("LOCALFLOW_HOOK_ON_TASK_ADDED", "env-hook");
+            // Start with a config that already has a hook from config.toml
+            let mut config = Config::default();
+            config.hooks.on_task_added = vec!["toml-hook".into()];
+            let config = apply_env_overrides(config);
+            assert_eq!(config.hooks.on_task_added, vec!["toml-hook", "env-hook"]);
+            match orig {
+                Some(v) => std::env::set_var("LOCALFLOW_HOOK_ON_TASK_ADDED", v),
+                None => std::env::remove_var("LOCALFLOW_HOOK_ON_TASK_ADDED"),
+            }
+        }
+    }
+
+    #[test]
+    fn env_override_empty_values_ignored() {
+        unsafe {
+            let orig_url = std::env::var("LOCALFLOW_API_URL").ok();
+            let orig_hook = std::env::var("LOCALFLOW_HOOK_ON_TASK_ADDED").ok();
+            std::env::set_var("LOCALFLOW_API_URL", "");
+            std::env::set_var("LOCALFLOW_HOOK_ON_TASK_ADDED", "");
+            let config = apply_env_overrides(Config::default());
+            assert_eq!(config.backend.api_url, None);
+            assert!(config.hooks.on_task_added.is_empty());
+            match orig_url {
+                Some(v) => std::env::set_var("LOCALFLOW_API_URL", v),
+                None => std::env::remove_var("LOCALFLOW_API_URL"),
+            }
+            match orig_hook {
+                Some(v) => std::env::set_var("LOCALFLOW_HOOK_ON_TASK_ADDED", v),
+                None => std::env::remove_var("LOCALFLOW_HOOK_ON_TASK_ADDED"),
+            }
+        }
+    }
+
+    #[test]
+    fn load_config_no_file_with_env_overrides() {
+        unsafe {
+            let orig = std::env::var("LOCALFLOW_COMPLETION_MODE").ok();
+            std::env::set_var("LOCALFLOW_COMPLETION_MODE", "pr_then_complete");
+            let tmp = tempfile::tempdir().unwrap();
+            let config = load_config(tmp.path()).unwrap();
+            assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
+            match orig {
+                Some(v) => std::env::set_var("LOCALFLOW_COMPLETION_MODE", v),
+                None => std::env::remove_var("LOCALFLOW_COMPLETION_MODE"),
+            }
+        }
     }
 }
