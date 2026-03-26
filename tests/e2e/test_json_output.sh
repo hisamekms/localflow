@@ -74,7 +74,7 @@ assert_eq "1" "$FOUND" "list: contains created task"
 # [4] next — JSON output
 echo "[4] next — JSON output"
 # Move task to todo first
-run_lf edit "$TASK_ID" --status todo >/dev/null
+run_lf ready "$TASK_ID" >/dev/null
 NEXT_OUT="$(run_lf --output json next)"
 
 echo "$NEXT_OUT" | jq . >/dev/null 2>&1
@@ -100,7 +100,7 @@ echo "[6] cancel — JSON output"
 # Create a new task, move to todo, then cancel
 CANCEL_ADD="$(run_lf --output json add --title "Cancel Target")"
 CANCEL_ID="$(echo "$CANCEL_ADD" | jq -r '.id')"
-run_lf edit "$CANCEL_ID" --status todo >/dev/null
+run_lf ready "$CANCEL_ID" >/dev/null
 CANCEL_OUT="$(run_lf --output json cancel "$CANCEL_ID" --reason "test cancel reason")"
 
 echo "$CANCEL_OUT" | jq . >/dev/null 2>&1

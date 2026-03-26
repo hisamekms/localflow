@@ -14,17 +14,17 @@ echo "--- Test: List Filter Options ---"
 # Setup: Create tasks
 # Task A: tags=backend,rust, status=todo
 A_ID="$(run_lf --output json add --title "Alpha" --tag backend --tag rust | jq -r '.id')"
-run_lf edit "$A_ID" --status todo >/dev/null
+run_lf ready "$A_ID" >/dev/null
 
 # Task B: tags=frontend, status=todo, depends on A
 B_ID="$(run_lf --output json add --title "Beta" --tag frontend | jq -r '.id')"
-run_lf edit "$B_ID" --status todo >/dev/null
+run_lf ready "$B_ID" >/dev/null
 run_lf deps add "$B_ID" --on "$A_ID" >/dev/null
 
 # Task C: tags=backend, status=completed
 C_ID="$(run_lf --output json add --title "Gamma" --tag backend | jq -r '.id')"
-run_lf edit "$C_ID" --status todo >/dev/null
-run_lf edit "$C_ID" --status in-progress >/dev/null
+run_lf ready "$C_ID" >/dev/null
+run_lf start "$C_ID" >/dev/null
 run_lf complete "$C_ID" >/dev/null
 
 # --- Case 1: --status todo ---

@@ -285,18 +285,93 @@ pub fn get_task(conn: &Connection, id: i64) -> Result<Task> {
     })
 }
 
-pub fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<Task> {
-    // Validate status transition if status change requested
-    if let Some(new_status) = params.status {
-        let current: String = conn.query_row(
+pub fn ready_task(conn: &Connection, id: i64) -> Result<Task> {
+    let current: String = conn
+        .query_row(
             "SELECT status FROM tasks WHERE id = ?1",
             rusqlite::params![id],
             |row| row.get(0),
-        ).context("task not found")?;
-        let current_status: TaskStatus = current.parse()?;
-        current_status.transition_to(new_status)?;
-    }
+        )
+        .context("task not found")?;
+    let current_status: TaskStatus = current.parse()?;
+    current_status.transition_to(TaskStatus::Todo)?;
 
+    conn.execute(
+        "UPDATE tasks SET status = 'todo', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+        rusqlite::params![id],
+    )?;
+
+    get_task(conn, id)
+}
+
+pub fn start_task(
+    conn: &Connection,
+    id: i64,
+    assignee_session_id: Option<String>,
+    started_at: &str,
+) -> Result<Task> {
+    let current: String = conn
+        .query_row(
+            "SELECT status FROM tasks WHERE id = ?1",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )
+        .context("task not found")?;
+    let current_status: TaskStatus = current.parse()?;
+    current_status.transition_to(TaskStatus::InProgress)?;
+
+    conn.execute(
+        "UPDATE tasks SET status = 'in_progress', started_at = ?2, assignee_session_id = ?3, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+        rusqlite::params![id, started_at, assignee_session_id],
+    )?;
+
+    get_task(conn, id)
+}
+
+pub fn complete_task(conn: &Connection, id: i64, completed_at: &str) -> Result<Task> {
+    let current: String = conn
+        .query_row(
+            "SELECT status FROM tasks WHERE id = ?1",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )
+        .context("task not found")?;
+    let current_status: TaskStatus = current.parse()?;
+    current_status.transition_to(TaskStatus::Completed)?;
+
+    conn.execute(
+        "UPDATE tasks SET status = 'completed', completed_at = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+        rusqlite::params![id, completed_at],
+    )?;
+
+    get_task(conn, id)
+}
+
+pub fn cancel_task(
+    conn: &Connection,
+    id: i64,
+    canceled_at: &str,
+    reason: Option<String>,
+) -> Result<Task> {
+    let current: String = conn
+        .query_row(
+            "SELECT status FROM tasks WHERE id = ?1",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )
+        .context("task not found")?;
+    let current_status: TaskStatus = current.parse()?;
+    current_status.transition_to(TaskStatus::Canceled)?;
+
+    conn.execute(
+        "UPDATE tasks SET status = 'canceled', canceled_at = ?2, cancel_reason = ?3, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+        rusqlite::params![id, canceled_at, reason],
+    )?;
+
+    get_task(conn, id)
+}
+
+pub fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<Task> {
     let mut columns = Vec::new();
     let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
@@ -319,10 +394,6 @@ pub fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Res
     if let Some(priority) = params.priority {
         columns.push(TaskColumn::Priority);
         values.push(Box::new(i32::from(priority)));
-    }
-    if let Some(status) = params.status {
-        columns.push(TaskColumn::Status);
-        values.push(Box::new(status.to_string()));
     }
     if let Some(ref assignee) = params.assignee_session_id {
         columns.push(TaskColumn::AssigneeSessionId);
@@ -434,7 +505,6 @@ enum TaskColumn {
     Description,
     Plan,
     Priority,
-    Status,
     AssigneeSessionId,
     StartedAt,
     CompletedAt,
@@ -453,7 +523,6 @@ impl TaskColumn {
             TaskColumn::Description => "description",
             TaskColumn::Plan => "plan",
             TaskColumn::Priority => "priority",
-            TaskColumn::Status => "status",
             TaskColumn::AssigneeSessionId => "assignee_session_id",
             TaskColumn::StartedAt => "started_at",
             TaskColumn::CompletedAt => "completed_at",
@@ -858,10 +927,32 @@ mod tests {
             in_scope: vec![],
             out_of_scope: vec![],
             branch: None,
-                pr_url: None,
+            pr_url: None,
             metadata: None,
             tags: vec![],
             dependencies: vec![],
+        }
+    }
+
+    /// Helper to transition a task through statuses using dedicated functions
+    fn transition_to(conn: &Connection, id: i64, target: TaskStatus) {
+        match target {
+            TaskStatus::Draft => {} // already draft
+            TaskStatus::Todo => {
+                ready_task(conn, id).unwrap();
+            }
+            TaskStatus::InProgress => {
+                ready_task(conn, id).unwrap();
+                start_task(conn, id, None, "2025-01-01T00:00:00Z").unwrap();
+            }
+            TaskStatus::Completed => {
+                ready_task(conn, id).unwrap();
+                start_task(conn, id, None, "2025-01-01T00:00:00Z").unwrap();
+                complete_task(conn, id, "2025-01-01T00:00:00Z").unwrap();
+            }
+            TaskStatus::Canceled => {
+                cancel_task(conn, id, "2025-01-01T00:00:00Z", None).unwrap();
+            }
         }
     }
 
@@ -990,7 +1081,6 @@ mod tests {
                 description: Some(Some("new description".to_string())),
                 plan: None,
                 priority: Some(Priority::P0),
-                status: Some(TaskStatus::Todo),
                 assignee_session_id: Some(Some("session-1".to_string())),
                 started_at: None,
                 completed_at: None,
@@ -1007,63 +1097,57 @@ mod tests {
         assert_eq!(updated.background.as_deref(), Some("new bg"));
         assert_eq!(updated.description.as_deref(), Some("new description"));
         assert_eq!(updated.priority, Priority::P0);
-        assert_eq!(updated.status, TaskStatus::Todo);
         assert_eq!(updated.assignee_session_id.as_deref(), Some("session-1"));
         assert!(updated.updated_at >= task.updated_at);
     }
 
     #[test]
-    fn update_task_status_transition_validated() {
+    fn status_transition_validated() {
         let (_tmp, conn) = setup();
         let task = create_task(&conn, &default_create_params("t")).unwrap();
         assert_eq!(task.status, TaskStatus::Draft);
 
-        // draft -> in_progress should fail
-        let result = update_task(
-            &conn,
-            task.id,
-            &UpdateTaskParams {
-                title: None,
-                background: None,
-                description: None,
-                plan: None,
-                priority: None,
-                status: Some(TaskStatus::InProgress),
-                assignee_session_id: None,
-                started_at: None,
-                completed_at: None,
-                canceled_at: None,
-                cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        );
+        // draft -> in_progress should fail (must go through todo)
+        let result = start_task(&conn, task.id, None, "2025-01-01T00:00:00Z");
         assert!(result.is_err());
 
         // draft -> todo should succeed
-        let updated = update_task(
-            &conn,
-            task.id,
-            &UpdateTaskParams {
-                title: None,
-                background: None,
-                description: None,
-                plan: None,
-                priority: None,
-                status: Some(TaskStatus::Todo),
-                assignee_session_id: None,
-                started_at: None,
-                completed_at: None,
-                canceled_at: None,
-                cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        )
-        .unwrap();
+        let updated = ready_task(&conn, task.id).unwrap();
         assert_eq!(updated.status, TaskStatus::Todo);
+
+        // todo -> in_progress should succeed
+        let updated = start_task(&conn, task.id, Some("session-1".into()), "2025-01-01T00:00:00Z").unwrap();
+        assert_eq!(updated.status, TaskStatus::InProgress);
+        assert_eq!(updated.assignee_session_id.as_deref(), Some("session-1"));
+        assert_eq!(updated.started_at.as_deref(), Some("2025-01-01T00:00:00Z"));
+
+        // in_progress -> completed should succeed
+        let updated = complete_task(&conn, task.id, "2025-01-01T01:00:00Z").unwrap();
+        assert_eq!(updated.status, TaskStatus::Completed);
+        assert_eq!(updated.completed_at.as_deref(), Some("2025-01-01T01:00:00Z"));
+    }
+
+    #[test]
+    fn cancel_task_from_any_active_status() {
+        let (_tmp, conn) = setup();
+
+        // cancel from draft
+        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+        let canceled = cancel_task(&conn, t1.id, "2025-01-01T00:00:00Z", Some("reason1".into())).unwrap();
+        assert_eq!(canceled.status, TaskStatus::Canceled);
+        assert_eq!(canceled.cancel_reason.as_deref(), Some("reason1"));
+
+        // cancel from todo
+        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+        ready_task(&conn, t2.id).unwrap();
+        let canceled = cancel_task(&conn, t2.id, "2025-01-01T00:00:00Z", None).unwrap();
+        assert_eq!(canceled.status, TaskStatus::Canceled);
+
+        // cancel from in_progress
+        let t3 = create_task(&conn, &default_create_params("t3")).unwrap();
+        transition_to(&conn, t3.id, TaskStatus::InProgress);
+        let canceled = cancel_task(&conn, t3.id, "2025-01-01T00:00:00Z", None).unwrap();
+        assert_eq!(canceled.status, TaskStatus::Canceled);
     }
 
     #[test]
@@ -1134,27 +1218,7 @@ mod tests {
         let _t2 = create_task(&conn, &default_create_params("todo")).unwrap();
 
         // Move t1 to todo
-        update_task(
-            &conn,
-            t1.id,
-            &UpdateTaskParams {
-                title: None,
-                background: None,
-                description: None,
-                plan: None,
-                priority: None,
-                status: Some(TaskStatus::Todo),
-                assignee_session_id: None,
-                started_at: None,
-                completed_at: None,
-                canceled_at: None,
-                cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        )
-        .unwrap();
+        transition_to(&conn, t1.id, TaskStatus::Todo);
 
         let drafts = list_tasks(
             &conn,
@@ -1220,48 +1284,10 @@ mod tests {
 
         // Create dep task and move to completed
         let dep = create_task(&conn, &default_create_params("dep")).unwrap();
-        update_task(
-            &conn,
-            dep.id,
-            &UpdateTaskParams {
-                title: None, background: None, description: None, plan: None, priority: None,
-                status: Some(TaskStatus::Todo),
-                assignee_session_id: None, started_at: None, completed_at: None,
-                canceled_at: None, cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        ).unwrap();
-        update_task(
-            &conn,
-            dep.id,
-            &UpdateTaskParams {
-                title: None, background: None, description: None, plan: None, priority: None,
-                status: Some(TaskStatus::InProgress),
-                assignee_session_id: None, started_at: None, completed_at: None,
-                canceled_at: None, cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        ).unwrap();
-        update_task(
-            &conn,
-            dep.id,
-            &UpdateTaskParams {
-                title: None, background: None, description: None, plan: None, priority: None,
-                status: Some(TaskStatus::Completed),
-                assignee_session_id: None, started_at: None, completed_at: None,
-                canceled_at: None, cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        ).unwrap();
+        transition_to(&conn, dep.id, TaskStatus::Completed);
 
         // Create task with completed dep -> should be ready
-        let ready_task = create_task(
+        let ready_t = create_task(
             &conn,
             &CreateTaskParams {
                 title: "ready".to_string(),
@@ -1269,19 +1295,7 @@ mod tests {
                 ..default_create_params("ready")
             },
         ).unwrap();
-        update_task(
-            &conn,
-            ready_task.id,
-            &UpdateTaskParams {
-                title: None, background: None, description: None, plan: None, priority: None,
-                status: Some(TaskStatus::Todo),
-                assignee_session_id: None, started_at: None, completed_at: None,
-                canceled_at: None, cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        ).unwrap();
+        transition_to(&conn, ready_t.id, TaskStatus::Todo);
 
         // Create another dep that is NOT completed
         let dep2 = create_task(&conn, &default_create_params("dep2")).unwrap();
@@ -1293,19 +1307,7 @@ mod tests {
                 ..default_create_params("blocked")
             },
         ).unwrap();
-        update_task(
-            &conn,
-            blocked_task.id,
-            &UpdateTaskParams {
-                title: None, background: None, description: None, plan: None, priority: None,
-                status: Some(TaskStatus::Todo),
-                assignee_session_id: None, started_at: None, completed_at: None,
-                canceled_at: None, cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        ).unwrap();
+        transition_to(&conn, blocked_task.id, TaskStatus::Todo);
 
         let result = list_tasks(
             &conn,
@@ -1543,50 +1545,13 @@ mod tests {
             },
         )
         .unwrap();
-        update_task(
-            conn,
-            task.id,
-            &UpdateTaskParams {
-                title: None, background: None, description: None, plan: None, priority: None,
-                status: Some(TaskStatus::Todo),
-                assignee_session_id: None, started_at: None, completed_at: None,
-                canceled_at: None, cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        )
-        .unwrap()
+        ready_task(conn, task.id).unwrap()
     }
 
     fn make_completed(conn: &Connection, title: &str) -> Task {
         let task = make_todo(conn, title, None);
-        update_task(
-            conn,
-            task.id,
-            &UpdateTaskParams {
-                title: None, background: None, description: None, plan: None, priority: None,
-                status: Some(TaskStatus::InProgress),
-                assignee_session_id: None, started_at: None, completed_at: None,
-                canceled_at: None, cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        ).unwrap();
-        update_task(
-            conn,
-            task.id,
-            &UpdateTaskParams {
-                title: None, background: None, description: None, plan: None, priority: None,
-                status: Some(TaskStatus::Completed),
-                assignee_session_id: None, started_at: None, completed_at: None,
-                canceled_at: None, cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        ).unwrap()
+        start_task(conn, task.id, None, "2025-01-01T00:00:00Z").unwrap();
+        complete_task(conn, task.id, "2025-01-01T00:00:00Z").unwrap()
     }
 
     #[test]
@@ -1611,19 +1576,7 @@ mod tests {
                 ..default_create_params("blocked")
             },
         ).unwrap();
-        update_task(
-            &conn,
-            task.id,
-            &UpdateTaskParams {
-                title: None, background: None, description: None, plan: None, priority: None,
-                status: Some(TaskStatus::Todo),
-                assignee_session_id: None, started_at: None, completed_at: None,
-                canceled_at: None, cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        ).unwrap();
+        ready_task(&conn, task.id).unwrap();
 
         assert!(next_task(&conn).unwrap().is_none());
     }
@@ -1682,19 +1635,7 @@ mod tests {
                 ..default_create_params("ready")
             },
         ).unwrap();
-        update_task(
-            &conn,
-            task.id,
-            &UpdateTaskParams {
-                title: None, background: None, description: None, plan: None, priority: None,
-                status: Some(TaskStatus::Todo),
-                assignee_session_id: None, started_at: None, completed_at: None,
-                canceled_at: None, cancel_reason: None,
-                branch: None,
-                pr_url: None,
-                metadata: None,
-            },
-        ).unwrap();
+        ready_task(&conn, task.id).unwrap();
 
         let result = next_task(&conn).unwrap().unwrap();
         assert_eq!(result.title, "ready");
@@ -1893,7 +1834,6 @@ mod tests {
                 description: None,
                 plan: None,
                 priority: None,
-                status: None,
                 assignee_session_id: None,
                 started_at: None,
                 completed_at: None,

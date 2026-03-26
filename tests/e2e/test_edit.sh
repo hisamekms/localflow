@@ -33,7 +33,7 @@ assert_json_field "$OUT" '.plan' "plan text" "edit plan"
 OUT="$(run_lf --output json edit "$TASK_ID" --priority p1)"
 assert_json_field "$OUT" '.priority' "P1" "edit priority"
 
-OUT="$(run_lf --output json edit "$TASK_ID" --status todo)"
+OUT="$(run_lf --output json ready "$TASK_ID")"
 assert_json_field "$OUT" '.status' "todo" "edit status"
 
 # 2. Field clear

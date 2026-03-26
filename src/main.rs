@@ -104,6 +104,18 @@ enum Command {
         #[arg(long)]
         session_id: Option<String>,
     },
+    /// Transition a task from draft to todo
+    Ready {
+        /// Task ID
+        id: i64,
+    },
+    /// Transition a task from todo to in_progress
+    Start {
+        /// Task ID
+        id: i64,
+        #[arg(long)]
+        session_id: Option<String>,
+    },
     /// Edit a task
     Edit {
         /// Task ID
@@ -124,8 +136,6 @@ enum Command {
         clear_plan: bool,
         #[arg(long, value_enum)]
         priority: Option<Priority>,
-        #[arg(long, value_enum)]
-        status: Option<TaskStatus>,
         /// Git branch name (supports ${task_id} template)
         #[arg(long)]
         branch: Option<String>,
@@ -378,6 +388,8 @@ fn run(cli: Cli) -> Result<()> {
         ),
         Command::Get { task_id } => cmd_get(&cli.output, cli.project_root.as_deref(), task_id),
         Command::Next { ref session_id } => cmd_next(&cli, session_id.clone()),
+        Command::Ready { id } => cmd_ready(&cli, id),
+        Command::Start { id, ref session_id } => cmd_start(&cli, id, session_id.clone()),
         Command::Edit {
             id,
             title,
@@ -388,7 +400,6 @@ fn run(cli: Cli) -> Result<()> {
             plan,
             clear_plan,
             priority,
-            status,
             branch,
             clear_branch,
             pr_url,
@@ -436,9 +447,6 @@ fn run(cli: Cli) -> Result<()> {
                 }
                 if let Some(ref p) = priority {
                     operations.push(format!("Update task #{}: set priority to {}", id, p));
-                }
-                if let Some(ref s) = status {
-                    operations.push(format!("Update task #{}: set status to {}", id, s));
                 }
                 if clear_branch {
                     operations.push(format!("Update task #{}: clear branch", id));
@@ -494,7 +502,6 @@ fn run(cli: Cli) -> Result<()> {
                     plan.map(Some)
                 },
                 priority,
-                status,
                 assignee_session_id: None,
                 started_at: None,
                 completed_at: None,
@@ -727,7 +734,6 @@ fn cmd_add(
                 description: None,
                 plan: None,
                 priority: None,
-                status: None,
                 assignee_session_id: None,
                 started_at: None,
                 completed_at: None,
@@ -884,6 +890,64 @@ fn cmd_get(
     Ok(())
 }
 
+fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let conn = db::open_db(&root)?;
+
+    let task = db::get_task(&conn, id)?;
+
+    if cli.dry_run {
+        let operations = vec![
+            format!("Ready task #{} (status: {} → todo)", id, task.status),
+        ];
+        return print_dry_run(&cli.output, &DryRunOperation { command: "ready".into(), operations });
+    }
+
+    let updated = db::ready_task(&conn, id)?;
+
+    match cli.output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&updated)?);
+        }
+        OutputFormat::Text => {
+            println!("Ready task #{}: {}", updated.id, updated.title);
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let conn = db::open_db(&root)?;
+
+    let task = db::get_task(&conn, id)?;
+
+    if cli.dry_run {
+        let mut operations = vec![
+            format!("Start task #{} (status: {} → in_progress)", id, task.status),
+        ];
+        if let Some(ref sid) = session_id {
+            operations.push(format!("Set assignee_session_id to \"{}\"", sid));
+        }
+        return print_dry_run(&cli.output, &DryRunOperation { command: "start".into(), operations });
+    }
+
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let updated = db::start_task(&conn, id, session_id, &now)?;
+
+    match cli.output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&updated)?);
+        }
+        OutputFormat::Text => {
+            println!("Started task #{}: {}", updated.id, updated.title);
+        }
+    }
+
+    Ok(())
+}
+
 fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let conn = db::open_db(&root)?;
@@ -902,26 +966,7 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
     }
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = db::update_task(
-        &conn,
-        task.id,
-        &UpdateTaskParams {
-            title: None,
-            background: None,
-            description: None,
-            plan: None,
-            priority: None,
-            status: Some(TaskStatus::InProgress),
-            assignee_session_id: Some(session_id),
-            started_at: Some(Some(now)),
-            completed_at: None,
-            canceled_at: None,
-            cancel_reason: None,
-            branch: None,
-            pr_url: None,
-            metadata: None,
-        },
-    )?;
+    let updated = db::start_task(&conn, task.id, session_id, &now)?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -980,26 +1025,7 @@ fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     }
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = db::update_task(
-        &conn,
-        id,
-        &UpdateTaskParams {
-            title: None,
-            background: None,
-            description: None,
-            plan: None,
-            priority: None,
-            status: Some(TaskStatus::Completed),
-            assignee_session_id: None,
-            started_at: None,
-            completed_at: Some(Some(now)),
-            canceled_at: None,
-            cancel_reason: None,
-            branch: None,
-            pr_url: None,
-            metadata: None,
-        },
-    )?;
+    let updated = db::complete_task(&conn, id, &now)?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -1080,26 +1106,7 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     }
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = db::update_task(
-        &conn,
-        id,
-        &UpdateTaskParams {
-            title: None,
-            background: None,
-            description: None,
-            plan: None,
-            priority: None,
-            status: Some(TaskStatus::Canceled),
-            assignee_session_id: None,
-            started_at: None,
-            completed_at: None,
-            canceled_at: Some(Some(now)),
-            cancel_reason: reason.map(Some),
-            branch: None,
-            pr_url: None,
-            metadata: None,
-        },
-    )?;
+    let updated = db::cancel_task(&conn, id, &now, reason)?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -1121,7 +1128,10 @@ const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 
 [hooks]
 # on_task_added = "echo 'task added'"
+# on_task_ready = "echo 'task ready'"
+# on_task_started = "echo 'task started'"
 # on_task_completed = "echo 'task completed'"
+# on_task_canceled = "echo 'task canceled'"
 
 [workflow]
 # completion_mode = "merge_then_complete"  # or "pr_then_complete"
@@ -1175,12 +1185,36 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                     config.hooks.on_task_added.join(", ")
                 );
             }
+            if config.hooks.on_task_ready.is_empty() {
+                println!("    on_task_ready: (none)");
+            } else {
+                println!(
+                    "    on_task_ready: {}",
+                    config.hooks.on_task_ready.join(", ")
+                );
+            }
+            if config.hooks.on_task_started.is_empty() {
+                println!("    on_task_started: (none)");
+            } else {
+                println!(
+                    "    on_task_started: {}",
+                    config.hooks.on_task_started.join(", ")
+                );
+            }
             if config.hooks.on_task_completed.is_empty() {
                 println!("    on_task_completed: (none)");
             } else {
                 println!(
                     "    on_task_completed: {}",
                     config.hooks.on_task_completed.join(", ")
+                );
+            }
+            if config.hooks.on_task_canceled.is_empty() {
+                println!("    on_task_canceled: (none)");
+            } else {
+                println!(
+                    "    on_task_canceled: {}",
+                    config.hooks.on_task_canceled.join(", ")
                 );
             }
         }
@@ -1858,23 +1892,41 @@ mod tests {
     #[test]
     fn parse_edit_with_scalar_args() {
         let cli = Cli::parse_from([
-            "localflow", "edit", "5", "--title", "new title", "--priority", "p0", "--status",
-            "todo",
+            "localflow", "edit", "5", "--title", "new title", "--priority", "p0",
         ]);
         match cli.command {
             Command::Edit {
                 id,
                 title,
                 priority,
-                status,
                 ..
             } => {
                 assert_eq!(id, 5);
                 assert_eq!(title.as_deref(), Some("new title"));
                 assert_eq!(priority, Some(Priority::P0));
-                assert_eq!(status, Some(TaskStatus::Todo));
             }
             _ => panic!("expected Edit"),
+        }
+    }
+
+    #[test]
+    fn parse_ready_command() {
+        let cli = Cli::parse_from(["localflow", "ready", "3"]);
+        match cli.command {
+            Command::Ready { id } => assert_eq!(id, 3),
+            _ => panic!("expected Ready"),
+        }
+    }
+
+    #[test]
+    fn parse_start_command() {
+        let cli = Cli::parse_from(["localflow", "start", "5", "--session-id", "abc"]);
+        match cli.command {
+            Command::Start { id, session_id } => {
+                assert_eq!(id, 5);
+                assert_eq!(session_id.as_deref(), Some("abc"));
+            }
+            _ => panic!("expected Start"),
         }
     }
 
@@ -2240,6 +2292,8 @@ mod tests {
             "localflow list",
             "localflow get",
             "localflow next",
+            "localflow ready",
+            "localflow start",
             "localflow edit",
             "localflow complete",
             "localflow cancel",

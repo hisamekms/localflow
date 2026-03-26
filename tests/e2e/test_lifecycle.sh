@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# e2e test: Task lifecycle (create → get → list → status transitions → complete/cancel)
+# e2e test: Task lifecycle (create → get → list → ready → start/next → complete/cancel)
 
 set -euo pipefail
 
@@ -32,12 +32,12 @@ LIST_OUTPUT="$(run_lf --output json list)"
 LIST_CONTAINS_ID="$(echo "$LIST_OUTPUT" | jq -r --arg id "$TASK_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
 assert_eq "1" "$LIST_CONTAINS_ID" "list contains created task"
 
-# 4. Status transition to todo
-echo "[4] Status transition: draft → todo"
-EDIT_OUTPUT="$(run_lf --output json edit "$TASK_ID" --status todo)"
-assert_json_field "$EDIT_OUTPUT" '.status' "todo" "status changed to todo"
+# 4. Ready (draft → todo)
+echo "[4] Ready: draft → todo"
+READY_OUTPUT="$(run_lf --output json ready "$TASK_ID")"
+assert_json_field "$READY_OUTPUT" '.status' "todo" "ready sets status to todo"
 
-# 5. Next task (transitions to in_progress)
+# 5. Next task (transitions to in_progress via start)
 echo "[5] Next task"
 NEXT_OUTPUT="$(run_lf --output json next)"
 assert_json_field "$NEXT_OUTPUT" '.status' "in_progress" "next sets status to in_progress"
@@ -66,12 +66,12 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
-# 7. Create another task and cancel it
+# 7. Create another task, ready it, and cancel it
 echo "[7] Cancel task"
 ADD2_OUTPUT="$(run_lf --output json add --title "Cancel Me")"
 TASK2_ID="$(echo "$ADD2_OUTPUT" | jq -r '.id')"
 
-run_lf --output json edit "$TASK2_ID" --status todo >/dev/null
+run_lf ready "$TASK2_ID" >/dev/null
 
 CANCEL_OUTPUT="$(run_lf --output json cancel "$TASK2_ID" --reason "不要")"
 assert_json_field "$CANCEL_OUTPUT" '.status' "canceled" "cancel sets status to canceled"
@@ -85,5 +85,14 @@ else
   echo "  FAIL: canceled_at should be set"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
+
+# 8. Start with --session-id
+echo "[8] Start with session-id"
+ADD3_OUTPUT="$(run_lf --output json add --title "Start Test")"
+TASK3_ID="$(echo "$ADD3_OUTPUT" | jq -r '.id')"
+run_lf ready "$TASK3_ID" >/dev/null
+START_OUTPUT="$(run_lf --output json start "$TASK3_ID" --session-id "sess-123")"
+assert_json_field "$START_OUTPUT" '.status' "in_progress" "start sets status to in_progress"
+assert_json_field "$START_OUTPUT" '.assignee_session_id' "sess-123" "session_id is set"
 
 test_summary
