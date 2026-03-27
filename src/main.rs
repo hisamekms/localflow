@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
-use localflow::db::{self, TaskBackend};
+use localflow::backend::TaskBackend;
+use localflow::db;
 use localflow::hooks::{self, HookMode};
 use localflow::http_backend::HttpBackend;
 use localflow::models::{

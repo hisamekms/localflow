@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::db::TaskBackend;
+use crate::backend::TaskBackend;
 use crate::models::{Priority, Task, TaskStatus};
 
 #[derive(Debug, Serialize, Deserialize, Default)]

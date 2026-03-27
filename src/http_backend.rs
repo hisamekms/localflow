@@ -5,7 +5,7 @@ use serde_json::json;
 use ureq::http::Response;
 use ureq::{Agent, Body};
 
-use crate::db::TaskBackend;
+use crate::backend::TaskBackend;
 use crate::models::{
     CreateTaskParams, ListTasksFilter, Task, UpdateTaskArrayParams, UpdateTaskParams,
 };
