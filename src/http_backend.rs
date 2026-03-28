@@ -4,7 +4,7 @@ use anyhow::{bail, Result};
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::backend::TaskBackend;
+use crate::domain::repository::{ProjectRepository, TaskRepository};
 use crate::models::{
     AddProjectMemberParams, CreateProjectParams, CreateTaskParams, CreateUserParams,
     ListTasksFilter, Project, ProjectMember, Role, Task, UpdateTaskArrayParams, UpdateTaskParams,
@@ -147,7 +147,7 @@ fn array_params_to_json(params: &UpdateTaskArrayParams) -> serde_json::Value {
 }
 
 #[async_trait]
-impl TaskBackend for HttpBackend {
+impl ProjectRepository for HttpBackend {
     async fn create_project(&self, params: &CreateProjectParams) -> Result<Project> {
         let resp = self
             .client
@@ -314,9 +314,10 @@ impl TaskBackend for HttpBackend {
             .await?;
         read_json_or_error(resp).await
     }
+}
 
-    // Task CRUD
-
+#[async_trait]
+impl TaskRepository for HttpBackend {
     async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
         let resp = self
             .client
