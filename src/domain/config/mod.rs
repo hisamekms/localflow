@@ -12,6 +12,14 @@ pub struct Config {
     pub log: LogConfig,
     #[serde(default)]
     pub project: ProjectConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct AuthConfig {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -50,6 +58,7 @@ pub struct DynamoDbConfig {
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct BackendConfig {
     pub api_url: Option<String>,
+    pub api_key: Option<String>,
     #[serde(default)]
     pub hook_mode: HookMode,
     #[cfg(feature = "dynamodb")]

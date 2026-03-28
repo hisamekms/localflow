@@ -68,3 +68,30 @@ pub struct AddProjectMemberParams {
     pub user_id: i64,
     pub role: Option<Role>,
 }
+
+// --- API Key types ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKey {
+    pub id: i64,
+    pub user_id: i64,
+    pub key_prefix: String,
+    pub name: String,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyWithSecret {
+    pub id: i64,
+    pub user_id: i64,
+    pub key: String,
+    pub key_prefix: String,
+    pub name: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateApiKeyParams {
+    pub name: Option<String>,
+}

@@ -34,6 +34,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 tower-http = { version = "0.6", features = ["trace"] }
+sha2 = "0.10"
 aws-sdk-dynamodb = { version = "1", optional = true }
 aws-config = { version = "1", optional = true, features = ["behavior-version-latest"] }
 
