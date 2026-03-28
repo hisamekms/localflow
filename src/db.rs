@@ -9,6 +9,149 @@ use crate::models::{
     UpdateTaskParams,
 };
 
+struct Migration {
+    version: i64,
+    name: &'static str,
+    sql: &'static str,
+}
+
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial_schema",
+        sql: "
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                background TEXT,
+                description TEXT,
+                plan TEXT,
+                status TEXT NOT NULL DEFAULT 'draft',
+                priority INTEGER NOT NULL DEFAULT 2,
+                assignee_session_id TEXT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                started_at TEXT,
+                completed_at TEXT,
+                canceled_at TEXT,
+                cancel_reason TEXT,
+                branch TEXT,
+                pr_url TEXT,
+                metadata TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS task_definition_of_done (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                checked INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS task_in_scope (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS task_out_of_scope (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS task_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                tag TEXT NOT NULL,
+                UNIQUE(task_id, tag),
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS task_dependencies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                depends_on_task_id INTEGER NOT NULL,
+                UNIQUE(task_id, depends_on_task_id),
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                FOREIGN KEY (depends_on_task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+        ",
+    },
+];
+
+fn run_migrations(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );",
+    )?;
+
+    let max_version: Option<i64> = conn
+        .query_row(
+            "SELECT MAX(version) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+
+    if max_version.is_none() {
+        let has_tasks: bool = conn
+            .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'")
+            .and_then(|mut s| s.exists([]))
+            .unwrap_or(false);
+
+        if has_tasks {
+            // Legacy DB: apply old idempotent migrations, then mark version 1
+            migrate_dod_checked(conn)?;
+            migrate_legacy(conn)?;
+            conn.execute(
+                "INSERT INTO schema_migrations (version, name) VALUES (1, 'initial_schema')",
+                [],
+            )?;
+            return Ok(());
+        }
+    }
+
+    let current_version = max_version.unwrap_or(0);
+    for m in MIGRATIONS {
+        if m.version > current_version {
+            let tx_sql = format!("BEGIN;\n{}\nCOMMIT;", m.sql);
+            conn.execute_batch(&tx_sql)?;
+            conn.execute(
+                "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
+                params![m.version, m.name],
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn current_schema_version(conn: &Connection) -> Result<i64> {
+    let has_table: bool = conn
+        .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'")
+        .and_then(|mut s| s.exists([]))
+        .unwrap_or(false);
+    if !has_table {
+        return Ok(0);
+    }
+    let version: Option<i64> = conn
+        .query_row(
+            "SELECT MAX(version) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    Ok(version.unwrap_or(0))
+}
+
 fn open_db(project_root: &Path) -> Result<Connection> {
     let localflow_dir = project_root.join(".localflow");
     std::fs::create_dir_all(&localflow_dir)?;
@@ -26,9 +169,7 @@ fn open_db(project_root: &Path) -> Result<Connection> {
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     conn.execute_batch("PRAGMA busy_timeout=5000;")?;
 
-    create_schema(&conn)?;
-    migrate_dod_checked(&conn)?;
-    migrate(&conn)?;
+    run_migrations(&conn)?;
 
     warn_if_not_gitignored(project_root);
 
@@ -67,73 +208,9 @@ fn migrate_dod_checked(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn create_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            background TEXT,
-            description TEXT,
-            plan TEXT,
-            status TEXT NOT NULL DEFAULT 'draft',
-            priority INTEGER NOT NULL DEFAULT 2,
-            assignee_session_id TEXT,
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-            started_at TEXT,
-            completed_at TEXT,
-            canceled_at TEXT,
-            cancel_reason TEXT,
-            branch TEXT,
-            pr_url TEXT,
-            metadata TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS task_definition_of_done (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            checked INTEGER NOT NULL DEFAULT 0,
-            FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS task_in_scope (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS task_out_of_scope (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS task_tags (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER NOT NULL,
-            tag TEXT NOT NULL,
-            UNIQUE(task_id, tag),
-            FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS task_dependencies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER NOT NULL,
-            depends_on_task_id INTEGER NOT NULL,
-            UNIQUE(task_id, depends_on_task_id),
-            FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-            FOREIGN KEY (depends_on_task_id) REFERENCES tasks(id) ON DELETE CASCADE
-        );
-        ",
-    )?;
-    Ok(())
-}
-
-fn migrate(conn: &Connection) -> Result<()> {
+/// Legacy migration for pre-migration-system databases.
+/// Only called when upgrading an existing DB that lacks schema_migrations.
+fn migrate_legacy(conn: &Connection) -> Result<()> {
     // Add branch column if it doesn't exist (for databases created before this field)
     let has_branch: bool = conn
         .prepare("SELECT branch FROM tasks LIMIT 0")
@@ -1108,6 +1185,7 @@ mod tests {
         assert!(tables.contains(&"task_out_of_scope".to_string()));
         assert!(tables.contains(&"task_tags".to_string()));
         assert!(tables.contains(&"task_dependencies".to_string()));
+        assert!(tables.contains(&"schema_migrations".to_string()));
     }
 
     #[test]
@@ -2032,5 +2110,166 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(&conn, &default_create_params("t")).unwrap();
         assert!(check_dod(&conn, task.id, 1).is_err());
+    }
+
+    // --- Migration system tests ---
+
+    #[test]
+    fn fresh_db_records_migration_version() {
+        let (_tmp, conn) = setup();
+        let version = current_schema_version(&conn).unwrap();
+        assert_eq!(version, 1);
+    }
+
+    #[test]
+    fn schema_migrations_has_initial_entry() {
+        let (_tmp, conn) = setup();
+        let (version, name): (i64, String) = conn
+            .query_row(
+                "SELECT version, name FROM schema_migrations WHERE version = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(version, 1);
+        assert_eq!(name, "initial_schema");
+    }
+
+    #[test]
+    fn legacy_db_upgrade_records_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let localflow_dir = tmp.path().join(".localflow");
+        std::fs::create_dir_all(&localflow_dir).unwrap();
+        let db_path = localflow_dir.join("data.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+
+        // Create a legacy schema (without checked, branch, metadata, pr_url columns)
+        conn.execute_batch(
+            "
+            CREATE TABLE tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                background TEXT,
+                details TEXT,
+                status TEXT NOT NULL DEFAULT 'draft',
+                priority INTEGER NOT NULL DEFAULT 2,
+                assignee_session_id TEXT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                started_at TEXT,
+                completed_at TEXT,
+                canceled_at TEXT,
+                cancel_reason TEXT
+            );
+            CREATE TABLE task_definition_of_done (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+            CREATE TABLE task_in_scope (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+            CREATE TABLE task_out_of_scope (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+            CREATE TABLE task_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                tag TEXT NOT NULL,
+                UNIQUE(task_id, tag),
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+            CREATE TABLE task_dependencies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                depends_on_task_id INTEGER NOT NULL,
+                UNIQUE(task_id, depends_on_task_id),
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                FOREIGN KEY (depends_on_task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+            ",
+        )
+        .unwrap();
+
+        // Insert a task in the legacy schema
+        conn.execute(
+            "INSERT INTO tasks (title, details) VALUES ('legacy task', 'some details')",
+            [],
+        )
+        .unwrap();
+
+        drop(conn);
+
+        // Open via open_db which runs migrations
+        let conn = open_db(tmp.path()).unwrap();
+
+        // Version should be 1
+        let version = current_schema_version(&conn).unwrap();
+        assert_eq!(version, 1);
+
+        // Legacy columns should have been migrated
+        let has_description: bool = conn.prepare("SELECT description FROM tasks LIMIT 0").is_ok();
+        assert!(has_description);
+        let has_branch: bool = conn.prepare("SELECT branch FROM tasks LIMIT 0").is_ok();
+        assert!(has_branch);
+        let has_checked: bool = conn
+            .prepare("SELECT checked FROM task_definition_of_done LIMIT 0")
+            .is_ok();
+        assert!(has_checked);
+        let has_pr_url: bool = conn.prepare("SELECT pr_url FROM tasks LIMIT 0").is_ok();
+        assert!(has_pr_url);
+        let has_metadata: bool = conn.prepare("SELECT metadata FROM tasks LIMIT 0").is_ok();
+        assert!(has_metadata);
+
+        // Legacy data should be preserved (details renamed to description)
+        let desc: String = conn
+            .query_row(
+                "SELECT description FROM tasks WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(desc, "some details");
+    }
+
+    #[test]
+    fn migration_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn1 = open_db(tmp.path()).unwrap();
+        let v1 = current_schema_version(&conn1).unwrap();
+        drop(conn1);
+
+        let conn2 = open_db(tmp.path()).unwrap();
+        let v2 = current_schema_version(&conn2).unwrap();
+        assert_eq!(v1, v2);
+
+        // Only one row in schema_migrations
+        let count: i64 = conn2
+            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn current_schema_version_no_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let localflow_dir = tmp.path().join(".localflow");
+        std::fs::create_dir_all(&localflow_dir).unwrap();
+        let db_path = localflow_dir.join("data.db");
+        let conn = Connection::open(&db_path).unwrap();
+
+        // No schema_migrations table at all
+        let version = current_schema_version(&conn).unwrap();
+        assert_eq!(version, 0);
     }
 }
