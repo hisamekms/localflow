@@ -3,6 +3,8 @@ use std::str::FromStr;
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -103,4 +105,30 @@ pub struct ApiKeyWithSecret {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateApiKeyParams {
     pub name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewApiKey {
+    pub raw_key: String,
+    pub key_hash: String,
+    pub key_prefix: String,
+}
+
+impl NewApiKey {
+    pub fn generate() -> Self {
+        let raw_key = format!("lf_{}", Uuid::new_v4().simple());
+        let key_hash = hash_api_key(&raw_key);
+        let key_prefix = raw_key[..11].to_string();
+        Self {
+            raw_key,
+            key_hash,
+            key_prefix,
+        }
+    }
+}
+
+pub fn hash_api_key(key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    format!("{:x}", hasher.finalize())
 }

@@ -14,7 +14,8 @@ use crate::domain::task::{
     UpdateTaskParams,
 };
 use crate::domain::user::{
-    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, ProjectMember, Role, User,
+    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
+    Role, User,
 };
 
 pub struct DynamoDbBackend {
@@ -787,11 +788,11 @@ impl ProjectRepository for DynamoDbBackend {
 
     // API key management (not yet implemented for DynamoDB)
 
-    async fn create_api_key(&self, _user_id: i64, _name: &str) -> Result<ApiKeyWithSecret> {
+    async fn create_api_key(&self, _user_id: i64, _name: &str, _new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         bail!("API key management is not yet supported for DynamoDB backend")
     }
 
-    async fn get_user_by_api_key(&self, _key: &str) -> Result<User> {
+    async fn get_user_by_api_key(&self, _key_hash: &str) -> Result<User> {
         bail!("API key authentication is not yet supported for DynamoDB backend")
     }
 

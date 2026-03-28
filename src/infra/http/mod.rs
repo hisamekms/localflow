@@ -10,7 +10,8 @@ use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, Task, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
-    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, ProjectMember, Role, User,
+    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
+    Role, User,
 };
 
 pub struct HttpBackend {
@@ -329,7 +330,7 @@ impl ProjectRepository for HttpBackend {
 
     // API key management
 
-    async fn create_api_key(&self, user_id: i64, name: &str) -> Result<ApiKeyWithSecret> {
+    async fn create_api_key(&self, user_id: i64, name: &str, _new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         let resp = self.auth(
             self.client.post(self.url(&format!("/api/v1/users/{user_id}/api-keys")))
                 .json(&json!({ "name": name }))
@@ -337,7 +338,7 @@ impl ProjectRepository for HttpBackend {
         read_json_or_error(resp).await
     }
 
-    async fn get_user_by_api_key(&self, _key: &str) -> Result<User> {
+    async fn get_user_by_api_key(&self, _key_hash: &str) -> Result<User> {
         bail!("get_user_by_api_key is not supported via HTTP backend")
     }
 
