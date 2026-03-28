@@ -1103,6 +1103,7 @@ async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
+        task.status.transition_to(TaskStatus::Todo)?;
         let operations = vec![
             format!("Ready task #{} (status: {} → todo)", id, task.status),
         ];
@@ -1132,6 +1133,7 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Opti
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
+        task.status.transition_to(TaskStatus::InProgress)?;
         let mut operations = vec![
             format!("Start task #{} (status: {} → in_progress)", id, task.status),
         ];
@@ -1232,6 +1234,7 @@ async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
+        task.status.transition_to(TaskStatus::Completed)?;
         let operations = vec![
             format!("Complete task #{} (status: {} → completed)", id, task.status),
         ];
@@ -1261,6 +1264,7 @@ async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
+        task.status.transition_to(TaskStatus::Canceled)?;
         let mut operations = vec![
             format!("Cancel task #{} (status: {} → canceled)", id, task.status),
         ];
