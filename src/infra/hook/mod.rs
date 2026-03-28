@@ -616,10 +616,7 @@ on_task_completed = "echo completed"
         )
         .await
         .unwrap();
-        let mut task = backend.get_task(1, 1).await.unwrap();
-        task.ready().unwrap();
-        task.updated_at = "2025-01-01T00:00:00Z".to_string();
-        backend.save(&task).await.unwrap();
+        backend.ready_task(1, 1).await.unwrap();
         let task = backend.get_task(1, 1).await.unwrap();
         let event = build_event("task_added", &task, &backend, None, None).await;
         assert_eq!(event.ready_count, 1);
@@ -649,11 +646,8 @@ on_task_completed = "echo completed"
         )
         .await
         .unwrap();
-        let mut t1 = backend.get_task(1, 1).await.unwrap();
-        t1.ready().unwrap();
-        t1.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
-        t1.updated_at = "2025-01-01T00:00:00Z".to_string();
-        backend.save(&t1).await.unwrap();
+        backend.ready_task(1, 1).await.unwrap();
+        backend.start_task(1, 1, None, None, "2025-01-01T00:00:00Z").await.unwrap();
 
         backend.create_task(
             1,
@@ -674,10 +668,7 @@ on_task_completed = "echo completed"
         )
         .await
         .unwrap();
-        let mut t2 = backend.get_task(1, 2).await.unwrap();
-        t2.ready().unwrap();
-        t2.updated_at = "2025-01-01T00:00:00Z".to_string();
-        backend.save(&t2).await.unwrap();
+        backend.ready_task(1, 2).await.unwrap();
         backend.add_dependency(1, 2, 1).await.unwrap();
 
         // Capture ready tasks before completion
@@ -685,10 +676,7 @@ on_task_completed = "echo completed"
             backend.list_ready_tasks(1).await.unwrap().iter().map(|t| t.id).collect();
 
         // Complete task 1
-        let mut t1 = backend.get_task(1, 1).await.unwrap();
-        t1.complete("2025-01-01T00:00:00Z".to_string()).unwrap();
-        t1.updated_at = "2025-01-01T00:00:00Z".to_string();
-        backend.save(&t1).await.unwrap();
+        backend.complete_task(1, 1, "2025-01-01T00:00:00Z").await.unwrap();
 
         let unblocked = compute_unblocked(&backend, 1, &prev_ready).await;
         assert_eq!(unblocked.len(), 1);

@@ -10,7 +10,6 @@ use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, Task, TaskStatus, UnblockedTask, UpdateTaskArrayParams,
     UpdateTaskParams,
 };
-use crate::domain::validator::has_cycle_async;
 
 use super::port::{HookExecutor, PrVerifier};
 
@@ -98,22 +97,19 @@ impl TaskService {
     }
 
     pub async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
-        let mut task = self.backend.get_task(project_id, id).await?;
-        task.ready()?;
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        self.backend.save(&task).await?;
+        let updated = self.backend.ready_task(project_id, id).await?;
 
         self.hooks
             .fire_task_hook(
                 "task_ready",
-                &task,
+                &updated,
                 self.backend.as_ref(),
                 Some(TaskStatus::Draft),
                 None,
             )
             .await;
 
-        Ok(task)
+        Ok(updated)
     }
 
     pub async fn start_task(
@@ -123,24 +119,25 @@ impl TaskService {
         session_id: Option<String>,
         user_id: Option<i64>,
     ) -> Result<Task> {
-        let mut task = self.backend.get_task(project_id, id).await?;
+        let task = self.backend.get_task(project_id, id).await?;
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        task.start(session_id, user_id, now.clone())?;
-        task.updated_at = now;
-        self.backend.save(&task).await?;
+        let updated = self
+            .backend
+            .start_task(project_id, id, session_id, user_id, &now)
+            .await?;
 
         self.hooks
             .fire_task_hook(
                 "task_started",
-                &task,
+                &updated,
                 self.backend.as_ref(),
                 Some(prev_status),
                 None,
             )
             .await;
 
-        Ok(task)
+        Ok(updated)
     }
 
     pub async fn next_task(
@@ -149,7 +146,7 @@ impl TaskService {
         session_id: Option<String>,
         user_id: Option<i64>,
     ) -> Result<Task> {
-        let mut task = match self.backend.next_task(project_id).await? {
+        let task = match self.backend.next_task(project_id).await? {
             Some(t) => t,
             None => {
                 self.hooks
@@ -161,21 +158,22 @@ impl TaskService {
 
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        task.start(session_id, user_id, now.clone())?;
-        task.updated_at = now;
-        self.backend.save(&task).await?;
+        let updated = self
+            .backend
+            .start_task(project_id, task.id, session_id, user_id, &now)
+            .await?;
 
         self.hooks
             .fire_task_hook(
                 "task_started",
-                &task,
+                &updated,
                 self.backend.as_ref(),
                 Some(prev_status),
                 None,
             )
             .await;
 
-        Ok(task)
+        Ok(updated)
     }
 
     pub async fn complete_task(
@@ -184,7 +182,7 @@ impl TaskService {
         id: i64,
         skip_pr_check: bool,
     ) -> Result<Task> {
-        let mut task = self.backend.get_task(project_id, id).await?;
+        let task = self.backend.get_task(project_id, id).await?;
         task.status.transition_to(TaskStatus::Completed)?;
 
         // Validate all DoD items are checked
@@ -229,9 +227,7 @@ impl TaskService {
 
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        task.complete(now.clone())?;
-        task.updated_at = now;
-        self.backend.save(&task).await?;
+        let updated = self.backend.complete_task(project_id, id, &now).await?;
 
         // Compute unblocked tasks
         let unblocked = compute_unblocked(self.backend.as_ref(), project_id, &prev_ready_ids).await;
@@ -244,14 +240,14 @@ impl TaskService {
         self.hooks
             .fire_task_hook(
                 "task_completed",
-                &task,
+                &updated,
                 self.backend.as_ref(),
                 Some(prev_status),
                 unblocked_opt,
             )
             .await;
 
-        Ok(task)
+        Ok(updated)
     }
 
     pub async fn cancel_task(
@@ -260,24 +256,27 @@ impl TaskService {
         id: i64,
         reason: Option<String>,
     ) -> Result<Task> {
-        let mut task = self.backend.get_task(project_id, id).await?;
+        let task = self.backend.get_task(project_id, id).await?;
+        task.status.transition_to(TaskStatus::Canceled)?;
+
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        task.cancel(now.clone(), reason)?;
-        task.updated_at = now;
-        self.backend.save(&task).await?;
+        let updated = self
+            .backend
+            .cancel_task(project_id, id, &now, reason)
+            .await?;
 
         self.hooks
             .fire_task_hook(
                 "task_canceled",
-                &task,
+                &updated,
                 self.backend.as_ref(),
                 Some(prev_status),
                 None,
             )
             .await;
 
-        Ok(task)
+        Ok(updated)
     }
 
     // --- Passthrough methods (no hooks) ---
@@ -329,11 +328,7 @@ impl TaskService {
         task_id: i64,
         index: usize,
     ) -> Result<Task> {
-        let mut task = self.backend.get_task(project_id, task_id).await?;
-        task.check_dod(index)?;
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        self.backend.save(&task).await?;
-        Ok(task)
+        self.backend.check_dod(project_id, task_id, index).await
     }
 
     pub async fn uncheck_dod(
@@ -342,11 +337,7 @@ impl TaskService {
         task_id: i64,
         index: usize,
     ) -> Result<Task> {
-        let mut task = self.backend.get_task(project_id, task_id).await?;
-        task.uncheck_dod(index)?;
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        self.backend.save(&task).await?;
-        Ok(task)
+        self.backend.uncheck_dod(project_id, task_id, index).await
     }
 
     pub async fn add_dependency(
@@ -355,29 +346,6 @@ impl TaskService {
         task_id: i64,
         dep_id: i64,
     ) -> Result<Task> {
-        let mut task = self.backend.get_task(project_id, task_id).await?;
-        // Verify dep exists
-        let _ = self.backend.get_task(project_id, dep_id).await?;
-        // Domain validation (self-dep check)
-        task.add_dependency(dep_id)?;
-
-        // Cycle detection
-        let backend = self.backend.clone();
-        if has_cycle_async(task_id, dep_id, |id| {
-            let backend = backend.clone();
-            async move {
-                backend
-                    .list_dependencies(project_id, id)
-                    .await
-                    .map(|tasks| tasks.iter().map(|t| t.id).collect())
-                    .unwrap_or_default()
-            }
-        })
-        .await
-        {
-            bail!("adding this dependency would create a cycle");
-        }
-
         self.backend
             .add_dependency(project_id, task_id, dep_id)
             .await
@@ -400,34 +368,6 @@ impl TaskService {
         task_id: i64,
         dep_ids: &[i64],
     ) -> Result<Task> {
-        let mut task = self.backend.get_task(project_id, task_id).await?;
-        // Domain validation (self-dep check)
-        task.set_dependencies(dep_ids)?;
-
-        // Verify all deps exist
-        for &dep_id in dep_ids {
-            let _ = self.backend.get_task(project_id, dep_id).await?;
-        }
-
-        // Cycle detection for each new dependency
-        for &dep_id in dep_ids {
-            let backend = self.backend.clone();
-            if has_cycle_async(task_id, dep_id, |id| {
-                let backend = backend.clone();
-                async move {
-                    backend
-                        .list_dependencies(project_id, id)
-                        .await
-                        .map(|tasks| tasks.iter().map(|t| t.id).collect())
-                        .unwrap_or_default()
-                }
-            })
-            .await
-            {
-                bail!("adding dependency on {} would create a cycle", dep_id);
-            }
-        }
-
         self.backend
             .set_dependencies(project_id, task_id, dep_ids)
             .await
