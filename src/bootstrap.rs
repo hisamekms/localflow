@@ -160,7 +160,7 @@ pub async fn resolve_project_id(
                 .get_project_by_name(n)
                 .await
                 .with_context(|| format!("project not found: {n}"))?;
-            Ok(project.id)
+            Ok(project.id())
         }
         None => Ok(DEFAULT_PROJECT_ID),
     }
@@ -181,7 +181,7 @@ pub async fn resolve_user_id(
                 .get_user_by_username(n)
                 .await
                 .with_context(|| format!("user not found: {n}"))?;
-            Ok(user.id)
+            Ok(user.id())
         }
         None => Ok(DEFAULT_USER_ID),
     }
