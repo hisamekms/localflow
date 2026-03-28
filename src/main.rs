@@ -24,17 +24,33 @@ fn create_backend(
     project_root: &std::path::Path,
     config_path: Option<&std::path::Path>,
 ) -> Result<(Box<dyn TaskBackend>, bool)> {
+    let resolve_api_key = |config: &hooks::Config| -> Option<String> {
+        std::env::var("LOCALFLOW_API_KEY")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| config.backend.api_key.clone())
+    };
+
     // 1. LOCALFLOW_API_URL env var takes priority
     if let Ok(url) = std::env::var("LOCALFLOW_API_URL") {
         if !url.is_empty() {
-            return Ok((Box::new(HttpBackend::new(&url)), true));
+            let config = hooks::load_config(project_root, config_path)?;
+            let backend = match resolve_api_key(&config) {
+                Some(key) => HttpBackend::with_api_key(&url, key),
+                None => HttpBackend::new(&url),
+            };
+            return Ok((Box::new(backend), true));
         }
     }
 
     // 2. config.toml [backend] api_url
     let config = hooks::load_config(project_root, config_path)?;
     if let Some(ref url) = config.backend.api_url {
-        return Ok((Box::new(HttpBackend::new(url)), true));
+        let backend = match resolve_api_key(&config) {
+            Some(key) => HttpBackend::with_api_key(url, key),
+            None => HttpBackend::new(url),
+        };
+        return Ok((Box::new(backend), true));
     }
 
     // 3. DynamoDB backend (via env var or config)

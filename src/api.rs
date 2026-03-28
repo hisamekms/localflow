@@ -14,12 +14,16 @@ use serde::{Deserialize, Serialize};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+use crate::auth::{
+    self, ApiKeyProvider, AuthError, AuthProvider, HasAuth, OptionalAuthUser, Permission,
+};
 use crate::backend::TaskBackend;
 use crate::hooks;
 use crate::hooks::LogFormat;
 use crate::models::{
-    AddProjectMemberParams, CreateProjectParams, CreateTaskParams, CreateUserParams,
-    ListTasksFilter, Priority, Role, Task, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    AddProjectMemberParams, CreateApiKeyParams, CreateProjectParams, CreateTaskParams,
+    CreateUserParams, ListTasksFilter, Priority, Role, Task, TaskStatus, UpdateTaskArrayParams,
+    UpdateTaskParams,
 };
 
 #[derive(Clone)]
@@ -27,6 +31,45 @@ struct AppState {
     project_root: Arc<PathBuf>,
     config_path: Option<Arc<PathBuf>>,
     backend: Arc<dyn TaskBackend>,
+    auth_provider: Option<Arc<dyn AuthProvider>>,
+}
+
+impl HasAuth for AppState {
+    fn auth_provider(&self) -> Option<&dyn AuthProvider> {
+        self.auth_provider.as_deref()
+    }
+}
+
+impl AppState {
+    fn auth_enabled(&self) -> bool {
+        self.auth_provider.is_some()
+    }
+}
+
+/// Check project-level authorization. No-op when auth is disabled.
+async fn check_project_permission(
+    state: &AppState,
+    auth: &OptionalAuthUser,
+    project_id: i64,
+    permission: Permission,
+) -> Result<(), ApiError> {
+    if let Some(user) = require_auth_user(auth, state.auth_enabled())? {
+        auth::require_project_role(state.backend.as_ref(), user.id, project_id, permission)
+            .await
+            .map_err(ApiError::from)?;
+    }
+    Ok(())
+}
+
+/// For endpoints that require authentication: returns the user or 401.
+fn require_auth_user(auth: &OptionalAuthUser, auth_enabled: bool) -> Result<Option<&crate::models::User>, ApiError> {
+    if !auth_enabled {
+        return Ok(None);
+    }
+    match &auth.0 {
+        Some(a) => Ok(Some(&a.user)),
+        None => Err(ApiError::Unauthorized("authentication required".into())),
+    }
 }
 
 // --- Error handling ---
@@ -34,6 +77,8 @@ struct AppState {
 enum ApiError {
     NotFound(String),
     BadRequest(String),
+    Unauthorized(String),
+    Forbidden(String),
     Conflict(String),
     Internal(String),
 }
@@ -48,12 +93,16 @@ impl IntoResponse for ApiError {
         let (status, message) = match &self {
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
+            ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
         };
         let error_type = match self {
             ApiError::NotFound(_) => "not_found",
             ApiError::BadRequest(_) => "bad_request",
+            ApiError::Unauthorized(_) => "unauthorized",
+            ApiError::Forbidden(_) => "forbidden",
             ApiError::Conflict(_) => "conflict",
             ApiError::Internal(_) => "internal",
         };
@@ -64,6 +113,16 @@ impl IntoResponse for ApiError {
             "api_error"
         );
         (status, Json(ErrorBody { error: message })).into_response()
+    }
+}
+
+impl From<AuthError> for ApiError {
+    fn from(e: AuthError) -> Self {
+        match e {
+            AuthError::MissingToken => ApiError::Unauthorized("missing authorization header".into()),
+            AuthError::InvalidToken => ApiError::Unauthorized("invalid api key".into()),
+            AuthError::Forbidden(msg) => ApiError::Forbidden(msg),
+        }
     }
 }
 
@@ -205,10 +264,19 @@ pub async fn serve(
         .unwrap_or_default();
     init_tracing(&config.log);
 
+    let auth_provider: Option<Arc<dyn AuthProvider>> = if config.auth.enabled {
+        tracing::info!("authentication enabled");
+        Some(Arc::new(ApiKeyProvider::new(backend.clone())))
+    } else {
+        tracing::info!("authentication disabled");
+        None
+    };
+
     let state = AppState {
         project_root: Arc::new(project_root),
         config_path: config_path.map(Arc::new),
         backend,
+        auth_provider,
     };
 
     let app = Router::new()
@@ -217,6 +285,15 @@ pub async fn serve(
         .route(
             "/api/v1/users/{user_id}",
             get(get_user).delete(delete_user),
+        )
+        // API key management
+        .route(
+            "/api/v1/users/{user_id}/api-keys",
+            get(list_api_keys).post(create_api_key),
+        )
+        .route(
+            "/api/v1/users/{user_id}/api-keys/{key_id}",
+            delete(delete_api_key),
         )
         // Project CRUD
         .route("/api/v1/projects", get(list_projects).post(create_project))
@@ -356,7 +433,9 @@ fn get_local_ip() -> Option<std::net::IpAddr> {
 // GET /api/v1/projects
 async fn list_projects(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
 ) -> Result<Json<Vec<crate::models::Project>>, ApiError> {
+    require_auth_user(&auth, state.auth_enabled())?;
     let projects = state.backend.list_projects().await.map_err(classify_error)?;
     Ok(Json(projects))
 }
@@ -364,8 +443,10 @@ async fn list_projects(
 // POST /api/v1/projects
 async fn create_project(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Json(params): Json<CreateProjectParams>,
 ) -> Result<(StatusCode, Json<crate::models::Project>), ApiError> {
+    require_auth_user(&auth, state.auth_enabled())?;
     let project = state.backend.create_project(&params).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(project)))
 }
@@ -373,8 +454,10 @@ async fn create_project(
 // GET /api/v1/projects/{project_id}
 async fn get_project(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path(project_id): Path<i64>,
 ) -> Result<Json<crate::models::Project>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let project = state.backend.get_project(project_id).await.map_err(classify_error)?;
     Ok(Json(project))
 }
@@ -382,8 +465,10 @@ async fn get_project(
 // DELETE /api/v1/projects/{project_id}
 async fn delete_project(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path(project_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     state.backend.delete_project(project_id).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -393,9 +478,11 @@ async fn delete_project(
 // GET /api/v1/projects/{project_id}/tasks
 async fn list_tasks(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path(project_id): Path<i64>,
     Query(query): Query<ListTasksQuery>,
 ) -> Result<Json<Vec<Task>>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let statuses: Vec<TaskStatus> = query
         .status
         .iter()
@@ -415,9 +502,11 @@ async fn list_tasks(
 // POST /api/v1/projects/{project_id}/tasks
 async fn create_task(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path(project_id): Path<i64>,
     Json(params): Json<CreateTaskParams>,
 ) -> Result<(StatusCode, Json<Task>), ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let needs_template = params
         .branch
         .as_ref()
@@ -466,8 +555,10 @@ async fn create_task(
 // GET /api/v1/projects/{project_id}/tasks/{id}
 async fn get_task(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<Json<Task>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let task = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
     Ok(Json(task))
 }
@@ -475,9 +566,11 @@ async fn get_task(
 // PUT /api/v1/projects/{project_id}/tasks/{id}
 async fn edit_task(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, id)): Path<(i64, i64)>,
     Json(body): Json<EditTaskBody>,
 ) -> Result<Json<Task>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let branch_value = if body.clear_branch {
         Some(None)
     } else {
@@ -550,8 +643,10 @@ async fn edit_task(
 // DELETE /api/v1/projects/{project_id}/tasks/{id}
 async fn delete_task(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     state.backend.delete_task(project_id, id).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -559,8 +654,10 @@ async fn delete_task(
 // POST /api/v1/projects/{project_id}/tasks/{id}/ready
 async fn ready_task(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<Json<Task>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let updated = state.backend.ready_task(project_id, id).await.map_err(classify_error)?;
 
     let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
@@ -579,9 +676,11 @@ async fn ready_task(
 // POST /api/v1/projects/{project_id}/tasks/{id}/start
 async fn start_task(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, id)): Path<(i64, i64)>,
     Json(body): Json<StartBody>,
 ) -> Result<Json<Task>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let task = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -604,9 +703,11 @@ async fn start_task(
 // POST /api/v1/projects/{project_id}/tasks/{id}/complete
 async fn complete_task(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, id)): Path<(i64, i64)>,
     body: Option<Json<CompleteBody>>,
 ) -> Result<Json<Task>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let skip_pr_check = body.map(|b| b.skip_pr_check).unwrap_or(false);
     let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
 
@@ -672,9 +773,11 @@ async fn complete_task(
 // POST /api/v1/projects/{project_id}/tasks/{id}/cancel
 async fn cancel_task(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, id)): Path<(i64, i64)>,
     body: Option<Json<CancelBody>>,
 ) -> Result<Json<Task>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let reason = body.and_then(|b| b.0.reason);
     let task = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
     task.status
@@ -701,9 +804,11 @@ async fn cancel_task(
 // POST /api/v1/projects/{project_id}/tasks/next
 async fn next_task(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path(project_id): Path<i64>,
     body: Option<Json<NextBody>>,
 ) -> Result<Json<Task>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let (session_id, user_id) = body
         .map(|b| (b.0.session_id, b.0.user_id))
         .unwrap_or((None, None));
@@ -737,8 +842,10 @@ async fn next_task(
 // GET /api/v1/projects/{project_id}/tasks/{id}/deps
 async fn list_deps(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<Json<Vec<Task>>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let deps = state.backend.list_dependencies(project_id, id).await.map_err(classify_error)?;
     Ok(Json(deps))
 }
@@ -746,9 +853,11 @@ async fn list_deps(
 // POST /api/v1/projects/{project_id}/tasks/{id}/deps
 async fn add_dep(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, id)): Path<(i64, i64)>,
     Json(body): Json<AddDepBody>,
 ) -> Result<Json<Task>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let task = state.backend.add_dependency(project_id, id, body.dep_id).await.map_err(classify_error)?;
     Ok(Json(task))
 }
@@ -756,8 +865,10 @@ async fn add_dep(
 // DELETE /api/v1/projects/{project_id}/tasks/{id}/deps/{dep_id}
 async fn remove_dep(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, id, dep_id)): Path<(i64, i64, i64)>,
 ) -> Result<Json<Task>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let task = state.backend.remove_dependency(project_id, id, dep_id).await.map_err(classify_error)?;
     Ok(Json(task))
 }
@@ -765,8 +876,10 @@ async fn remove_dep(
 // POST /api/v1/projects/{project_id}/tasks/{id}/dod/{index}/check
 async fn check_dod(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, id, index)): Path<(i64, i64, usize)>,
 ) -> Result<Json<Task>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let task = state.backend.check_dod(project_id, id, index).await.map_err(classify_error)?;
     Ok(Json(task))
 }
@@ -774,8 +887,10 @@ async fn check_dod(
 // POST /api/v1/projects/{project_id}/tasks/{id}/dod/{index}/uncheck
 async fn uncheck_dod(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, id, index)): Path<(i64, i64, usize)>,
 ) -> Result<Json<Task>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let task = state.backend.uncheck_dod(project_id, id, index).await.map_err(classify_error)?;
     Ok(Json(task))
 }
@@ -791,8 +906,10 @@ async fn get_config(
 // GET /api/v1/projects/{project_id}/stats
 async fn get_stats(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path(project_id): Path<i64>,
 ) -> Result<Json<HashMap<String, i64>>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let stats = state.backend.task_stats(project_id).await.map_err(classify_error)?;
     Ok(Json(stats))
 }
@@ -802,7 +919,9 @@ async fn get_stats(
 // GET /api/v1/users
 async fn list_users(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
 ) -> Result<Json<Vec<crate::models::User>>, ApiError> {
+    require_auth_user(&auth, state.auth_enabled())?;
     let users = state.backend.list_users().await.map_err(classify_error)?;
     Ok(Json(users))
 }
@@ -810,8 +929,10 @@ async fn list_users(
 // POST /api/v1/users
 async fn create_user(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Json(params): Json<CreateUserParams>,
 ) -> Result<(StatusCode, Json<crate::models::User>), ApiError> {
+    require_auth_user(&auth, state.auth_enabled())?;
     let user = state.backend.create_user(&params).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(user)))
 }
@@ -819,8 +940,10 @@ async fn create_user(
 // GET /api/v1/users/{user_id}
 async fn get_user(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path(user_id): Path<i64>,
 ) -> Result<Json<crate::models::User>, ApiError> {
+    require_auth_user(&auth, state.auth_enabled())?;
     let user = state.backend.get_user(user_id).await.map_err(classify_error)?;
     Ok(Json(user))
 }
@@ -828,8 +951,10 @@ async fn get_user(
 // DELETE /api/v1/users/{user_id}
 async fn delete_user(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path(user_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
+    require_auth_user(&auth, state.auth_enabled())?;
     state.backend.delete_user(user_id).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -850,8 +975,10 @@ struct UpdateRoleBody {
 // GET /api/v1/projects/{project_id}/members
 async fn list_members(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path(project_id): Path<i64>,
 ) -> Result<Json<Vec<crate::models::ProjectMember>>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let members = state.backend.list_project_members(project_id).await.map_err(classify_error)?;
     Ok(Json(members))
 }
@@ -859,9 +986,11 @@ async fn list_members(
 // POST /api/v1/projects/{project_id}/members
 async fn add_member(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path(project_id): Path<i64>,
     Json(body): Json<AddMemberBody>,
 ) -> Result<(StatusCode, Json<crate::models::ProjectMember>), ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     let params = AddProjectMemberParams {
         user_id: body.user_id,
         role: body.role,
@@ -873,8 +1002,10 @@ async fn add_member(
 // GET /api/v1/projects/{project_id}/members/{user_id}
 async fn get_member(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, user_id)): Path<(i64, i64)>,
 ) -> Result<Json<crate::models::ProjectMember>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let member = state.backend.get_project_member(project_id, user_id).await.map_err(classify_error)?;
     Ok(Json(member))
 }
@@ -882,9 +1013,11 @@ async fn get_member(
 // PUT /api/v1/projects/{project_id}/members/{user_id}
 async fn update_member_role(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, user_id)): Path<(i64, i64)>,
     Json(body): Json<UpdateRoleBody>,
 ) -> Result<Json<crate::models::ProjectMember>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     let member = state.backend.update_member_role(project_id, user_id, body.role).await.map_err(classify_error)?;
     Ok(Json(member))
 }
@@ -892,9 +1025,48 @@ async fn update_member_role(
 // DELETE /api/v1/projects/{project_id}/members/{user_id}
 async fn remove_member(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
     Path((project_id, user_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     state.backend.remove_project_member(project_id, user_id).await.map_err(classify_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// --- API Key Handlers ---
+
+// GET /api/v1/users/{user_id}/api-keys
+async fn list_api_keys(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(user_id): Path<i64>,
+) -> Result<Json<Vec<crate::models::ApiKey>>, ApiError> {
+    require_auth_user(&auth, state.auth_enabled())?;
+    let keys = state.backend.list_api_keys(user_id).await.map_err(classify_error)?;
+    Ok(Json(keys))
+}
+
+// POST /api/v1/users/{user_id}/api-keys
+async fn create_api_key(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(user_id): Path<i64>,
+    body: Option<Json<CreateApiKeyParams>>,
+) -> Result<(StatusCode, Json<crate::models::ApiKeyWithSecret>), ApiError> {
+    require_auth_user(&auth, state.auth_enabled())?;
+    let name = body.and_then(|b| b.0.name).unwrap_or_default();
+    let key = state.backend.create_api_key(user_id, &name).await.map_err(classify_error)?;
+    Ok((StatusCode::CREATED, Json(key)))
+}
+
+// DELETE /api/v1/users/{user_id}/api-keys/{key_id}
+async fn delete_api_key(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path((_user_id, key_id)): Path<(i64, i64)>,
+) -> Result<StatusCode, ApiError> {
+    require_auth_user(&auth, state.auth_enabled())?;
+    state.backend.delete_api_key(key_id).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -8,7 +8,7 @@ use super::task::{
     CreateTaskParams, ListTasksFilter, Task, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use super::user::{
-    AddProjectMemberParams, CreateUserParams, ProjectMember, Role, User,
+    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, ProjectMember, Role, User,
 };
 
 #[async_trait]
@@ -56,4 +56,10 @@ pub trait ProjectRepository: Send + Sync {
     async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>>;
     async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember>;
     async fn update_member_role(&self, project_id: i64, user_id: i64, role: Role) -> Result<ProjectMember>;
+
+    // API key management
+    async fn create_api_key(&self, user_id: i64, name: &str) -> Result<ApiKeyWithSecret>;
+    async fn get_user_by_api_key(&self, key: &str) -> Result<User>;
+    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>>;
+    async fn delete_api_key(&self, key_id: i64) -> Result<()>;
 }
