@@ -123,6 +123,71 @@ impl FromStr for Priority {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    Owner,
+    Member,
+    Viewer,
+}
+
+impl fmt::Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Role::Owner => "owner",
+            Role::Member => "member",
+            Role::Viewer => "viewer",
+        };
+        write!(f, "{s}")
+    }
+}
+
+impl FromStr for Role {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "owner" => Ok(Role::Owner),
+            "member" => Ok(Role::Member),
+            "viewer" => Ok(Role::Viewer),
+            _ => Err(anyhow::anyhow!(
+                "invalid role: {s} (expected owner, member, or viewer)"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct User {
+    pub id: i64,
+    pub username: String,
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateUserParams {
+    pub username: String,
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectMember {
+    pub id: i64,
+    pub project_id: i64,
+    pub user_id: i64,
+    pub role: Role,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddProjectMemberParams {
+    pub user_id: i64,
+    pub role: Option<Role>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DodItem {
     pub content: String,
@@ -154,6 +219,7 @@ pub struct Task {
     pub priority: Priority,
     pub status: TaskStatus,
     pub assignee_session_id: Option<String>,
+    pub assignee_user_id: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
     pub started_at: Option<String>,
@@ -200,6 +266,7 @@ pub struct UpdateTaskParams {
     pub plan: Option<Option<String>>,
     pub priority: Option<Priority>,
     pub assignee_session_id: Option<Option<String>>,
+    pub assignee_user_id: Option<Option<i64>>,
     pub started_at: Option<Option<String>>,
     pub completed_at: Option<Option<String>>,
     pub canceled_at: Option<Option<String>>,
@@ -364,6 +431,37 @@ mod tests {
                 "{from} -> {to} should be err"
             );
         }
+    }
+
+    #[test]
+    fn role_display_roundtrip() {
+        let roles = [Role::Owner, Role::Member, Role::Viewer];
+        for role in roles {
+            let s = role.to_string();
+            let parsed: Role = s.parse().unwrap();
+            assert_eq!(parsed, role);
+        }
+    }
+
+    #[test]
+    fn role_serde_roundtrip() {
+        let role = Role::Owner;
+        let json = serde_json::to_string(&role).unwrap();
+        assert_eq!(json, "\"owner\"");
+        let parsed: Role = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, role);
+    }
+
+    #[test]
+    fn role_from_str_case_insensitive() {
+        assert_eq!("Owner".parse::<Role>().unwrap(), Role::Owner);
+        assert_eq!("MEMBER".parse::<Role>().unwrap(), Role::Member);
+        assert_eq!("viewer".parse::<Role>().unwrap(), Role::Viewer);
+    }
+
+    #[test]
+    fn role_invalid() {
+        assert!("admin".parse::<Role>().is_err());
     }
 
     #[test]
