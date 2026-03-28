@@ -16,14 +16,22 @@ HOOK_LOG="$TEST_DIR/hook.log"
 # Initialize DB first (creates .localflow/)
 run_lf --output json list >/dev/null 2>&1
 
-# Configure hooks for all events
+# Configure hooks for all events (named hook format)
 cat > "$TEST_PROJECT_ROOT/.localflow/config.toml" <<EOF
-[hooks]
-on_task_added = "cat >> $HOOK_LOG"
-on_task_ready = "cat >> $HOOK_LOG"
-on_task_started = "cat >> $HOOK_LOG"
-on_task_completed = "cat >> $HOOK_LOG"
-on_task_canceled = "cat >> $HOOK_LOG"
+[hooks.on_task_added.default]
+command = "cat >> $HOOK_LOG"
+
+[hooks.on_task_ready.default]
+command = "cat >> $HOOK_LOG"
+
+[hooks.on_task_started.default]
+command = "cat >> $HOOK_LOG"
+
+[hooks.on_task_completed.default]
+command = "cat >> $HOOK_LOG"
+
+[hooks.on_task_canceled.default]
+command = "cat >> $HOOK_LOG"
 EOF
 
 # 1. Create a task → should fire task_added
@@ -145,11 +153,17 @@ HOOK_LOG2="$TEST_DIR/hook2.log"
 run_lf --output json list >/dev/null 2>&1
 
 cat > "$TEST_PROJECT_ROOT/.localflow/config.toml" <<EOF
-[hooks]
-on_task_completed = "cat >> $HOOK_LOG2"
-on_task_added = "true"
-on_task_ready = "true"
-on_task_started = "true"
+[hooks.on_task_completed.default]
+command = "cat >> $HOOK_LOG2"
+
+[hooks.on_task_added.default]
+command = "true"
+
+[hooks.on_task_ready.default]
+command = "true"
+
+[hooks.on_task_started.default]
+command = "true"
 EOF
 
 # Create task 1 and task 2 (depends on 1)

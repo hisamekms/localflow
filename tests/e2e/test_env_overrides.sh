@@ -75,19 +75,20 @@ assert_json_field "$JSON_OUT" '.hooks.on_task_canceled._env.command' "cmd5" "on_
 
 echo "[9] LOCALFLOW_PROJECT_ROOT overrides --project-root"
 ALT_PROJECT="$(mktemp -d)"
+ALT_DB="$ALT_PROJECT/.localflow/data.db"
 # Initialize a DB via localflow in the alt project
-"$LOCALFLOW" --project-root "$ALT_PROJECT" add --title "Alt project task" >/dev/null
-JSON_OUT="$(LOCALFLOW_PROJECT_ROOT=$ALT_PROJECT "$LOCALFLOW" list)"
+"$LOCALFLOW" --project-root "$ALT_PROJECT" --db-path "$ALT_DB" add --title "Alt project task" >/dev/null
+JSON_OUT="$(LOCALFLOW_PROJECT_ROOT=$ALT_PROJECT LOCALFLOW_DB_PATH=$ALT_DB "$LOCALFLOW" list)"
 TASK_TITLE=$(echo "$JSON_OUT" | jq -r '.[0].title')
 assert_eq "Alt project task" "$TASK_TITLE" "LOCALFLOW_PROJECT_ROOT selects alt project"
 rm -rf "$ALT_PROJECT"
 
 echo "[10] LOCALFLOW_PORT sets serve port"
 PORT=$((20000 + RANDOM % 40000))
-LOCALFLOW_PORT=$PORT "$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" serve &
+LOCALFLOW_PORT=$PORT "$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.localflow/data.db" serve &
 SERVER_PID=$!
-trap 'kill $SERVER_PID 2>/dev/null; cleanup_test_env' EXIT
-wait_for "serve with LOCALFLOW_PORT" 10 "curl -sf http://127.0.0.1:$PORT/api/v1/stats >/dev/null"
+trap 'kill $SERVER_PID 2>/dev/null || true; cleanup_test_env' EXIT
+wait_for "serve with LOCALFLOW_PORT" 10 "curl -sf http://127.0.0.1:$PORT/api/v1/health >/dev/null"
 echo "  PASS: serve started on port $PORT via LOCALFLOW_PORT"
 PASS_COUNT=$((PASS_COUNT + 1))
 kill $SERVER_PID 2>/dev/null || true
@@ -95,10 +96,10 @@ wait $SERVER_PID 2>/dev/null || true
 
 echo "[11] LOCALFLOW_HOST sets bind address"
 PORT2=$((20000 + RANDOM % 40000))
-LOCALFLOW_HOST=127.0.0.1 "$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" serve --port "$PORT2" &
+LOCALFLOW_HOST=127.0.0.1 "$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.localflow/data.db" serve --port "$PORT2" &
 SERVER_PID2=$!
-trap 'kill $SERVER_PID2 2>/dev/null; cleanup_test_env' EXIT
-wait_for "serve with LOCALFLOW_HOST" 10 "curl -sf http://127.0.0.1:$PORT2/api/v1/stats >/dev/null"
+trap 'kill $SERVER_PID2 2>/dev/null || true; cleanup_test_env' EXIT
+wait_for "serve with LOCALFLOW_HOST" 10 "curl -sf http://127.0.0.1:$PORT2/api/v1/health >/dev/null"
 echo "  PASS: serve started with LOCALFLOW_HOST=127.0.0.1"
 PASS_COUNT=$((PASS_COUNT + 1))
 kill $SERVER_PID2 2>/dev/null || true
@@ -118,10 +119,10 @@ PORT_CLI=$((20000 + RANDOM % 40000))
 while [[ "$PORT_CLI" == "$PORT3" ]]; do
   PORT_CLI=$((20000 + RANDOM % 40000))
 done
-LOCALFLOW_PORT=$PORT3 "$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" serve --port "$PORT_CLI" &
+LOCALFLOW_PORT=$PORT3 "$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.localflow/data.db" serve --port "$PORT_CLI" &
 SERVER_PID3=$!
-trap 'kill $SERVER_PID3 2>/dev/null; cleanup_test_env' EXIT
-wait_for "serve with CLI port override" 10 "curl -sf http://127.0.0.1:$PORT_CLI/api/v1/stats >/dev/null"
+trap 'kill $SERVER_PID3 2>/dev/null || true; cleanup_test_env' EXIT
+wait_for "serve with CLI port override" 10 "curl -sf http://127.0.0.1:$PORT_CLI/api/v1/health >/dev/null"
 echo "  PASS: CLI --port overrides LOCALFLOW_PORT"
 PASS_COUNT=$((PASS_COUNT + 1))
 kill $SERVER_PID3 2>/dev/null || true

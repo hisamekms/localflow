@@ -104,11 +104,17 @@ mkdir -p "$XDG_ROOT/.localflow"
 result=$(cd "$XDG_ROOT" && XDG_DATA_HOME="$XDG_DATA" "$LOCALFLOW" --output json add --title "xdg default task")
 assert_json_field "$result" ".title" "xdg default task" "task created with XDG default path"
 
-if [[ -f "$XDG_DATA/localflow/data.db" ]]; then
-  echo "  PASS: data.db exists at XDG_DATA_HOME/localflow/data.db"
+# Per-project XDG path uses a hash of the project root
+XDG_DB_FOUND=false
+if compgen -G "$XDG_DATA/localflow/projects/*/data.db" >/dev/null 2>&1; then
+  XDG_DB_FOUND=true
+fi
+
+if [[ "$XDG_DB_FOUND" == "true" ]]; then
+  echo "  PASS: data.db exists at XDG_DATA_HOME/localflow/projects/<hash>/data.db"
   PASS_COUNT=$((PASS_COUNT + 1))
 else
-  echo "  FAIL: data.db not found at $XDG_DATA/localflow/data.db"
+  echo "  FAIL: data.db not found under $XDG_DATA/localflow/projects/"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 

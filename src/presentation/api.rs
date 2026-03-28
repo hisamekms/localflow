@@ -136,7 +136,7 @@ impl From<AuthError> for ApiError {
 
 fn classify_error(e: anyhow::Error) -> ApiError {
     let msg = e.to_string();
-    if msg.contains("not found") {
+    if msg.contains("not found") || msg.contains("no eligible task") {
         ApiError::NotFound(msg)
     } else if msg.contains("invalid status transition") || msg.contains("cannot complete task") {
         ApiError::Conflict(msg)
@@ -370,6 +370,7 @@ pub async fn serve(
             get(get_stats),
         )
         // Server-wide
+        .route("/api/v1/health", get(health_check))
         .route("/api/v1/config", get(get_config))
         .with_state(state)
         .layer(
@@ -736,6 +737,11 @@ async fn uncheck_dod(
 }
 
 // GET /api/v1/config
+// GET /api/v1/health
+async fn health_check() -> Json<serde_json::Value> {
+    Json(serde_json::json!({"status": "ok"}))
+}
+
 async fn get_config(
     State(state): State<AppState>,
 ) -> Result<Json<Config>, ApiError> {

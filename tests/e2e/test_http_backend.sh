@@ -10,12 +10,12 @@ PORT=$((20000 + RANDOM % 40000))
 API_URL="http://127.0.0.1:$PORT"
 
 # Start the API server in background
-"$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" serve --port "$PORT" &
+"$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.localflow/data.db" serve --port "$PORT" &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null; cleanup_test_env' EXIT
 
 # Wait for server to be ready
-wait_for "API server ready" 10 "curl -sf $API_URL/api/v1/stats >/dev/null"
+wait_for "API server ready" 10 "curl -sf $API_URL/api/v1/health >/dev/null"
 
 # Helper: run localflow CLI in HTTP backend mode
 run_http() {

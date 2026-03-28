@@ -11,18 +11,25 @@ trap cleanup_test_env EXIT
 
 echo "--- Test: inline hooks ---"
 
-# Helper: create config.toml with hooks
+# Helper: create config.toml with hooks (named hook format)
 create_config() {
   local on_added="${1:-}"
   local on_completed="${2:-}"
   local config_dir="$TEST_PROJECT_ROOT/.localflow"
   mkdir -p "$config_dir"
-  {
-    echo "[hooks]"
-    [[ -n "$on_added" ]] && echo "on_task_added = \"$on_added\""
-    [[ -n "$on_completed" ]] && echo "on_task_completed = \"$on_completed\""
-    true
-  } > "$config_dir/config.toml"
+  : > "$config_dir/config.toml"
+  if [[ -n "$on_added" ]]; then
+    cat >> "$config_dir/config.toml" <<HOOKEOF
+[hooks.on_task_added.default]
+command = "$on_added"
+HOOKEOF
+  fi
+  if [[ -n "$on_completed" ]]; then
+    cat >> "$config_dir/config.toml" <<HOOKEOF
+[hooks.on_task_completed.default]
+command = "$on_completed"
+HOOKEOF
+  fi
 }
 
 # 1. on_task_added hook fires for new task
@@ -127,8 +134,11 @@ MARKER2="$TEST_DIR/multi_hook2.txt"
 config_dir="$TEST_PROJECT_ROOT/.localflow"
 mkdir -p "$config_dir"
 cat > "$config_dir/config.toml" <<EOF
-[hooks]
-on_task_added = ["echo hook1 > $MARKER1", "echo hook2 > $MARKER2"]
+[hooks.on_task_added.hook1]
+command = "echo hook1 > $MARKER1"
+
+[hooks.on_task_added.hook2]
+command = "echo hook2 > $MARKER2"
 EOF
 
 run_lf add --title "Multi Hook Task" >/dev/null 2>&1

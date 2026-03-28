@@ -238,10 +238,10 @@ pub fn current_schema_version(conn: &Connection) -> Result<i64> {
     Ok(version.unwrap_or(0))
 }
 
-/// Resolve the XDG data directory path for the database.
-/// Returns `$XDG_DATA_HOME/localflow/data.db` or `~/.local/share/localflow/data.db`.
-fn xdg_data_db_path() -> Option<std::path::PathBuf> {
-    let data_dir = std::env::var("XDG_DATA_HOME")
+/// Resolve the XDG data directory base.
+/// Returns `$XDG_DATA_HOME` or `~/.local/share`.
+fn xdg_data_base() -> Option<std::path::PathBuf> {
+    std::env::var("XDG_DATA_HOME")
         .map(std::path::PathBuf::from)
         .ok()
         .filter(|p| p.is_absolute())
@@ -249,15 +249,57 @@ fn xdg_data_db_path() -> Option<std::path::PathBuf> {
             std::env::var("HOME")
                 .ok()
                 .map(|h| std::path::PathBuf::from(h).join(".local").join("share"))
-        })?;
+        })
+}
+
+/// Compute a per-project XDG database path using a hash of the project root.
+/// Returns `$XDG_DATA_HOME/localflow/projects/<hash>/data.db`.
+fn xdg_project_db_path(project_root: &Path) -> Option<std::path::PathBuf> {
+    use sha2::{Sha256, Digest};
+    let data_dir = xdg_data_base()?;
+    let canonical = project_root.canonicalize().ok()
+        .unwrap_or_else(|| project_root.to_path_buf());
+    let hash = format!("{:x}", Sha256::digest(canonical.to_string_lossy().as_bytes()));
+    let short_hash = &hash[..16];
+    Some(data_dir.join("localflow").join("projects").join(short_hash).join("data.db"))
+}
+
+/// Old global XDG path (pre-per-project migration).
+/// Returns `$XDG_DATA_HOME/localflow/data.db`.
+fn xdg_global_db_path() -> Option<std::path::PathBuf> {
+    let data_dir = xdg_data_base()?;
     Some(data_dir.join("localflow").join("data.db"))
+}
+
+/// Copy a database file and its WAL/SHM companions to a new location.
+fn copy_db_files(src: &Path, dst: &Path) -> Result<()> {
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    std::fs::copy(src, dst)?;
+    let src_wal = src.with_extension("db-wal");
+    let src_shm = src.with_extension("db-shm");
+    if src_wal.exists() {
+        std::fs::copy(&src_wal, dst.with_extension("db-wal"))?;
+    }
+    if src_shm.exists() {
+        std::fs::copy(&src_shm, dst.with_extension("db-shm"))?;
+    }
+    Ok(())
 }
 
 /// Resolve the database path with the following priority (high → low):
 /// 1. `explicit_db_path` (CLI --db-path or LOCALFLOW_DB_PATH env)
 /// 2. `config_db_path` (config.toml [storage] db_path)
-/// 3. Legacy migration: `.localflow/data.db` exists → copy to XDG path
-/// 4. XDG default: `$XDG_DATA_HOME/localflow/data.db`
+/// 3. Per-project XDG path (already exists)
+/// 4. Migration from old global XDG path → per-project XDG path
+/// 5. Migration from legacy `.localflow/data.db` → per-project XDG path
+/// 6. New installation: per-project XDG default
 fn resolve_db_path(
     project_root: &Path,
     explicit_db_path: Option<&Path>,
@@ -273,36 +315,18 @@ fn resolve_db_path(
         return Ok(std::path::PathBuf::from(p));
     }
 
-    // 3 & 4. Legacy migration or XDG default
-    let legacy_path = project_root.join(".localflow").join("data.db");
-    let xdg_path = xdg_data_db_path()
+    // 3. Per-project XDG path (already exists)
+    let xdg_path = xdg_project_db_path(project_root)
         .ok_or_else(|| anyhow::anyhow!("cannot determine XDG_DATA_HOME or HOME directory"))?;
 
     if xdg_path.exists() {
-        // Already migrated
         return Ok(xdg_path);
     }
 
+    // 4. Migrate from legacy project-local path
+    let legacy_path = project_root.join(".localflow").join("data.db");
     if legacy_path.exists() {
-        // Migrate: copy legacy → XDG
-        if let Some(parent) = xdg_path.parent() {
-            std::fs::create_dir_all(parent)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
-            }
-        }
-        std::fs::copy(&legacy_path, &xdg_path)?;
-        // Also copy WAL and SHM files if they exist
-        let legacy_wal = legacy_path.with_extension("db-wal");
-        let legacy_shm = legacy_path.with_extension("db-shm");
-        if legacy_wal.exists() {
-            std::fs::copy(&legacy_wal, xdg_path.with_extension("db-wal"))?;
-        }
-        if legacy_shm.exists() {
-            std::fs::copy(&legacy_shm, xdg_path.with_extension("db-shm"))?;
-        }
+        copy_db_files(&legacy_path, &xdg_path)?;
         eprintln!(
             "warning: migrated database from {} to {}. \
              The original file has been kept. You can remove it after verifying the migration.",
@@ -312,7 +336,27 @@ fn resolve_db_path(
         return Ok(xdg_path);
     }
 
-    // New installation: use XDG default
+    // 5. Migrate from old global XDG path (pre-per-project layout)
+    if let Some(global_path) = xdg_global_db_path() {
+        if global_path.exists() {
+            copy_db_files(&global_path, &xdg_path)?;
+            eprintln!(
+                "warning: migrated database from {} to {}. \
+                 The global database was shared across all projects. \
+                 If you have multiple projects, only the first to run gets this data. \
+                 The original file has been kept.",
+                global_path.display(),
+                xdg_path.display()
+            );
+            // Remove the global file so the next project doesn't also get it
+            let _ = std::fs::remove_file(&global_path);
+            let _ = std::fs::remove_file(global_path.with_extension("db-wal"));
+            let _ = std::fs::remove_file(global_path.with_extension("db-shm"));
+            return Ok(xdg_path);
+        }
+    }
+
+    // 6. New installation: per-project XDG default
     Ok(xdg_path)
 }
 
