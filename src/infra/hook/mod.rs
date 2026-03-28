@@ -10,7 +10,10 @@ use serde::Serialize;
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::domain::config::{CompletionMode, Config, HookMode, HooksConfig, LogFormat};
+use crate::domain::config::{
+    CompletionMode, Config, HookEntry, HookMode, HooksConfig, LogFormat, RawConfig,
+    RawLogConfig, RawWorkflowConfig,
+};
 use crate::domain::repository::TaskBackend;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
 

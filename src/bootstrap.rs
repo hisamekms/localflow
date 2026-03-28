@@ -147,7 +147,7 @@ pub async fn resolve_project_id(
 pub async fn resolve_user_id(
     backend: &dyn TaskBackend,
     cli_user: Option<&str>,
-    config: &hooks::Config,
+    config: &Config,
 ) -> Result<i64> {
     let name = cli_user.or(config.user.name.as_deref());
     match name {
