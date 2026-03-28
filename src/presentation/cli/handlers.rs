@@ -1235,10 +1235,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
             }
         }
         MemberAction::Add { user_id, role } => {
-            let params = AddProjectMemberParams {
-                user_id: *user_id,
-                role: *role,
-            };
+            let params = AddProjectMemberParams::new(*user_id, *role);
             let member = project_service
                 .add_project_member(DEFAULT_PROJECT_ID, &params)
                 .await?;

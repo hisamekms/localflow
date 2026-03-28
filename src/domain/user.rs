@@ -66,7 +66,16 @@ pub struct ProjectMember {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddProjectMemberParams {
     pub user_id: i64,
-    pub role: Option<Role>,
+    pub role: Role,
+}
+
+impl AddProjectMemberParams {
+    pub fn new(user_id: i64, role: Option<Role>) -> Self {
+        Self {
+            user_id,
+            role: role.unwrap_or(Role::Member),
+        }
+    }
 }
 
 // --- API Key types ---

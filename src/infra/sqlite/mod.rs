@@ -573,10 +573,9 @@ fn add_project_member(
     project_id: i64,
     params: &AddProjectMemberParams,
 ) -> Result<ProjectMember> {
-    let role = params.role.unwrap_or(Role::Member);
     conn.execute(
         "INSERT INTO project_members (project_id, user_id, role) VALUES (?1, ?2, ?3)",
-        rusqlite::params![project_id, params.user_id, role.to_string()],
+        rusqlite::params![project_id, params.user_id, params.role.to_string()],
     )?;
     let id = conn.last_insert_rowid();
     let created_at: String = conn.query_row(
@@ -588,7 +587,7 @@ fn add_project_member(
         id,
         project_id,
         user_id: params.user_id,
-        role,
+        role: params.role,
         created_at,
     })
 }
@@ -2906,7 +2905,7 @@ mod tests {
             .unwrap();
 
         let member = backend
-            .add_project_member(1, &AddProjectMemberParams { user_id: user.id, role: Some(Role::Member) })
+            .add_project_member(1, &AddProjectMemberParams::new(user.id, Some(Role::Member)))
             .await
             .unwrap();
         assert_eq!(member.role, Role::Member);

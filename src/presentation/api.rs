@@ -831,10 +831,7 @@ async fn add_member(
     Json(body): Json<AddMemberBody>,
 ) -> Result<(StatusCode, Json<crate::domain::user::ProjectMember>), ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
-    let params = AddProjectMemberParams {
-        user_id: body.user_id,
-        role: body.role,
-    };
+    let params = AddProjectMemberParams::new(body.user_id, body.role);
     let member = state.project_service.add_project_member(project_id, &params).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(member)))
 }

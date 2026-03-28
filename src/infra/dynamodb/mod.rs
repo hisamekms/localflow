@@ -734,7 +734,7 @@ impl ProjectRepository for DynamoDbBackend {
             id,
             project_id,
             user_id: params.user_id,
-            role: params.role.unwrap_or(Role::Member),
+            role: params.role,
             created_at: now,
         };
         self.put_item(member_to_item(&member)).await?;
