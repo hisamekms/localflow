@@ -9,7 +9,7 @@ use axum::Json;
 use serde::Serialize;
 
 use crate::domain::repository::TaskBackend;
-use crate::domain::user::{ProjectMember, Role, User};
+use crate::domain::user::{hash_api_key, ProjectMember, Role, User};
 
 // --- AuthProvider trait (extensible for OIDC in the future) ---
 
@@ -33,8 +33,9 @@ impl ApiKeyProvider {
 #[async_trait]
 impl AuthProvider for ApiKeyProvider {
     async fn authenticate(&self, token: &str) -> std::result::Result<User, AuthError> {
+        let key_hash = hash_api_key(token);
         self.backend
-            .get_user_by_api_key(token)
+            .get_user_by_api_key(&key_hash)
             .await
             .map_err(|_| AuthError::InvalidToken)
     }

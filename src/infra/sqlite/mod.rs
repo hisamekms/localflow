@@ -3,16 +3,14 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
-use sha2::{Digest, Sha256};
-use uuid::Uuid;
-
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
     CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
     UpdateTaskParams,
 };
 use crate::domain::user::{
-    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, ProjectMember, Role, User,
+    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
+    Role, User,
 };
 
 struct Migration {
@@ -486,22 +484,12 @@ fn delete_user(conn: &Connection, id: i64) -> Result<()> {
 
 // --- API Key CRUD ---
 
-fn hash_api_key(key: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(key.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
-fn create_api_key(conn: &Connection, user_id: i64, name: &str) -> Result<ApiKeyWithSecret> {
+fn create_api_key(conn: &Connection, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
     get_user(conn, user_id)?;
-
-    let raw_key = format!("lf_{}", Uuid::new_v4().simple());
-    let key_hash = hash_api_key(&raw_key);
-    let key_prefix = raw_key[..11].to_string();
 
     conn.execute(
         "INSERT INTO api_keys (user_id, key_hash, key_prefix, name) VALUES (?1, ?2, ?3, ?4)",
-        params![user_id, key_hash, key_prefix, name],
+        params![user_id, new_key.key_hash, new_key.key_prefix, name],
     )?;
     let id = conn.last_insert_rowid();
     let created_at: String = conn.query_row(
@@ -513,16 +501,14 @@ fn create_api_key(conn: &Connection, user_id: i64, name: &str) -> Result<ApiKeyW
     Ok(ApiKeyWithSecret {
         id,
         user_id,
-        key: raw_key,
-        key_prefix: key_prefix.clone(),
+        key: new_key.raw_key.clone(),
+        key_prefix: new_key.key_prefix.clone(),
         name: name.to_string(),
         created_at,
     })
 }
 
-fn get_user_by_api_key(conn: &Connection, key: &str) -> Result<User> {
-    let key_hash = hash_api_key(key);
-
+fn get_user_by_api_key(conn: &Connection, key_hash: &str) -> Result<User> {
     conn.execute(
         "UPDATE api_keys SET last_used_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE key_hash = ?1",
         params![key_hash],
@@ -1427,14 +1413,15 @@ impl ProjectRepository for SqliteBackend {
 
     // API key management
 
-    async fn create_api_key(&self, user_id: i64, name: &str) -> Result<ApiKeyWithSecret> {
+    async fn create_api_key(&self, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         let name = name.to_owned();
-        blocking!(self, |conn: &Connection| create_api_key(conn, user_id, &name))
+        let new_key = new_key.clone();
+        blocking!(self, |conn: &Connection| create_api_key(conn, user_id, &name, &new_key))
     }
 
-    async fn get_user_by_api_key(&self, key: &str) -> Result<User> {
-        let key = key.to_owned();
-        blocking!(self, |conn: &Connection| get_user_by_api_key(conn, &key))
+    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<User> {
+        let key_hash = key_hash.to_owned();
+        blocking!(self, |conn: &Connection| get_user_by_api_key(conn, &key_hash))
     }
 
     async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {

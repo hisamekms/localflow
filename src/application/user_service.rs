@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::domain::repository::TaskBackend;
 use crate::domain::user::{
-    ApiKey, ApiKeyWithSecret, CreateUserParams, User,
+    ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, User,
 };
 
 pub struct UserService {
@@ -43,7 +43,8 @@ impl UserService {
         user_id: i64,
         name: &str,
     ) -> Result<ApiKeyWithSecret> {
-        self.backend.create_api_key(user_id, name).await
+        let new_key = NewApiKey::generate();
+        self.backend.create_api_key(user_id, name, &new_key).await
     }
 
     pub async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
