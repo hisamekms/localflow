@@ -5,8 +5,9 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::models::{
-    CreateProjectParams, CreateTaskParams, DodItem, ListTasksFilter, Priority, Project, Task,
-    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    AddProjectMemberParams, CreateProjectParams, CreateTaskParams, CreateUserParams, DodItem,
+    ListTasksFilter, Priority, Project, ProjectMember, Role, Task, TaskStatus,
+    UpdateTaskArrayParams, UpdateTaskParams, User,
 };
 
 struct Migration {
@@ -96,6 +97,35 @@ const MIGRATIONS: &[Migration] = &[
             ALTER TABLE tasks ADD COLUMN project_id INTEGER NOT NULL DEFAULT 1;
 
             CREATE INDEX idx_tasks_project_id ON tasks(project_id);
+        ",
+    },
+    Migration {
+        version: 3,
+        name: "add_users_and_members",
+        sql: "
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                display_name TEXT,
+                email TEXT UNIQUE,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+
+            CREATE TABLE project_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                role TEXT NOT NULL DEFAULT 'member',
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                UNIQUE(project_id, user_id),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX idx_project_members_project_id ON project_members(project_id);
+            CREATE INDEX idx_project_members_user_id ON project_members(user_id);
+
+            ALTER TABLE tasks ADD COLUMN assignee_user_id INTEGER REFERENCES users(id);
         ",
     },
 ];
@@ -348,6 +378,177 @@ fn delete_project(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
+// --- User CRUD ---
+
+fn create_user(conn: &Connection, params: &CreateUserParams) -> Result<User> {
+    conn.execute(
+        "INSERT INTO users (username, display_name, email) VALUES (?1, ?2, ?3)",
+        rusqlite::params![params.username, params.display_name, params.email],
+    )?;
+    let id = conn.last_insert_rowid();
+    get_user(conn, id)
+}
+
+fn get_user(conn: &Connection, id: i64) -> Result<User> {
+    let (username, display_name, email, created_at): (String, Option<String>, Option<String>, String) = conn
+        .query_row(
+            "SELECT username, display_name, email, created_at FROM users WHERE id = ?1",
+            rusqlite::params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .context("user not found")?;
+    Ok(User {
+        id,
+        username,
+        display_name,
+        email,
+        created_at,
+    })
+}
+
+fn get_user_by_username(conn: &Connection, username: &str) -> Result<User> {
+    let (id, display_name, email, created_at): (i64, Option<String>, Option<String>, String) = conn
+        .query_row(
+            "SELECT id, display_name, email, created_at FROM users WHERE username = ?1",
+            rusqlite::params![username],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .context("user not found")?;
+    Ok(User {
+        id,
+        username: username.to_string(),
+        display_name,
+        email,
+        created_at,
+    })
+}
+
+fn list_users(conn: &Connection) -> Result<Vec<User>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, username, display_name, email, created_at FROM users ORDER BY id",
+    )?;
+    let users = stmt
+        .query_map([], |row| {
+            Ok(User {
+                id: row.get(0)?,
+                username: row.get(1)?,
+                display_name: row.get(2)?,
+                email: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(users)
+}
+
+fn delete_user(conn: &Connection, id: i64) -> Result<()> {
+    let affected = conn.execute("DELETE FROM users WHERE id = ?1", rusqlite::params![id])?;
+    if affected == 0 {
+        anyhow::bail!("user not found: {id}");
+    }
+    Ok(())
+}
+
+// --- Project Member CRUD ---
+
+fn add_project_member(
+    conn: &Connection,
+    project_id: i64,
+    params: &AddProjectMemberParams,
+) -> Result<ProjectMember> {
+    let role = params.role.unwrap_or(Role::Member);
+    conn.execute(
+        "INSERT INTO project_members (project_id, user_id, role) VALUES (?1, ?2, ?3)",
+        rusqlite::params![project_id, params.user_id, role.to_string()],
+    )?;
+    let id = conn.last_insert_rowid();
+    let created_at: String = conn.query_row(
+        "SELECT created_at FROM project_members WHERE id = ?1",
+        rusqlite::params![id],
+        |row| row.get(0),
+    )?;
+    Ok(ProjectMember {
+        id,
+        project_id,
+        user_id: params.user_id,
+        role,
+        created_at,
+    })
+}
+
+fn remove_project_member(conn: &Connection, project_id: i64, user_id: i64) -> Result<()> {
+    let affected = conn.execute(
+        "DELETE FROM project_members WHERE project_id = ?1 AND user_id = ?2",
+        rusqlite::params![project_id, user_id],
+    )?;
+    if affected == 0 {
+        anyhow::bail!("project member not found: project_id={project_id}, user_id={user_id}");
+    }
+    Ok(())
+}
+
+fn list_project_members(conn: &Connection, project_id: i64) -> Result<Vec<ProjectMember>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, user_id, role, created_at FROM project_members WHERE project_id = ?1 ORDER BY id",
+    )?;
+    let members = stmt
+        .query_map(rusqlite::params![project_id], |row| {
+            let role_str: String = row.get(2)?;
+            Ok((row.get(0)?, row.get(1)?, role_str, row.get(3)?))
+        })?
+        .collect::<std::result::Result<Vec<(i64, i64, String, String)>, _>>()?;
+
+    members
+        .into_iter()
+        .map(|(id, user_id, role_str, created_at)| {
+            let role: Role = role_str
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid role in database: {e}"))?;
+            Ok(ProjectMember {
+                id,
+                project_id,
+                user_id,
+                role,
+                created_at,
+            })
+        })
+        .collect()
+}
+
+fn get_project_member(conn: &Connection, project_id: i64, user_id: i64) -> Result<ProjectMember> {
+    let (id, role_str, created_at): (i64, String, String) = conn
+        .query_row(
+            "SELECT id, role, created_at FROM project_members WHERE project_id = ?1 AND user_id = ?2",
+            rusqlite::params![project_id, user_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .context("project member not found")?;
+    let role: Role = role_str.parse()?;
+    Ok(ProjectMember {
+        id,
+        project_id,
+        user_id,
+        role,
+        created_at,
+    })
+}
+
+fn update_member_role(
+    conn: &Connection,
+    project_id: i64,
+    user_id: i64,
+    role: Role,
+) -> Result<ProjectMember> {
+    let affected = conn.execute(
+        "UPDATE project_members SET role = ?3 WHERE project_id = ?1 AND user_id = ?2",
+        rusqlite::params![project_id, user_id, role.to_string()],
+    )?;
+    if affected == 0 {
+        anyhow::bail!("project member not found: project_id={project_id}, user_id={user_id}");
+    }
+    get_project_member(conn, project_id, user_id)
+}
+
 /// Verify that a task belongs to the given project.
 fn verify_task_project(conn: &Connection, project_id: i64, task_id: i64) -> Result<()> {
     let actual_project_id: i64 = conn
@@ -415,11 +616,11 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
 }
 
 fn get_task(conn: &Connection, id: i64) -> Result<Task> {
-    let (project_id, title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata_str): (
-        i64, String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
+    let (project_id, title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata_str, assignee_user_id): (
+        i64, String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>,
     ) = conn
         .query_row(
-            "SELECT project_id, title, background, description, plan, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata FROM tasks WHERE id = ?1",
+            "SELECT project_id, title, background, description, plan, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata, assignee_user_id FROM tasks WHERE id = ?1",
             params![id],
             |row| {
                 Ok((
@@ -427,7 +628,7 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
                     row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
                     row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?,
                     row.get(12)?, row.get(13)?, row.get(14)?, row.get(15)?,
-                    row.get(16)?,
+                    row.get(16)?, row.get(17)?,
                 ))
             },
         )
@@ -468,6 +669,7 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
         priority,
         status,
         assignee_session_id,
+        assignee_user_id,
         created_at,
         updated_at,
         started_at,
@@ -508,6 +710,7 @@ fn start_task(
     conn: &Connection,
     id: i64,
     assignee_session_id: Option<String>,
+    assignee_user_id: Option<i64>,
     started_at: &str,
 ) -> Result<Task> {
     let current: String = conn
@@ -521,8 +724,8 @@ fn start_task(
     current_status.transition_to(TaskStatus::InProgress)?;
 
     conn.execute(
-        "UPDATE tasks SET status = 'in_progress', started_at = ?2, assignee_session_id = ?3, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-        rusqlite::params![id, started_at, assignee_session_id],
+        "UPDATE tasks SET status = 'in_progress', started_at = ?2, assignee_session_id = ?3, assignee_user_id = ?4, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+        rusqlite::params![id, started_at, assignee_session_id, assignee_user_id],
     )?;
 
     get_task(conn, id)
@@ -598,6 +801,10 @@ fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<
     if let Some(ref assignee) = params.assignee_session_id {
         columns.push(TaskColumn::AssigneeSessionId);
         values.push(Box::new(assignee.clone()));
+    }
+    if let Some(ref assignee_user_id) = params.assignee_user_id {
+        columns.push(TaskColumn::AssigneeUserId);
+        values.push(Box::new(*assignee_user_id));
     }
     if let Some(ref started_at) = params.started_at {
         columns.push(TaskColumn::StartedAt);
@@ -706,6 +913,7 @@ enum TaskColumn {
     Plan,
     Priority,
     AssigneeSessionId,
+    AssigneeUserId,
     StartedAt,
     CompletedAt,
     CanceledAt,
@@ -724,6 +932,7 @@ impl TaskColumn {
             TaskColumn::Plan => "plan",
             TaskColumn::Priority => "priority",
             TaskColumn::AssigneeSessionId => "assignee_session_id",
+            TaskColumn::AssigneeUserId => "assignee_user_id",
             TaskColumn::StartedAt => "started_at",
             TaskColumn::CompletedAt => "completed_at",
             TaskColumn::CanceledAt => "canceled_at",
@@ -1167,6 +1376,53 @@ impl TaskBackend for SqliteBackend {
         blocking!(self, |conn: &Connection| delete_project(conn, id))
     }
 
+    // User management
+
+    async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
+        let params = params.clone();
+        blocking!(self, |conn: &Connection| create_user(conn, &params))
+    }
+
+    async fn get_user(&self, id: i64) -> Result<User> {
+        blocking!(self, |conn: &Connection| get_user(conn, id))
+    }
+
+    async fn get_user_by_username(&self, username: &str) -> Result<User> {
+        let username = username.to_owned();
+        blocking!(self, |conn: &Connection| get_user_by_username(conn, &username))
+    }
+
+    async fn list_users(&self) -> Result<Vec<User>> {
+        blocking!(self, |conn: &Connection| list_users(conn))
+    }
+
+    async fn delete_user(&self, id: i64) -> Result<()> {
+        blocking!(self, |conn: &Connection| delete_user(conn, id))
+    }
+
+    // Project membership
+
+    async fn add_project_member(&self, project_id: i64, params: &AddProjectMemberParams) -> Result<ProjectMember> {
+        let params = params.clone();
+        blocking!(self, |conn: &Connection| add_project_member(conn, project_id, &params))
+    }
+
+    async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()> {
+        blocking!(self, |conn: &Connection| remove_project_member(conn, project_id, user_id))
+    }
+
+    async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>> {
+        blocking!(self, |conn: &Connection| list_project_members(conn, project_id))
+    }
+
+    async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember> {
+        blocking!(self, |conn: &Connection| get_project_member(conn, project_id, user_id))
+    }
+
+    async fn update_member_role(&self, project_id: i64, user_id: i64, role: Role) -> Result<ProjectMember> {
+        blocking!(self, |conn: &Connection| update_member_role(conn, project_id, user_id, role))
+    }
+
     async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| create_task(conn, project_id, &params))
@@ -1186,11 +1442,11 @@ impl TaskBackend for SqliteBackend {
         })
     }
 
-    async fn start_task(&self, project_id: i64, id: i64, assignee_session_id: Option<String>, started_at: &str) -> Result<Task> {
+    async fn start_task(&self, project_id: i64, id: i64, assignee_session_id: Option<String>, assignee_user_id: Option<i64>, started_at: &str) -> Result<Task> {
         let started_at = started_at.to_owned();
         blocking!(self, |conn: &Connection| {
             verify_task_project(conn, project_id, id)?;
-            start_task(conn, id, assignee_session_id, &started_at)
+            start_task(conn, id, assignee_session_id, assignee_user_id, &started_at)
         })
     }
 
@@ -1334,11 +1590,11 @@ mod tests {
             }
             TaskStatus::InProgress => {
                 ready_task(conn, id).unwrap();
-                start_task(conn, id, None, "2025-01-01T00:00:00Z").unwrap();
+                start_task(conn, id, None, None, "2025-01-01T00:00:00Z").unwrap();
             }
             TaskStatus::Completed => {
                 ready_task(conn, id).unwrap();
-                start_task(conn, id, None, "2025-01-01T00:00:00Z").unwrap();
+                start_task(conn, id, None, None, "2025-01-01T00:00:00Z").unwrap();
                 complete_task(conn, id, "2025-01-01T00:00:00Z").unwrap();
             }
             TaskStatus::Canceled => {
@@ -1485,6 +1741,7 @@ mod tests {
                 plan: None,
                 priority: Some(Priority::P0),
                 assignee_session_id: Some(Some("session-1".to_string())),
+                assignee_user_id: None,
                 started_at: None,
                 completed_at: None,
                 canceled_at: None,
@@ -1511,7 +1768,7 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Draft);
 
         // draft -> in_progress should fail (must go through todo)
-        let result = start_task(&conn, task.id, None, "2025-01-01T00:00:00Z");
+        let result = start_task(&conn, task.id, None, None, "2025-01-01T00:00:00Z");
         assert!(result.is_err());
 
         // draft -> todo should succeed
@@ -1519,7 +1776,7 @@ mod tests {
         assert_eq!(updated.status, TaskStatus::Todo);
 
         // todo -> in_progress should succeed
-        let updated = start_task(&conn, task.id, Some("session-1".into()), "2025-01-01T00:00:00Z").unwrap();
+        let updated = start_task(&conn, task.id, Some("session-1".into()), None, "2025-01-01T00:00:00Z").unwrap();
         assert_eq!(updated.status, TaskStatus::InProgress);
         assert_eq!(updated.assignee_session_id.as_deref(), Some("session-1"));
         assert_eq!(updated.started_at.as_deref(), Some("2025-01-01T00:00:00Z"));
@@ -1969,7 +2226,7 @@ mod tests {
 
     fn make_completed(conn: &Connection, title: &str) -> Task {
         let task = make_todo(conn, title, None);
-        start_task(conn, task.id, None, "2025-01-01T00:00:00Z").unwrap();
+        start_task(conn, task.id, None, None, "2025-01-01T00:00:00Z").unwrap();
         complete_task(conn, task.id, "2025-01-01T00:00:00Z").unwrap()
     }
 
@@ -2257,6 +2514,7 @@ mod tests {
                 plan: None,
                 priority: None,
                 assignee_session_id: None,
+                assignee_user_id: None,
                 started_at: None,
                 completed_at: None,
                 canceled_at: None,
@@ -2329,7 +2587,7 @@ mod tests {
     fn fresh_db_records_migration_version() {
         let (_tmp, conn) = setup();
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
     }
 
     #[test]
@@ -2424,7 +2682,7 @@ mod tests {
 
         // Version should be 2 (legacy v1 + add_projects v2)
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
 
         // Legacy columns should have been migrated
         let has_description: bool = conn.prepare("SELECT description FROM tasks LIMIT 0").is_ok();
@@ -2462,13 +2720,13 @@ mod tests {
         let v2 = current_schema_version(&conn2).unwrap();
         assert_eq!(v1, v2);
 
-        // Two rows in schema_migrations (v1 + v2)
+        // Three rows in schema_migrations (v1 + v2 + v3)
         let count: i64 = conn2
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 2);
+        assert_eq!(count, 3);
     }
 
     #[test]

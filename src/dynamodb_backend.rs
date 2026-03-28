@@ -9,8 +9,9 @@ use tokio::sync::OnceCell;
 
 use crate::backend::TaskBackend;
 use crate::models::{
-    CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
-    UpdateTaskParams,
+    AddProjectMemberParams, CreateProjectParams, CreateTaskParams, CreateUserParams, DodItem,
+    ListTasksFilter, Priority, Project, ProjectMember, Role, Task, TaskStatus,
+    UpdateTaskArrayParams, UpdateTaskParams, User,
 };
 
 pub struct DynamoDbBackend {
@@ -112,13 +113,13 @@ impl DynamoDbBackend {
         Ok(())
     }
 
-    async fn next_id(&self) -> Result<i64> {
+    async fn next_id(&self, prefix: &str) -> Result<i64> {
         let client = self.client().await?;
         let resp = client
             .update_item()
             .table_name(&self.table_name)
-            .key("PK", AttributeValue::S("COUNTER".into()))
-            .key("SK", AttributeValue::S("COUNTER".into()))
+            .key("PK", AttributeValue::S(format!("COUNTER#{prefix}")))
+            .key("SK", AttributeValue::S(format!("COUNTER#{prefix}")))
             .update_expression("ADD #v :inc")
             .expression_attribute_names("#v", "value")
             .expression_attribute_values(":inc", AttributeValue::N("1".into()))
@@ -144,6 +145,18 @@ impl DynamoDbBackend {
             .send()
             .await
             .context("failed to put task")?;
+        Ok(())
+    }
+
+    async fn put_item(&self, item: HashMap<String, AttributeValue>) -> Result<()> {
+        let client = self.client().await?;
+        client
+            .put_item()
+            .table_name(&self.table_name)
+            .set_item(Some(item))
+            .send()
+            .await
+            .context("failed to put item")?;
         Ok(())
     }
 
@@ -186,7 +199,7 @@ impl DynamoDbBackend {
         visited.insert(dep_id);
 
         while let Some(current) = queue.pop_front() {
-            let task = match self.get_task(current).await {
+            let task = match self.get_task_internal(current).await {
                 Ok(t) => t,
                 Err(_) => continue,
             };
@@ -202,21 +215,19 @@ impl DynamoDbBackend {
         Ok(false)
     }
 
-    async fn is_task_ready(&self, task: &Task) -> Result<bool> {
-        if task.status != TaskStatus::Todo {
-            return Ok(false);
-        }
-        if task.dependencies.is_empty() {
-            return Ok(true);
-        }
-        let dep_tasks = self.batch_get_tasks(&task.dependencies).await?;
-        for dep in &dep_tasks {
-            if dep.status != TaskStatus::Completed {
-                return Ok(false);
-            }
-        }
-        // If a dependency was deleted, treat as non-blocking
-        Ok(true)
+    async fn get_task_internal(&self, id: i64) -> Result<Task> {
+        let client = self.client().await?;
+        let resp = client
+            .get_item()
+            .table_name(&self.table_name)
+            .key("PK", AttributeValue::S(format!("TASK#{id}")))
+            .key("SK", AttributeValue::S(format!("TASK#{id}")))
+            .send()
+            .await
+            .context("failed to get task")?;
+
+        let item = resp.item().context("task not found")?;
+        item_to_task(item)
     }
 
     async fn batch_get_tasks(&self, ids: &[i64]) -> Result<Vec<Task>> {
@@ -226,7 +237,6 @@ impl DynamoDbBackend {
         let client = self.client().await?;
         let mut tasks = Vec::new();
 
-        // BatchGetItem supports max 100 keys per request
         for chunk in ids.chunks(100) {
             let keys: Vec<HashMap<String, AttributeValue>> = chunk
                 .iter()
@@ -270,7 +280,6 @@ impl DynamoDbBackend {
             return Ok(Vec::new());
         }
 
-        // Collect all dependency IDs
         let dep_ids: HashSet<i64> = todo_tasks
             .iter()
             .flat_map(|t| t.dependencies.iter().copied())
@@ -291,6 +300,37 @@ impl DynamoDbBackend {
             }
         }
         Ok(ready)
+    }
+
+    async fn scan_items_by_prefix(&self, prefix: &str) -> Result<Vec<HashMap<String, AttributeValue>>> {
+        let client = self.client().await?;
+        let mut items = Vec::new();
+        let mut exclusive_start_key = None;
+
+        loop {
+            let mut req = client
+                .scan()
+                .table_name(&self.table_name)
+                .filter_expression("begins_with(PK, :prefix)")
+                .expression_attribute_values(":prefix", AttributeValue::S(prefix.into()));
+
+            if let Some(key) = exclusive_start_key.take() {
+                req = req.set_exclusive_start_key(Some(key));
+            }
+
+            let resp = req.send().await.context("failed to scan items")?;
+
+            for item in resp.items() {
+                items.push(item.clone());
+            }
+
+            match resp.last_evaluated_key() {
+                Some(key) => exclusive_start_key = Some(key.to_owned()),
+                None => break,
+            }
+        }
+
+        Ok(items)
     }
 }
 
@@ -315,6 +355,10 @@ fn opt_s(item: &HashMap<String, AttributeValue>, key: &str) -> Option<String> {
 
 fn req_s(item: &HashMap<String, AttributeValue>, key: &str) -> Result<String> {
     opt_s(item, key).with_context(|| format!("missing required field: {key}"))
+}
+
+fn opt_n(item: &HashMap<String, AttributeValue>, key: &str) -> Option<i64> {
+    item.get(key).and_then(|v| get_n(v).ok())
 }
 
 fn opt_s_list(item: &HashMap<String, AttributeValue>, key: &str) -> Vec<String> {
@@ -363,6 +407,7 @@ fn task_to_item(task: &Task) -> HashMap<String, AttributeValue> {
     item.insert("PK".into(), AttributeValue::S(pk.clone()));
     item.insert("SK".into(), AttributeValue::S(pk));
     item.insert("id".into(), AttributeValue::N(task.id.to_string()));
+    item.insert("project_id".into(), AttributeValue::N(task.project_id.to_string()));
     item.insert("title".into(), AttributeValue::S(task.title.clone()));
     item.insert("status".into(), AttributeValue::S(task.status.to_string()));
     item.insert("priority".into(), AttributeValue::N(i32::from(task.priority).to_string()));
@@ -380,6 +425,9 @@ fn task_to_item(task: &Task) -> HashMap<String, AttributeValue> {
     }
     if let Some(ref v) = task.assignee_session_id {
         item.insert("assignee_session_id".into(), AttributeValue::S(v.clone()));
+    }
+    if let Some(v) = task.assignee_user_id {
+        item.insert("assignee_user_id".into(), AttributeValue::N(v.to_string()));
     }
     if let Some(ref v) = task.started_at {
         item.insert("started_at".into(), AttributeValue::S(v.clone()));
@@ -453,6 +501,10 @@ fn item_to_task(item: &HashMap<String, AttributeValue>) -> Result<Task> {
         .get("id")
         .and_then(|v| get_n(v).ok())
         .context("missing id")?;
+    let project_id = item
+        .get("project_id")
+        .and_then(|v| get_n(v).ok())
+        .unwrap_or(1); // default for legacy items
     let title = req_s(item, "title")?;
     let status_str = req_s(item, "status")?;
     let status: TaskStatus = status_str.parse()?;
@@ -472,6 +524,7 @@ fn item_to_task(item: &HashMap<String, AttributeValue>) -> Result<Task> {
 
     Ok(Task {
         id,
+        project_id,
         title,
         background: opt_s(item, "background"),
         description: opt_s(item, "description"),
@@ -479,6 +532,7 @@ fn item_to_task(item: &HashMap<String, AttributeValue>) -> Result<Task> {
         priority,
         status,
         assignee_session_id: opt_s(item, "assignee_session_id"),
+        assignee_user_id: opt_n(item, "assignee_user_id"),
         created_at,
         updated_at,
         started_at: opt_s(item, "started_at"),
@@ -496,15 +550,271 @@ fn item_to_task(item: &HashMap<String, AttributeValue>) -> Result<Task> {
     })
 }
 
+fn project_to_item(project: &Project) -> HashMap<String, AttributeValue> {
+    let mut item = HashMap::new();
+    let pk = format!("PROJECT#{}", project.id);
+    item.insert("PK".into(), AttributeValue::S(pk.clone()));
+    item.insert("SK".into(), AttributeValue::S(pk));
+    item.insert("id".into(), AttributeValue::N(project.id.to_string()));
+    item.insert("name".into(), AttributeValue::S(project.name.clone()));
+    if let Some(ref desc) = project.description {
+        item.insert("description".into(), AttributeValue::S(desc.clone()));
+    }
+    item.insert("created_at".into(), AttributeValue::S(project.created_at.clone()));
+    item
+}
+
+fn item_to_project(item: &HashMap<String, AttributeValue>) -> Result<Project> {
+    Ok(Project {
+        id: opt_n(item, "id").context("missing id")?,
+        name: req_s(item, "name")?,
+        description: opt_s(item, "description"),
+        created_at: req_s(item, "created_at")?,
+    })
+}
+
+fn user_to_item(user: &User) -> HashMap<String, AttributeValue> {
+    let mut item = HashMap::new();
+    let pk = format!("USER#{}", user.id);
+    item.insert("PK".into(), AttributeValue::S(pk.clone()));
+    item.insert("SK".into(), AttributeValue::S(pk));
+    item.insert("id".into(), AttributeValue::N(user.id.to_string()));
+    item.insert("username".into(), AttributeValue::S(user.username.clone()));
+    if let Some(ref v) = user.display_name {
+        item.insert("display_name".into(), AttributeValue::S(v.clone()));
+    }
+    if let Some(ref v) = user.email {
+        item.insert("email".into(), AttributeValue::S(v.clone()));
+    }
+    item.insert("created_at".into(), AttributeValue::S(user.created_at.clone()));
+    item
+}
+
+fn item_to_user(item: &HashMap<String, AttributeValue>) -> Result<User> {
+    Ok(User {
+        id: opt_n(item, "id").context("missing id")?,
+        username: req_s(item, "username")?,
+        display_name: opt_s(item, "display_name"),
+        email: opt_s(item, "email"),
+        created_at: req_s(item, "created_at")?,
+    })
+}
+
+fn member_to_item(member: &ProjectMember) -> HashMap<String, AttributeValue> {
+    let mut item = HashMap::new();
+    let pk = format!("PROJMEMBER#{}#{}", member.project_id, member.user_id);
+    item.insert("PK".into(), AttributeValue::S(pk.clone()));
+    item.insert("SK".into(), AttributeValue::S(pk));
+    item.insert("id".into(), AttributeValue::N(member.id.to_string()));
+    item.insert("project_id".into(), AttributeValue::N(member.project_id.to_string()));
+    item.insert("user_id".into(), AttributeValue::N(member.user_id.to_string()));
+    item.insert("role".into(), AttributeValue::S(member.role.to_string()));
+    item.insert("created_at".into(), AttributeValue::S(member.created_at.clone()));
+    item
+}
+
+fn item_to_member(item: &HashMap<String, AttributeValue>) -> Result<ProjectMember> {
+    let role_str = req_s(item, "role")?;
+    let role: Role = role_str.parse()?;
+    Ok(ProjectMember {
+        id: opt_n(item, "id").context("missing id")?,
+        project_id: opt_n(item, "project_id").context("missing project_id")?,
+        user_id: opt_n(item, "user_id").context("missing user_id")?,
+        role,
+        created_at: req_s(item, "created_at")?,
+    })
+}
+
 #[async_trait]
 impl TaskBackend for DynamoDbBackend {
-    async fn create_task(&self, params: &CreateTaskParams) -> Result<Task> {
-        let id = self.next_id().await?;
+    // Project management
+
+    async fn create_project(&self, params: &CreateProjectParams) -> Result<Project> {
+        let id = self.next_id("PROJECT").await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let project = Project {
+            id,
+            name: params.name.clone(),
+            description: params.description.clone(),
+            created_at: now,
+        };
+        self.put_item(project_to_item(&project)).await?;
+        Ok(project)
+    }
+
+    async fn get_project(&self, id: i64) -> Result<Project> {
+        let client = self.client().await?;
+        let resp = client
+            .get_item()
+            .table_name(&self.table_name)
+            .key("PK", AttributeValue::S(format!("PROJECT#{id}")))
+            .key("SK", AttributeValue::S(format!("PROJECT#{id}")))
+            .send()
+            .await
+            .context("failed to get project")?;
+        let item = resp.item().context("project not found")?;
+        item_to_project(item)
+    }
+
+    async fn get_project_by_name(&self, name: &str) -> Result<Project> {
+        let projects = self.list_projects().await?;
+        projects
+            .into_iter()
+            .find(|p| p.name == name)
+            .ok_or_else(|| anyhow::anyhow!("project not found"))
+    }
+
+    async fn list_projects(&self) -> Result<Vec<Project>> {
+        let items = self.scan_items_by_prefix("PROJECT#").await?;
+        let mut projects: Vec<Project> = items.iter().map(|i| item_to_project(i)).collect::<Result<_>>()?;
+        projects.sort_by_key(|p| p.id);
+        Ok(projects)
+    }
+
+    async fn delete_project(&self, id: i64) -> Result<()> {
+        if id == 1 {
+            bail!("cannot delete the default project");
+        }
+        let client = self.client().await?;
+        client
+            .delete_item()
+            .table_name(&self.table_name)
+            .key("PK", AttributeValue::S(format!("PROJECT#{id}")))
+            .key("SK", AttributeValue::S(format!("PROJECT#{id}")))
+            .send()
+            .await
+            .context("failed to delete project")?;
+        Ok(())
+    }
+
+    // User management
+
+    async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
+        let id = self.next_id("USER").await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let user = User {
+            id,
+            username: params.username.clone(),
+            display_name: params.display_name.clone(),
+            email: params.email.clone(),
+            created_at: now,
+        };
+        self.put_item(user_to_item(&user)).await?;
+        Ok(user)
+    }
+
+    async fn get_user(&self, id: i64) -> Result<User> {
+        let client = self.client().await?;
+        let resp = client
+            .get_item()
+            .table_name(&self.table_name)
+            .key("PK", AttributeValue::S(format!("USER#{id}")))
+            .key("SK", AttributeValue::S(format!("USER#{id}")))
+            .send()
+            .await
+            .context("failed to get user")?;
+        let item = resp.item().context("user not found")?;
+        item_to_user(item)
+    }
+
+    async fn get_user_by_username(&self, username: &str) -> Result<User> {
+        let users = self.list_users().await?;
+        users
+            .into_iter()
+            .find(|u| u.username == username)
+            .ok_or_else(|| anyhow::anyhow!("user not found"))
+    }
+
+    async fn list_users(&self) -> Result<Vec<User>> {
+        let items = self.scan_items_by_prefix("USER#").await?;
+        let mut users: Vec<User> = items.iter().map(|i| item_to_user(i)).collect::<Result<_>>()?;
+        users.sort_by_key(|u| u.id);
+        Ok(users)
+    }
+
+    async fn delete_user(&self, id: i64) -> Result<()> {
+        let client = self.client().await?;
+        client
+            .delete_item()
+            .table_name(&self.table_name)
+            .key("PK", AttributeValue::S(format!("USER#{id}")))
+            .key("SK", AttributeValue::S(format!("USER#{id}")))
+            .send()
+            .await
+            .context("failed to delete user")?;
+        Ok(())
+    }
+
+    // Project membership
+
+    async fn add_project_member(&self, project_id: i64, params: &AddProjectMemberParams) -> Result<ProjectMember> {
+        let id = self.next_id("MEMBER").await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let member = ProjectMember {
+            id,
+            project_id,
+            user_id: params.user_id,
+            role: params.role.unwrap_or(Role::Member),
+            created_at: now,
+        };
+        self.put_item(member_to_item(&member)).await?;
+        Ok(member)
+    }
+
+    async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()> {
+        let client = self.client().await?;
+        let pk = format!("PROJMEMBER#{project_id}#{user_id}");
+        client
+            .delete_item()
+            .table_name(&self.table_name)
+            .key("PK", AttributeValue::S(pk.clone()))
+            .key("SK", AttributeValue::S(pk))
+            .send()
+            .await
+            .context("failed to remove project member")?;
+        Ok(())
+    }
+
+    async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>> {
+        let prefix = format!("PROJMEMBER#{project_id}#");
+        let items = self.scan_items_by_prefix(&prefix).await?;
+        let mut members: Vec<ProjectMember> = items.iter().map(|i| item_to_member(i)).collect::<Result<_>>()?;
+        members.sort_by_key(|m| m.id);
+        Ok(members)
+    }
+
+    async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember> {
+        let client = self.client().await?;
+        let pk = format!("PROJMEMBER#{project_id}#{user_id}");
+        let resp = client
+            .get_item()
+            .table_name(&self.table_name)
+            .key("PK", AttributeValue::S(pk.clone()))
+            .key("SK", AttributeValue::S(pk))
+            .send()
+            .await
+            .context("failed to get project member")?;
+        let item = resp.item().context("project member not found")?;
+        item_to_member(item)
+    }
+
+    async fn update_member_role(&self, project_id: i64, user_id: i64, role: Role) -> Result<ProjectMember> {
+        let mut member = self.get_project_member(project_id, user_id).await?;
+        member.role = role;
+        self.put_item(member_to_item(&member)).await?;
+        Ok(member)
+    }
+
+    // Task CRUD
+
+    async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
+        let id = self.next_id("TASK").await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let priority = params.priority.unwrap_or(Priority::P2);
 
         let task = Task {
             id,
+            project_id,
             title: params.title.clone(),
             background: params.background.clone(),
             description: params.description.clone(),
@@ -512,6 +822,7 @@ impl TaskBackend for DynamoDbBackend {
             priority,
             status: TaskStatus::Draft,
             assignee_session_id: None,
+            assignee_user_id: None,
             created_at: now.clone(),
             updated_at: now,
             started_at: None,
@@ -539,23 +850,16 @@ impl TaskBackend for DynamoDbBackend {
         Ok(task)
     }
 
-    async fn get_task(&self, id: i64) -> Result<Task> {
-        let client = self.client().await?;
-        let resp = client
-            .get_item()
-            .table_name(&self.table_name)
-            .key("PK", AttributeValue::S(format!("TASK#{id}")))
-            .key("SK", AttributeValue::S(format!("TASK#{id}")))
-            .send()
-            .await
-            .context("failed to get task")?;
-
-        let item = resp.item().context("task not found")?;
-        item_to_task(item)
+    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
+        let task = self.get_task_internal(id).await?;
+        if task.project_id != project_id {
+            bail!("task {id} does not belong to project {project_id}");
+        }
+        Ok(task)
     }
 
-    async fn ready_task(&self, id: i64) -> Result<Task> {
-        let mut task = self.get_task(id).await?;
+    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
+        let mut task = self.get_task(project_id, id).await?;
         task.status.transition_to(TaskStatus::Todo)?;
         task.status = TaskStatus::Todo;
         task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -565,22 +869,25 @@ impl TaskBackend for DynamoDbBackend {
 
     async fn start_task(
         &self,
+        project_id: i64,
         id: i64,
         assignee_session_id: Option<String>,
+        assignee_user_id: Option<i64>,
         started_at: &str,
     ) -> Result<Task> {
-        let mut task = self.get_task(id).await?;
+        let mut task = self.get_task(project_id, id).await?;
         task.status.transition_to(TaskStatus::InProgress)?;
         task.status = TaskStatus::InProgress;
         task.assignee_session_id = assignee_session_id;
+        task.assignee_user_id = assignee_user_id;
         task.started_at = Some(started_at.to_string());
         task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         self.put_task(&task).await?;
         Ok(task)
     }
 
-    async fn complete_task(&self, id: i64, completed_at: &str) -> Result<Task> {
-        let mut task = self.get_task(id).await?;
+    async fn complete_task(&self, project_id: i64, id: i64, completed_at: &str) -> Result<Task> {
+        let mut task = self.get_task(project_id, id).await?;
         task.status.transition_to(TaskStatus::Completed)?;
         task.status = TaskStatus::Completed;
         task.completed_at = Some(completed_at.to_string());
@@ -591,11 +898,12 @@ impl TaskBackend for DynamoDbBackend {
 
     async fn cancel_task(
         &self,
+        project_id: i64,
         id: i64,
         canceled_at: &str,
         reason: Option<String>,
     ) -> Result<Task> {
-        let mut task = self.get_task(id).await?;
+        let mut task = self.get_task(project_id, id).await?;
         task.status.transition_to(TaskStatus::Canceled)?;
         task.status = TaskStatus::Canceled;
         task.canceled_at = Some(canceled_at.to_string());
@@ -605,8 +913,8 @@ impl TaskBackend for DynamoDbBackend {
         Ok(task)
     }
 
-    async fn update_task(&self, id: i64, params: &UpdateTaskParams) -> Result<Task> {
-        let mut task = self.get_task(id).await?;
+    async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
+        let mut task = self.get_task(project_id, id).await?;
         let mut changed = false;
 
         if let Some(ref title) = params.title {
@@ -631,6 +939,10 @@ impl TaskBackend for DynamoDbBackend {
         }
         if let Some(ref v) = params.assignee_session_id {
             task.assignee_session_id = v.clone();
+            changed = true;
+        }
+        if let Some(ref v) = params.assignee_user_id {
+            task.assignee_user_id = *v;
             changed = true;
         }
         if let Some(ref v) = params.started_at {
@@ -670,8 +982,8 @@ impl TaskBackend for DynamoDbBackend {
         Ok(task)
     }
 
-    async fn update_task_arrays(&self, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
-        let mut task = self.get_task(id).await?;
+    async fn update_task_arrays(&self, project_id: i64, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
+        let mut task = self.get_task(project_id, id).await?;
         let mut changed = false;
 
         // Tags
@@ -755,66 +1067,49 @@ impl TaskBackend for DynamoDbBackend {
         Ok(())
     }
 
-    async fn delete_task(&self, id: i64) -> Result<()> {
+    async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
+        // Verify project ownership first
+        let _ = self.get_task(project_id, id).await?;
         let client = self.client().await?;
-        let resp = client
+        client
             .delete_item()
             .table_name(&self.table_name)
             .key("PK", AttributeValue::S(format!("TASK#{id}")))
             .key("SK", AttributeValue::S(format!("TASK#{id}")))
-            .condition_expression("attribute_exists(PK)")
-            .return_values(aws_sdk_dynamodb::types::ReturnValue::AllOld)
             .send()
-            .await;
-
-        match resp {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                let is_condition_fail = err
-                    .as_service_error()
-                    .map_or(false, |e| e.is_conditional_check_failed_exception());
-                if is_condition_fail {
-                    bail!("task not found");
-                }
-                Err(anyhow::anyhow!("failed to delete task: {err}"))
-            }
-        }
+            .await
+            .context("failed to delete task")?;
+        Ok(())
     }
 
-    async fn list_tasks(&self, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
         let all = self.scan_all_tasks().await?;
         let mut result: Vec<Task> = all
             .into_iter()
             .filter(|task| {
-                // Status filter
+                if task.project_id != project_id {
+                    return false;
+                }
                 if !filter.statuses.is_empty() && !filter.statuses.contains(&task.status) {
                     return false;
                 }
-
-                // Tag filter (any match)
                 if !filter.tags.is_empty()
                     && !filter.tags.iter().any(|t| task.tags.contains(t))
                 {
                     return false;
                 }
-
-                // depends_on filter
                 if let Some(dep_id) = filter.depends_on {
                     if !task.dependencies.contains(&dep_id) {
                         return false;
                     }
                 }
-
-                // ready filter (status check only; dep check below)
                 if filter.ready && task.status != TaskStatus::Todo {
                     return false;
                 }
-
                 true
             })
             .collect();
 
-        // For ready filter, check dependencies asynchronously
         if filter.ready && !result.is_empty() {
             let dep_ids: HashSet<i64> = result
                 .iter()
@@ -839,14 +1134,34 @@ impl TaskBackend for DynamoDbBackend {
         Ok(result)
     }
 
-    async fn next_task(&self) -> Result<Option<Task>> {
-        let ready = self.get_ready_tasks().await?;
-        if ready.is_empty() {
+    async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
+        let all = self.scan_all_tasks().await?;
+        let todo_tasks: Vec<Task> = all
+            .into_iter()
+            .filter(|t| t.project_id == project_id && t.status == TaskStatus::Todo)
+            .collect();
+
+        if todo_tasks.is_empty() {
             return Ok(None);
         }
 
-        let mut sorted = ready;
-        sorted.sort_by(|a, b| {
+        let dep_ids: HashSet<i64> = todo_tasks
+            .iter()
+            .flat_map(|t| t.dependencies.iter().copied())
+            .collect();
+        let dep_tasks = self.batch_get_tasks(&dep_ids.into_iter().collect::<Vec<_>>()).await?;
+        let dep_status: HashMap<i64, TaskStatus> = dep_tasks.into_iter().map(|t| (t.id, t.status)).collect();
+
+        let mut ready: Vec<Task> = todo_tasks
+            .into_iter()
+            .filter(|task| {
+                task.dependencies.iter().all(|dep_id| {
+                    dep_status.get(dep_id).map_or(true, |s| *s == TaskStatus::Completed)
+                })
+            })
+            .collect();
+
+        ready.sort_by(|a, b| {
             let pa = i32::from(a.priority);
             let pb = i32::from(b.priority);
             pa.cmp(&pb)
@@ -854,35 +1169,40 @@ impl TaskBackend for DynamoDbBackend {
                 .then_with(|| a.id.cmp(&b.id))
         });
 
-        Ok(sorted.into_iter().next())
+        Ok(ready.into_iter().next())
     }
 
-    async fn task_stats(&self) -> Result<HashMap<String, i64>> {
+    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
         let all = self.scan_all_tasks().await?;
         let mut stats = HashMap::new();
-        for task in &all {
+        for task in all.iter().filter(|t| t.project_id == project_id) {
             *stats.entry(task.status.to_string()).or_insert(0) += 1;
         }
         Ok(stats)
     }
 
-    async fn ready_count(&self) -> Result<i64> {
-        let ready = self.get_ready_tasks().await?;
+    async fn ready_count(&self, project_id: i64) -> Result<i64> {
+        let ready = self.list_tasks(project_id, &ListTasksFilter {
+            ready: true,
+            ..Default::default()
+        }).await?;
         Ok(ready.len() as i64)
     }
 
-    async fn list_ready_tasks(&self) -> Result<Vec<Task>> {
-        self.get_ready_tasks().await
+    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
+        self.list_tasks(project_id, &ListTasksFilter {
+            ready: true,
+            ..Default::default()
+        }).await
     }
 
-    async fn add_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task> {
+    async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
         if task_id == dep_id {
             bail!("a task cannot depend on itself");
         }
 
-        let mut task = self.get_task(task_id).await?;
-        // Verify dependency exists
-        let _ = self.get_task(dep_id).await.context("dependency task not found")?;
+        let mut task = self.get_task(project_id, task_id).await?;
+        let _ = self.get_task_internal(dep_id).await.context("dependency task not found")?;
 
         if task.dependencies.contains(&dep_id) {
             return Ok(task);
@@ -898,8 +1218,8 @@ impl TaskBackend for DynamoDbBackend {
         Ok(task)
     }
 
-    async fn remove_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task> {
-        let mut task = self.get_task(task_id).await?;
+    async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
+        let mut task = self.get_task(project_id, task_id).await?;
 
         if !task.dependencies.contains(&dep_id) {
             bail!("dependency not found");
@@ -911,26 +1231,23 @@ impl TaskBackend for DynamoDbBackend {
         Ok(task)
     }
 
-    async fn set_dependencies(&self, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
+    async fn set_dependencies(&self, project_id: i64, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
         if dep_ids.contains(&task_id) {
             bail!("a task cannot depend on itself");
         }
 
-        let mut task = self.get_task(task_id).await?;
+        let mut task = self.get_task(project_id, task_id).await?;
 
-        // Verify all dependencies exist
         for &dep_id in dep_ids {
-            let _ = self.get_task(dep_id).await.context("dependency task not found")?;
+            let _ = self.get_task_internal(dep_id).await.context("dependency task not found")?;
         }
 
-        // Check for cycles with new dependencies
         let old_deps = task.dependencies.clone();
         task.dependencies.clear();
         self.put_task(&task).await?;
 
         for &dep_id in dep_ids {
             if self.has_cycle(task_id, dep_id).await? {
-                // Restore old dependencies on failure
                 task.dependencies = old_deps;
                 self.put_task(&task).await?;
                 bail!("adding this dependency would create a cycle");
@@ -944,13 +1261,13 @@ impl TaskBackend for DynamoDbBackend {
         Ok(task)
     }
 
-    async fn list_dependencies(&self, task_id: i64) -> Result<Vec<Task>> {
-        let task = self.get_task(task_id).await?;
+    async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
+        let task = self.get_task(project_id, task_id).await?;
         self.batch_get_tasks(&task.dependencies).await
     }
 
-    async fn check_dod(&self, task_id: i64, index: usize) -> Result<Task> {
-        let mut task = self.get_task(task_id).await?;
+    async fn check_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
+        let mut task = self.get_task(project_id, task_id).await?;
         if index == 0 || index > task.definition_of_done.len() {
             bail!(
                 "DoD index out of range: {} (task has {} items)",
@@ -964,8 +1281,8 @@ impl TaskBackend for DynamoDbBackend {
         Ok(task)
     }
 
-    async fn uncheck_dod(&self, task_id: i64, index: usize) -> Result<Task> {
-        let mut task = self.get_task(task_id).await?;
+    async fn uncheck_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
+        let mut task = self.get_task(project_id, task_id).await?;
         if index == 0 || index > task.definition_of_done.len() {
             bail!(
                 "DoD index out of range: {} (task has {} items)",

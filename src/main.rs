@@ -11,8 +11,8 @@ use localflow::db;
 use localflow::hooks::{self, HookMode};
 use localflow::http_backend::HttpBackend;
 use localflow::models::{
-    CreateProjectParams, CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus,
-    UpdateTaskArrayParams, UpdateTaskParams,
+    AddProjectMemberParams, CreateProjectParams, CreateTaskParams, CreateUserParams,
+    ListTasksFilter, Priority, Role, Task, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use localflow::project::resolve_project_root;
 
@@ -178,6 +178,8 @@ enum Command {
     Next {
         #[arg(long)]
         session_id: Option<String>,
+        #[arg(long)]
+        user_id: Option<i64>,
     },
     /// Transition a task from draft to todo
     Ready {
@@ -190,6 +192,8 @@ enum Command {
         id: i64,
         #[arg(long)]
         session_id: Option<String>,
+        #[arg(long)]
+        user_id: Option<i64>,
     },
     /// Edit a task
     Edit {
@@ -324,6 +328,16 @@ enum Command {
         #[command(subcommand)]
         action: ProjectAction,
     },
+    /// Manage users
+    User {
+        #[command(subcommand)]
+        action: UserAction,
+    },
+    /// Manage project members
+    Members {
+        #[command(subcommand)]
+        action: MemberAction,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -403,6 +417,51 @@ enum ProjectAction {
     Delete {
         /// Project ID
         id: i64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum UserAction {
+    /// List all users
+    List,
+    /// Create a new user
+    Create {
+        #[arg(long)]
+        username: String,
+        #[arg(long)]
+        display_name: Option<String>,
+        #[arg(long)]
+        email: Option<String>,
+    },
+    /// Delete a user
+    Delete {
+        /// User ID
+        id: i64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum MemberAction {
+    /// List project members
+    List,
+    /// Add a member to the project
+    Add {
+        #[arg(long)]
+        user_id: i64,
+        #[arg(long)]
+        role: Option<Role>,
+    },
+    /// Remove a member from the project
+    Remove {
+        #[arg(long)]
+        user_id: i64,
+    },
+    /// Update a member's role
+    SetRole {
+        #[arg(long)]
+        user_id: i64,
+        #[arg(long)]
+        role: Role,
     },
 }
 
@@ -507,9 +566,9 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Get { task_id } => {
             cmd_get(&cli.output, cli.project_root.as_deref(), cli.config.as_deref(), task_id).await
         }
-        Command::Next { ref session_id } => cmd_next(&cli, session_id.clone()).await,
+        Command::Next { ref session_id, user_id } => cmd_next(&cli, session_id.clone(), user_id).await,
         Command::Ready { id } => cmd_ready(&cli, id).await,
-        Command::Start { id, ref session_id } => cmd_start(&cli, id, session_id.clone()).await,
+        Command::Start { id, ref session_id, user_id } => cmd_start(&cli, id, session_id.clone(), user_id).await,
         Command::Edit {
             id,
             title,
@@ -623,6 +682,7 @@ async fn run(cli: Cli) -> Result<()> {
                 },
                 priority,
                 assignee_session_id: None,
+                assignee_user_id: None,
                 started_at: None,
                 completed_at: None,
                 canceled_at: None,
@@ -728,6 +788,8 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Hooks { ref command } => cmd_hooks(&cli, command).await,
         Command::Config { init } => cmd_config(&cli, init),
         Command::Project { ref action } => cmd_project(&cli, action).await,
+        Command::User { ref action } => cmd_user(&cli, action).await,
+        Command::Members { ref action } => cmd_members(&cli, action).await,
     }
 }
 
@@ -851,6 +913,7 @@ async fn cmd_add(
                 plan: None,
                 priority: None,
                 assignee_session_id: None,
+                assignee_user_id: None,
                 started_at: None,
                 completed_at: None,
                 canceled_at: None,
@@ -964,7 +1027,10 @@ async fn cmd_get(
                 println!("PR URL:   {pr_url}");
             }
             if let Some(ref assignee) = task.assignee_session_id {
-                println!("Assignee: {assignee}");
+                println!("Assignee (session): {assignee}");
+            }
+            if let Some(uid) = task.assignee_user_id {
+                println!("Assignee (user): #{uid}");
             }
             if !task.tags.is_empty() {
                 println!("Tags:     {}", task.tags.join(", "));
@@ -1050,7 +1116,7 @@ async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
+async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
 
@@ -1063,12 +1129,15 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()>
         if let Some(ref sid) = session_id {
             operations.push(format!("Set assignee_session_id to \"{}\"", sid));
         }
+        if let Some(uid) = user_id {
+            operations.push(format!("Set assignee_user_id to {}", uid));
+        }
         return print_dry_run(&cli.output, &DryRunOperation { command: "start".into(), operations });
     }
 
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = backend.start_task(DEFAULT_PROJECT_ID, id, session_id, &now).await?;
+    let updated = backend.start_task(DEFAULT_PROJECT_ID, id, session_id, user_id, &now).await?;
 
     // Fire hooks
     let config = load_config_with_cli(&root, cli)?;
@@ -1091,7 +1160,7 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()>
     Ok(())
 }
 
-async fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
+async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
 
@@ -1114,6 +1183,9 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
         if let Some(ref sid) = session_id {
             operations.push(format!("Set assignee_session_id to \"{}\"", sid));
         }
+        if let Some(uid) = user_id {
+            operations.push(format!("Set assignee_user_id to {}", uid));
+        }
         return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
     }
 
@@ -1124,7 +1196,7 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
         task
     } else {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        backend.start_task(DEFAULT_PROJECT_ID, task.id, session_id, &now).await?
+        backend.start_task(DEFAULT_PROJECT_ID, task.id, session_id, user_id, &now).await?
     };
 
     // Fire hooks
@@ -1469,6 +1541,7 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                     priority: Priority::P2,
                     status: TaskStatus::Todo,
                     assignee_session_id: None,
+                    assignee_user_id: None,
                     created_at: chrono::Utc::now().to_rfc3339(),
                     updated_at: chrono::Utc::now().to_rfc3339(),
                     started_at: None,
@@ -1957,6 +2030,140 @@ async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
     Ok(())
 }
 
+async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+
+    match action {
+        UserAction::List => {
+            let users = backend.list_users().await?;
+            match cli.output {
+                OutputFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&users)?);
+                }
+                OutputFormat::Text => {
+                    for user in &users {
+                        let display = user
+                            .display_name
+                            .as_deref()
+                            .unwrap_or("");
+                        println!("#{} {} {}", user.id, user.username, display);
+                    }
+                }
+            }
+        }
+        UserAction::Create {
+            username,
+            display_name,
+            email,
+        } => {
+            let params = CreateUserParams {
+                username: username.clone(),
+                display_name: display_name.clone(),
+                email: email.clone(),
+            };
+            let user = backend.create_user(&params).await?;
+            match cli.output {
+                OutputFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&user)?);
+                }
+                OutputFormat::Text => {
+                    println!("Created user #{}: {}", user.id, user.username);
+                }
+            }
+        }
+        UserAction::Delete { id } => {
+            backend.delete_user(*id).await?;
+            match cli.output {
+                OutputFormat::Json => {
+                    println!("{}", serde_json::json!({"deleted": id}));
+                }
+                OutputFormat::Text => {
+                    println!("Deleted user #{}", id);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+
+    match action {
+        MemberAction::List => {
+            let members = backend.list_project_members(DEFAULT_PROJECT_ID).await?;
+            match cli.output {
+                OutputFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&members)?);
+                }
+                OutputFormat::Text => {
+                    for member in &members {
+                        println!(
+                            "user #{} — role: {}",
+                            member.user_id, member.role
+                        );
+                    }
+                }
+            }
+        }
+        MemberAction::Add { user_id, role } => {
+            let params = AddProjectMemberParams {
+                user_id: *user_id,
+                role: *role,
+            };
+            let member = backend
+                .add_project_member(DEFAULT_PROJECT_ID, &params)
+                .await?;
+            match cli.output {
+                OutputFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&member)?);
+                }
+                OutputFormat::Text => {
+                    println!(
+                        "Added user #{} to project as {}",
+                        member.user_id, member.role
+                    );
+                }
+            }
+        }
+        MemberAction::Remove { user_id } => {
+            backend
+                .remove_project_member(DEFAULT_PROJECT_ID, *user_id)
+                .await?;
+            match cli.output {
+                OutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::json!({"removed_user_id": user_id})
+                    );
+                }
+                OutputFormat::Text => {
+                    println!("Removed user #{} from project", user_id);
+                }
+            }
+        }
+        MemberAction::SetRole { user_id, role } => {
+            let member = backend
+                .update_member_role(DEFAULT_PROJECT_ID, *user_id, *role)
+                .await?;
+            match cli.output {
+                OutputFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&member)?);
+                }
+                OutputFormat::Text => {
+                    println!(
+                        "Updated user #{} role to {}",
+                        member.user_id, member.role
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -2374,7 +2581,7 @@ mod tests {
     fn parse_next_with_session_id() {
         let cli = Cli::parse_from(["localflow", "next", "--session-id", "abc-123"]);
         match cli.command {
-            Command::Next { session_id } => {
+            Command::Next { session_id, .. } => {
                 assert_eq!(session_id, Some("abc-123".to_string()));
             }
             _ => panic!("expected Next"),
@@ -2420,7 +2627,7 @@ mod tests {
     fn parse_start_command() {
         let cli = Cli::parse_from(["localflow", "start", "5", "--session-id", "abc"]);
         match cli.command {
-            Command::Start { id, session_id } => {
+            Command::Start { id, session_id, .. } => {
                 assert_eq!(id, 5);
                 assert_eq!(session_id.as_deref(), Some("abc"));
             }

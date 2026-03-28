@@ -641,6 +641,7 @@ on_task_completed = "echo completed"
             priority: crate::models::Priority::P2,
             status: TaskStatus::Draft,
             assignee_session_id: None,
+            assignee_user_id: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
             started_at: None,
@@ -681,6 +682,7 @@ on_task_completed = "echo completed"
             priority: crate::models::Priority::P2,
             status: TaskStatus::Draft,
             assignee_session_id: None,
+            assignee_user_id: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
             started_at: None,
@@ -782,7 +784,7 @@ on_task_completed = "echo completed"
         .await
         .unwrap();
         backend.ready_task(1, 1).await.unwrap();
-        backend.start_task(1, 1, None, "2025-01-01T00:00:00Z").await.unwrap();
+        backend.start_task(1, 1, None, None, "2025-01-01T00:00:00Z").await.unwrap();
 
         backend.create_task(
             1,
@@ -847,6 +849,7 @@ on_task_completed = "echo completed"
             priority: crate::models::Priority::P2,
             status: TaskStatus::Draft,
             assignee_session_id: None,
+            assignee_user_id: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
             started_at: None,
@@ -885,6 +888,7 @@ on_task_completed = "echo completed"
             priority: crate::models::Priority::P2,
             status: TaskStatus::Draft,
             assignee_session_id: None,
+            assignee_user_id: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
             started_at: None,
@@ -980,6 +984,7 @@ on_task_completed = "echo completed"
             priority: crate::models::Priority::P2,
             status: TaskStatus::Draft,
             assignee_session_id: None,
+            assignee_user_id: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
             started_at: None,
@@ -1068,6 +1073,7 @@ on_task_completed = ["notify", "log"]
             priority: crate::models::Priority::P1,
             status: TaskStatus::Draft,
             assignee_session_id: None,
+            assignee_user_id: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
             started_at: None,

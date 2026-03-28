@@ -18,8 +18,8 @@ use crate::backend::TaskBackend;
 use crate::hooks;
 use crate::hooks::LogFormat;
 use crate::models::{
-    CreateProjectParams, CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus,
-    UpdateTaskArrayParams, UpdateTaskParams,
+    AddProjectMemberParams, CreateProjectParams, CreateTaskParams, CreateUserParams,
+    ListTasksFilter, Priority, Role, Task, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 
 #[derive(Clone)]
@@ -119,6 +119,7 @@ struct ListTasksQuery {
 #[derive(Deserialize)]
 struct StartBody {
     session_id: Option<String>,
+    user_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -135,6 +136,7 @@ struct CancelBody {
 #[derive(Deserialize)]
 struct NextBody {
     session_id: Option<String>,
+    user_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -164,6 +166,9 @@ struct EditTaskBody {
     metadata: Option<serde_json::Value>,
     #[serde(default)]
     clear_metadata: bool,
+    assignee_user_id: Option<i64>,
+    #[serde(default)]
+    clear_assignee_user_id: bool,
     // Array operations
     set_tags: Option<Vec<String>>,
     #[serde(default)]
@@ -207,11 +212,26 @@ pub async fn serve(
     };
 
     let app = Router::new()
+        // User CRUD
+        .route("/api/v1/users", get(list_users).post(create_user))
+        .route(
+            "/api/v1/users/{user_id}",
+            get(get_user).delete(delete_user),
+        )
         // Project CRUD
         .route("/api/v1/projects", get(list_projects).post(create_project))
         .route(
             "/api/v1/projects/{project_id}",
             get(get_project).delete(delete_project),
+        )
+        // Project members
+        .route(
+            "/api/v1/projects/{project_id}/members",
+            get(list_members).post(add_member),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/members/{user_id}",
+            get(get_member).put(update_member_role).delete(remove_member),
         )
         // Task next (static path before wildcard)
         .route(
@@ -421,6 +441,7 @@ async fn create_task(
                 plan: None,
                 priority: None,
                 assignee_session_id: None,
+                assignee_user_id: None,
                 started_at: None,
                 completed_at: None,
                 canceled_at: None,
@@ -483,6 +504,11 @@ async fn edit_task(
         },
         priority: body.priority,
         assignee_session_id: None,
+        assignee_user_id: if body.clear_assignee_user_id {
+            Some(None)
+        } else {
+            body.assignee_user_id.map(Some)
+        },
         started_at: None,
         completed_at: None,
         canceled_at: None,
@@ -560,7 +586,7 @@ async fn start_task(
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let updated =
-        state.backend.start_task(project_id, id, body.session_id, &now).await.map_err(classify_error)?;
+        state.backend.start_task(project_id, id, body.session_id, body.user_id, &now).await.map_err(classify_error)?;
 
     let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
     hooks::fire_hooks(
@@ -678,7 +704,9 @@ async fn next_task(
     Path(project_id): Path<i64>,
     body: Option<Json<NextBody>>,
 ) -> Result<Json<Task>, ApiError> {
-    let session_id = body.and_then(|b| b.0.session_id);
+    let (session_id, user_id) = body
+        .map(|b| (b.0.session_id, b.0.user_id))
+        .unwrap_or((None, None));
     let task = match state.backend.next_task(project_id).await.map_err(classify_error)? {
         Some(t) => t,
         None => {
@@ -691,7 +719,7 @@ async fn next_task(
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let updated =
-        state.backend.start_task(project_id, task.id, session_id, &now).await.map_err(classify_error)?;
+        state.backend.start_task(project_id, task.id, session_id, user_id, &now).await.map_err(classify_error)?;
 
     let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
     hooks::fire_hooks(
@@ -767,6 +795,107 @@ async fn get_stats(
 ) -> Result<Json<HashMap<String, i64>>, ApiError> {
     let stats = state.backend.task_stats(project_id).await.map_err(classify_error)?;
     Ok(Json(stats))
+}
+
+// --- User Handlers ---
+
+// GET /api/v1/users
+async fn list_users(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::models::User>>, ApiError> {
+    let users = state.backend.list_users().await.map_err(classify_error)?;
+    Ok(Json(users))
+}
+
+// POST /api/v1/users
+async fn create_user(
+    State(state): State<AppState>,
+    Json(params): Json<CreateUserParams>,
+) -> Result<(StatusCode, Json<crate::models::User>), ApiError> {
+    let user = state.backend.create_user(&params).await.map_err(classify_error)?;
+    Ok((StatusCode::CREATED, Json(user)))
+}
+
+// GET /api/v1/users/{user_id}
+async fn get_user(
+    State(state): State<AppState>,
+    Path(user_id): Path<i64>,
+) -> Result<Json<crate::models::User>, ApiError> {
+    let user = state.backend.get_user(user_id).await.map_err(classify_error)?;
+    Ok(Json(user))
+}
+
+// DELETE /api/v1/users/{user_id}
+async fn delete_user(
+    State(state): State<AppState>,
+    Path(user_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    state.backend.delete_user(user_id).await.map_err(classify_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// --- Member Handlers ---
+
+#[derive(Deserialize)]
+struct AddMemberBody {
+    user_id: i64,
+    role: Option<Role>,
+}
+
+#[derive(Deserialize)]
+struct UpdateRoleBody {
+    role: Role,
+}
+
+// GET /api/v1/projects/{project_id}/members
+async fn list_members(
+    State(state): State<AppState>,
+    Path(project_id): Path<i64>,
+) -> Result<Json<Vec<crate::models::ProjectMember>>, ApiError> {
+    let members = state.backend.list_project_members(project_id).await.map_err(classify_error)?;
+    Ok(Json(members))
+}
+
+// POST /api/v1/projects/{project_id}/members
+async fn add_member(
+    State(state): State<AppState>,
+    Path(project_id): Path<i64>,
+    Json(body): Json<AddMemberBody>,
+) -> Result<(StatusCode, Json<crate::models::ProjectMember>), ApiError> {
+    let params = AddProjectMemberParams {
+        user_id: body.user_id,
+        role: body.role,
+    };
+    let member = state.backend.add_project_member(project_id, &params).await.map_err(classify_error)?;
+    Ok((StatusCode::CREATED, Json(member)))
+}
+
+// GET /api/v1/projects/{project_id}/members/{user_id}
+async fn get_member(
+    State(state): State<AppState>,
+    Path((project_id, user_id)): Path<(i64, i64)>,
+) -> Result<Json<crate::models::ProjectMember>, ApiError> {
+    let member = state.backend.get_project_member(project_id, user_id).await.map_err(classify_error)?;
+    Ok(Json(member))
+}
+
+// PUT /api/v1/projects/{project_id}/members/{user_id}
+async fn update_member_role(
+    State(state): State<AppState>,
+    Path((project_id, user_id)): Path<(i64, i64)>,
+    Json(body): Json<UpdateRoleBody>,
+) -> Result<Json<crate::models::ProjectMember>, ApiError> {
+    let member = state.backend.update_member_role(project_id, user_id, body.role).await.map_err(classify_error)?;
+    Ok(Json(member))
+}
+
+// DELETE /api/v1/projects/{project_id}/members/{user_id}
+async fn remove_member(
+    State(state): State<AppState>,
+    Path((project_id, user_id)): Path<(i64, i64)>,
+) -> Result<StatusCode, ApiError> {
+    state.backend.remove_project_member(project_id, user_id).await.map_err(classify_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // --- Helpers ---

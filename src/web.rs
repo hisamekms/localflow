@@ -485,7 +485,10 @@ fn render_task_detail(task: &Task) -> String {
         html.push_str(&meta_item("Canceled", &escape_html(canceled)));
     }
     if let Some(ref session) = task.assignee_session_id {
-        html.push_str(&meta_item("Assignee", &escape_html(session)));
+        html.push_str(&meta_item("Assignee (session)", &escape_html(session)));
+    }
+    if let Some(uid) = task.assignee_user_id {
+        html.push_str(&meta_item("Assignee (user)", &format!("#{uid}")));
     }
     if let Some(ref branch) = task.branch {
         html.push_str(&meta_item("Branch", &escape_html(branch)));

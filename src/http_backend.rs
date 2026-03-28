@@ -6,8 +6,9 @@ use serde_json::json;
 
 use crate::backend::TaskBackend;
 use crate::models::{
-    CreateProjectParams, CreateTaskParams, ListTasksFilter, Project, Task, UpdateTaskArrayParams,
-    UpdateTaskParams,
+    AddProjectMemberParams, CreateProjectParams, CreateTaskParams, CreateUserParams,
+    ListTasksFilter, Project, ProjectMember, Role, Task, UpdateTaskArrayParams, UpdateTaskParams,
+    User,
 };
 
 pub struct HttpBackend {
@@ -101,6 +102,17 @@ fn update_params_to_json(params: &UpdateTaskParams) -> serde_json::Value {
     clearable!(completed_at);
     clearable!(canceled_at);
 
+    if let Some(ref outer) = params.assignee_user_id {
+        match outer {
+            None => {
+                map.insert("clear_assignee_user_id".into(), json!(true));
+            }
+            Some(val) => {
+                map.insert("assignee_user_id".into(), json!(val));
+            }
+        }
+    }
+
     serde_json::Value::Object(map)
 }
 
@@ -156,7 +168,6 @@ impl TaskBackend for HttpBackend {
     }
 
     async fn get_project_by_name(&self, name: &str) -> Result<Project> {
-        // List all projects and find by name
         let projects: Vec<Project> = {
             let resp = self
                 .client
@@ -188,6 +199,123 @@ impl TaskBackend for HttpBackend {
             .await?;
         check_success(resp).await
     }
+
+    // User management
+
+    async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
+        let resp = self
+            .client
+            .post(self.url("/api/v1/users"))
+            .json(params)
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn get_user(&self, id: i64) -> Result<User> {
+        let resp = self
+            .client
+            .get(self.url(&format!("/api/v1/users/{id}")))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn get_user_by_username(&self, username: &str) -> Result<User> {
+        let users: Vec<User> = {
+            let resp = self
+                .client
+                .get(self.url("/api/v1/users"))
+                .send()
+                .await?;
+            read_json_or_error(resp).await?
+        };
+        users
+            .into_iter()
+            .find(|u| u.username == username)
+            .ok_or_else(|| anyhow::anyhow!("user not found"))
+    }
+
+    async fn list_users(&self) -> Result<Vec<User>> {
+        let resp = self
+            .client
+            .get(self.url("/api/v1/users"))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn delete_user(&self, id: i64) -> Result<()> {
+        let resp = self
+            .client
+            .delete(self.url(&format!("/api/v1/users/{id}")))
+            .send()
+            .await?;
+        check_success(resp).await
+    }
+
+    // Project membership
+
+    async fn add_project_member(
+        &self,
+        project_id: i64,
+        params: &AddProjectMemberParams,
+    ) -> Result<ProjectMember> {
+        let resp = self
+            .client
+            .post(self.project_url(project_id, "/members"))
+            .json(&json!({
+                "user_id": params.user_id,
+                "role": params.role,
+            }))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()> {
+        let resp = self
+            .client
+            .delete(self.project_url(project_id, &format!("/members/{user_id}")))
+            .send()
+            .await?;
+        check_success(resp).await
+    }
+
+    async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>> {
+        let resp = self
+            .client
+            .get(self.project_url(project_id, "/members"))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember> {
+        let resp = self
+            .client
+            .get(self.project_url(project_id, &format!("/members/{user_id}")))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn update_member_role(
+        &self,
+        project_id: i64,
+        user_id: i64,
+        role: Role,
+    ) -> Result<ProjectMember> {
+        let resp = self
+            .client
+            .put(self.project_url(project_id, &format!("/members/{user_id}")))
+            .json(&json!({ "role": role }))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    // Task CRUD
 
     async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
         let resp = self
@@ -222,12 +350,16 @@ impl TaskBackend for HttpBackend {
         project_id: i64,
         id: i64,
         assignee_session_id: Option<String>,
+        assignee_user_id: Option<i64>,
         _started_at: &str,
     ) -> Result<Task> {
         let resp = self
             .client
             .post(self.project_url(project_id, &format!("/tasks/{id}/start")))
-            .json(&json!({ "session_id": assignee_session_id }))
+            .json(&json!({
+                "session_id": assignee_session_id,
+                "user_id": assignee_user_id,
+            }))
             .send()
             .await?;
         read_json_or_error(resp).await
