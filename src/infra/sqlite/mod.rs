@@ -1646,26 +1646,22 @@ mod tests {
         match target {
             TaskStatus::Draft => {} // already draft
             TaskStatus::Todo => {
-                task.ready().unwrap();
-                task.updated_at = "2025-01-01T00:00:00Z".to_string();
+                task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
                 save_task(conn, &task).unwrap();
             }
             TaskStatus::InProgress => {
-                task.ready().unwrap();
+                task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
                 task.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
-                task.updated_at = "2025-01-01T00:00:00Z".to_string();
                 save_task(conn, &task).unwrap();
             }
             TaskStatus::Completed => {
-                task.ready().unwrap();
+                task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
                 task.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
                 task.complete("2025-01-01T00:00:00Z".to_string()).unwrap();
-                task.updated_at = "2025-01-01T00:00:00Z".to_string();
                 save_task(conn, &task).unwrap();
             }
             TaskStatus::Canceled => {
                 task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
-                task.updated_at = "2025-01-01T00:00:00Z".to_string();
                 save_task(conn, &task).unwrap();
             }
         }
@@ -1839,8 +1835,7 @@ mod tests {
 
         // draft -> todo via domain method + save
         let mut task = get_task(&conn, task.id).unwrap();
-        task.ready().unwrap();
-        task.updated_at = "2025-01-01T00:00:00Z".to_string();
+        task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id).unwrap();
         assert_eq!(updated.status, TaskStatus::Todo);
@@ -1848,7 +1843,6 @@ mod tests {
         // todo -> in_progress
         let mut task = updated;
         task.start(Some("session-1".into()), None, "2025-01-01T00:00:00Z".to_string()).unwrap();
-        task.updated_at = "2025-01-01T00:00:00Z".to_string();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id).unwrap();
         assert_eq!(updated.status, TaskStatus::InProgress);
@@ -1858,7 +1852,6 @@ mod tests {
         // in_progress -> completed
         let mut task = updated;
         task.complete("2025-01-01T01:00:00Z".to_string()).unwrap();
-        task.updated_at = "2025-01-01T01:00:00Z".to_string();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id).unwrap();
         assert_eq!(updated.status, TaskStatus::Completed);
@@ -1873,7 +1866,6 @@ mod tests {
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let mut task = get_task(&conn, t1.id).unwrap();
         task.cancel("2025-01-01T00:00:00Z".to_string(), Some("reason1".into())).unwrap();
-        task.updated_at = "2025-01-01T00:00:00Z".to_string();
         save_task(&conn, &task).unwrap();
         let canceled = get_task(&conn, t1.id).unwrap();
         assert_eq!(canceled.status, TaskStatus::Canceled);
@@ -1884,7 +1876,6 @@ mod tests {
         transition_to(&conn, t2.id, TaskStatus::Todo);
         let mut task = get_task(&conn, t2.id).unwrap();
         task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
-        task.updated_at = "2025-01-01T00:00:00Z".to_string();
         save_task(&conn, &task).unwrap();
         let canceled = get_task(&conn, t2.id).unwrap();
         assert_eq!(canceled.status, TaskStatus::Canceled);
@@ -1894,7 +1885,6 @@ mod tests {
         transition_to(&conn, t3.id, TaskStatus::InProgress);
         let mut task = get_task(&conn, t3.id).unwrap();
         task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
-        task.updated_at = "2025-01-01T00:00:00Z".to_string();
         save_task(&conn, &task).unwrap();
         let canceled = get_task(&conn, t3.id).unwrap();
         assert_eq!(canceled.status, TaskStatus::Canceled);
@@ -2620,7 +2610,7 @@ mod tests {
 
         // Check first item via domain method + save
         let mut task = get_task(&conn, task.id).unwrap();
-        task.check_dod(1).unwrap();
+        task.check_dod(1, "2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id).unwrap();
         assert!(updated.definition_of_done[0].checked);
@@ -2628,7 +2618,7 @@ mod tests {
 
         // Check second item
         let mut task = updated;
-        task.check_dod(2).unwrap();
+        task.check_dod(2, "2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id).unwrap();
         assert!(updated.definition_of_done[0].checked);
@@ -2636,7 +2626,7 @@ mod tests {
 
         // Uncheck first item
         let mut task = updated;
-        task.uncheck_dod(1).unwrap();
+        task.uncheck_dod(1, "2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id).unwrap();
         assert!(!updated.definition_of_done[0].checked);
@@ -2878,15 +2868,13 @@ mod tests {
             .unwrap();
         assert_eq!(task.status, TaskStatus::Draft);
 
-        task.ready().unwrap();
-        task.updated_at = "2026-01-01T00:00:00Z".to_string();
+        task.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
         let task_got = backend.get_task(1, task.id).await.unwrap();
         assert_eq!(task_got.status, TaskStatus::Todo);
 
         let mut task = task_got;
         task.start(Some("sess-1".into()), None, "2026-01-01T00:00:00Z".to_string()).unwrap();
-        task.updated_at = "2026-01-01T00:00:00Z".to_string();
         backend.save(&task).await.unwrap();
         let task_got = backend.get_task(1, task.id).await.unwrap();
         assert_eq!(task_got.status, TaskStatus::InProgress);
@@ -2895,7 +2883,6 @@ mod tests {
 
         let mut task = task_got;
         task.complete("2026-01-02T00:00:00Z".to_string()).unwrap();
-        task.updated_at = "2026-01-02T00:00:00Z".to_string();
         backend.save(&task).await.unwrap();
         let task_got = backend.get_task(1, task.id).await.unwrap();
         assert_eq!(task_got.status, TaskStatus::Completed);
@@ -2910,7 +2897,6 @@ mod tests {
             .await
             .unwrap();
         task.cancel("2026-01-01T00:00:00Z".to_string(), Some("no longer needed".into())).unwrap();
-        task.updated_at = "2026-01-01T00:00:00Z".to_string();
         backend.save(&task).await.unwrap();
         let task_got = backend.get_task(1, task.id).await.unwrap();
         assert_eq!(task_got.status, TaskStatus::Canceled);
@@ -3013,11 +2999,9 @@ mod tests {
             .create_task(1, &params("T2"))
             .await
             .unwrap();
-        t1.ready().unwrap();
-        t1.updated_at = "2026-01-01T00:00:00Z".to_string();
+        t1.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t1).await.unwrap();
-        t2.ready().unwrap();
-        t2.updated_at = "2026-01-01T00:00:00Z".to_string();
+        t2.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t2).await.unwrap();
 
         let t2 = backend.add_dependency(1, t2.id, t1.id).await.unwrap();
@@ -3046,21 +3030,21 @@ mod tests {
         assert!(!task.definition_of_done[0].checked);
         assert!(!task.definition_of_done[1].checked);
 
-        task.check_dod(1).unwrap();
+        task.check_dod(1, "2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(1, task.id).await.unwrap();
         assert!(task.definition_of_done[0].checked);
         assert!(!task.definition_of_done[1].checked);
 
         let mut task = task;
-        task.check_dod(2).unwrap();
+        task.check_dod(2, "2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(1, task.id).await.unwrap();
         assert!(task.definition_of_done[0].checked);
         assert!(task.definition_of_done[1].checked);
 
         let mut task = task;
-        task.uncheck_dod(1).unwrap();
+        task.uncheck_dod(1, "2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(1, task.id).await.unwrap();
         assert!(!task.definition_of_done[0].checked);
