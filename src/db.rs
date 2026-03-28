@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -1125,29 +1125,16 @@ fn list_ready_tasks(conn: &Connection, project_id: i64) -> Result<Vec<Task>> {
 }
 
 /// Check if adding dep_id as a dependency of task_id would create a cycle.
-/// Performs BFS from dep_id following its dependencies; if task_id is reachable, it's a cycle.
+/// Delegates to the domain layer's generic cycle detection algorithm.
 fn has_cycle(conn: &Connection, task_id: i64, dep_id: i64) -> Result<bool> {
-    let mut visited = HashSet::new();
-    let mut queue = VecDeque::new();
-    queue.push_back(dep_id);
-    visited.insert(dep_id);
-
-    while let Some(current) = queue.pop_front() {
-        let deps = query_i64_list(
+    Ok(crate::domain::validator::has_cycle(task_id, dep_id, |id| {
+        query_i64_list(
             conn,
             "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?1",
-            current,
-        )?;
-        for d in deps {
-            if d == task_id {
-                return Ok(true);
-            }
-            if visited.insert(d) {
-                queue.push_back(d);
-            }
-        }
-    }
-    Ok(false)
+            id,
+        )
+        .unwrap_or_default()
+    }))
 }
 
 fn add_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Task> {
@@ -1327,7 +1314,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::backend::TaskBackend;
+use crate::domain::repository::{ProjectRepository, TaskRepository};
 
 pub struct SqliteBackend {
     conn: Arc<std::sync::Mutex<Connection>>,
@@ -1353,7 +1340,7 @@ macro_rules! blocking {
 }
 
 #[async_trait]
-impl TaskBackend for SqliteBackend {
+impl ProjectRepository for SqliteBackend {
     async fn create_project(&self, params: &CreateProjectParams) -> Result<Project> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| create_project(conn, &params))
@@ -1422,7 +1409,10 @@ impl TaskBackend for SqliteBackend {
     async fn update_member_role(&self, project_id: i64, user_id: i64, role: Role) -> Result<ProjectMember> {
         blocking!(self, |conn: &Connection| update_member_role(conn, project_id, user_id, role))
     }
+}
 
+#[async_trait]
+impl TaskRepository for SqliteBackend {
     async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| create_task(conn, project_id, &params))

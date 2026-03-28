@@ -2201,6 +2201,7 @@ mod tests {
     use clap::Parser;
 
     use super::*;
+    use localflow::domain::repository::{ProjectRepository, TaskRepository};
 
     #[test]
     fn parse_add_subcommand() {
