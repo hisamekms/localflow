@@ -9,17 +9,19 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use axum_extra::extract::Query;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+use crate::infra::pr_verifier::GhCliPrVerifier;
+use crate::application::{ProjectService, TaskService, UserService};
 use crate::auth::{
     self, ApiKeyProvider, AuthError, AuthProvider, HasAuth, OptionalAuthUser, Permission,
 };
 use crate::backend::TaskBackend;
 use crate::hooks;
 use crate::hooks::LogFormat;
+use crate::infra::hook::executor::ShellHookExecutor;
 use crate::models::{
     AddProjectMemberParams, CreateApiKeyParams, CreateProjectParams, CreateTaskParams,
     CreateUserParams, ListTasksFilter, Priority, Role, Task, TaskStatus, UpdateTaskArrayParams,
@@ -31,6 +33,9 @@ struct AppState {
     project_root: Arc<PathBuf>,
     config_path: Option<Arc<PathBuf>>,
     backend: Arc<dyn TaskBackend>,
+    task_service: Arc<TaskService>,
+    project_service: Arc<ProjectService>,
+    user_service: Arc<UserService>,
     auth_provider: Option<Arc<dyn AuthProvider>>,
 }
 
@@ -272,10 +277,25 @@ pub async fn serve(
         None
     };
 
+    // Server always fires hooks (should_fire = true)
+    let hook_executor = Arc::new(ShellHookExecutor::new(config.clone(), true));
+    let pr_verifier = Arc::new(GhCliPrVerifier);
+    let task_service = Arc::new(TaskService::new(
+        backend.clone(),
+        hook_executor,
+        pr_verifier,
+        config.workflow.clone(),
+    ));
+    let project_service = Arc::new(ProjectService::new(backend.clone()));
+    let user_service = Arc::new(UserService::new(backend.clone()));
+
     let state = AppState {
         project_root: Arc::new(project_root),
         config_path: config_path.map(Arc::new),
         backend,
+        task_service,
+        project_service,
+        user_service,
         auth_provider,
     };
 
@@ -436,7 +456,7 @@ async fn list_projects(
     auth: OptionalAuthUser,
 ) -> Result<Json<Vec<crate::models::Project>>, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
-    let projects = state.backend.list_projects().await.map_err(classify_error)?;
+    let projects = state.project_service.list_projects().await.map_err(classify_error)?;
     Ok(Json(projects))
 }
 
@@ -447,7 +467,7 @@ async fn create_project(
     Json(params): Json<CreateProjectParams>,
 ) -> Result<(StatusCode, Json<crate::models::Project>), ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
-    let project = state.backend.create_project(&params).await.map_err(classify_error)?;
+    let project = state.project_service.create_project(&params).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(project)))
 }
 
@@ -458,7 +478,7 @@ async fn get_project(
     Path(project_id): Path<i64>,
 ) -> Result<Json<crate::models::Project>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let project = state.backend.get_project(project_id).await.map_err(classify_error)?;
+    let project = state.project_service.get_project(project_id).await.map_err(classify_error)?;
     Ok(Json(project))
 }
 
@@ -469,7 +489,7 @@ async fn delete_project(
     Path(project_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
-    state.backend.delete_project(project_id).await.map_err(classify_error)?;
+    state.project_service.delete_project(project_id).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -495,7 +515,7 @@ async fn list_tasks(
         depends_on: query.depends_on,
         ready: query.ready.unwrap_or(false),
     };
-    let tasks = state.backend.list_tasks(project_id, &filter).await.map_err(classify_error)?;
+    let tasks = state.task_service.list_tasks(project_id, &filter).await.map_err(classify_error)?;
     Ok(Json(tasks))
 }
 
@@ -507,48 +527,7 @@ async fn create_task(
     Json(params): Json<CreateTaskParams>,
 ) -> Result<(StatusCode, Json<Task>), ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let needs_template = params
-        .branch
-        .as_ref()
-        .is_some_and(|b| b.contains("${task_id}"));
-
-    let task = if needs_template {
-        let branch_template = params.branch.clone();
-        let mut params_without_branch = params;
-        params_without_branch.branch = None;
-        let created =
-            state.backend.create_task(project_id, &params_without_branch).await.map_err(classify_error)?;
-        let expanded =
-            branch_template.as_deref().unwrap().replace("${task_id}", &created.id.to_string());
-        state.backend.update_task(
-            project_id,
-            created.id,
-            &UpdateTaskParams {
-                title: None,
-                background: None,
-                description: None,
-                plan: None,
-                priority: None,
-                assignee_session_id: None,
-                assignee_user_id: None,
-                started_at: None,
-                completed_at: None,
-                canceled_at: None,
-                cancel_reason: None,
-                branch: Some(Some(expanded)),
-                pr_url: None,
-                metadata: None,
-            },
-        )
-        .await
-        .map_err(classify_error)?
-    } else {
-        state.backend.create_task(project_id, &params).await.map_err(classify_error)?
-    };
-
-    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-    hooks::fire_hooks(&config, "task_added", &task, state.backend.as_ref(), None, None).await;
-
+    let task = state.task_service.create_task(project_id, &params).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(task)))
 }
 
@@ -559,7 +538,7 @@ async fn get_task(
     Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<Json<Task>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let task = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
+    let task = state.task_service.get_task(project_id, id).await.map_err(classify_error)?;
     Ok(Json(task))
 }
 
@@ -634,9 +613,9 @@ async fn edit_task(
         remove_out_of_scope: body.remove_out_of_scope,
     };
 
-    state.backend.update_task(project_id, id, &scalar_params).await.map_err(classify_error)?;
-    state.backend.update_task_arrays(project_id, id, &array_params).await.map_err(classify_error)?;
-    let task = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
+    state.task_service.edit_task(project_id, id, &scalar_params).await.map_err(classify_error)?;
+    state.task_service.edit_task_arrays(project_id, id, &array_params).await.map_err(classify_error)?;
+    let task = state.task_service.get_task(project_id, id).await.map_err(classify_error)?;
     Ok(Json(task))
 }
 
@@ -647,7 +626,7 @@ async fn delete_task(
     Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
-    state.backend.delete_task(project_id, id).await.map_err(classify_error)?;
+    state.task_service.delete_task(project_id, id).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -658,18 +637,7 @@ async fn ready_task(
     Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<Json<Task>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let updated = state.backend.ready_task(project_id, id).await.map_err(classify_error)?;
-
-    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-    hooks::fire_hooks(
-        &config,
-        "task_ready",
-        &updated,
-        state.backend.as_ref(),
-        Some(TaskStatus::Draft),
-        None,
-    ).await;
-
+    let updated = state.task_service.ready_task(project_id, id).await.map_err(classify_error)?;
     Ok(Json(updated))
 }
 
@@ -681,22 +649,7 @@ async fn start_task(
     Json(body): Json<StartBody>,
 ) -> Result<Json<Task>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let task = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
-    let prev_status = task.status;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated =
-        state.backend.start_task(project_id, id, body.session_id, body.user_id, &now).await.map_err(classify_error)?;
-
-    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-    hooks::fire_hooks(
-        &config,
-        "task_started",
-        &updated,
-        state.backend.as_ref(),
-        Some(prev_status),
-        None,
-    ).await;
-
+    let updated = state.task_service.start_task(project_id, id, body.session_id, body.user_id).await.map_err(classify_error)?;
     Ok(Json(updated))
 }
 
@@ -709,64 +662,7 @@ async fn complete_task(
 ) -> Result<Json<Task>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let skip_pr_check = body.map(|b| b.skip_pr_check).unwrap_or(false);
-    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-
-    let task = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
-    task.status
-        .transition_to(TaskStatus::Completed)
-        .map_err(classify_error)?;
-
-    let unchecked: Vec<_> = task
-        .definition_of_done
-        .iter()
-        .filter(|d| !d.checked)
-        .collect();
-    if !unchecked.is_empty() {
-        return Err(ApiError::Conflict(format!(
-            "cannot complete task #{}: {} unchecked DoD item(s)",
-            id,
-            unchecked.len()
-        )));
-    }
-
-    if !skip_pr_check
-        && config.workflow.completion_mode == hooks::CompletionMode::PrThenComplete
-    {
-        let pr_url = task.pr_url.as_deref().ok_or_else(|| {
-            ApiError::Conflict(format!(
-                "cannot complete task #{}: completion_mode is pr_then_complete but no pr_url is set",
-                id
-            ))
-        })?;
-        verify_pr_status(pr_url, config.workflow.auto_merge)?;
-    }
-
-    let prev_ready_ids: std::collections::HashSet<i64> = state.backend.list_ready_tasks(project_id)
-        .await
-        .map_err(classify_error)?
-        .iter()
-        .map(|t| t.id)
-        .collect();
-
-    let prev_status = task.status;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = state.backend.complete_task(project_id, id, &now).await.map_err(classify_error)?;
-
-    let unblocked = hooks::compute_unblocked(state.backend.as_ref(), project_id, &prev_ready_ids).await;
-    let unblocked_opt = if unblocked.is_empty() {
-        None
-    } else {
-        Some(unblocked)
-    };
-    hooks::fire_hooks(
-        &config,
-        "task_completed",
-        &updated,
-        state.backend.as_ref(),
-        Some(prev_status),
-        unblocked_opt,
-    ).await;
-
+    let updated = state.task_service.complete_task(project_id, id, skip_pr_check).await.map_err(classify_error)?;
     Ok(Json(updated))
 }
 
@@ -779,25 +675,7 @@ async fn cancel_task(
 ) -> Result<Json<Task>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let reason = body.and_then(|b| b.0.reason);
-    let task = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
-    task.status
-        .transition_to(TaskStatus::Canceled)
-        .map_err(classify_error)?;
-
-    let prev_status = task.status;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = state.backend.cancel_task(project_id, id, &now, reason).await.map_err(classify_error)?;
-
-    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-    hooks::fire_hooks(
-        &config,
-        "task_canceled",
-        &updated,
-        state.backend.as_ref(),
-        Some(prev_status),
-        None,
-    ).await;
-
+    let updated = state.task_service.cancel_task(project_id, id, reason).await.map_err(classify_error)?;
     Ok(Json(updated))
 }
 
@@ -812,30 +690,7 @@ async fn next_task(
     let (session_id, user_id) = body
         .map(|b| (b.0.session_id, b.0.user_id))
         .unwrap_or((None, None));
-    let task = match state.backend.next_task(project_id).await.map_err(classify_error)? {
-        Some(t) => t,
-        None => {
-            let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-            hooks::fire_no_eligible_task_hooks(&config, state.backend.as_ref(), project_id).await;
-            return Err(ApiError::NotFound("no eligible task found".to_string()));
-        }
-    };
-
-    let prev_status = task.status;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated =
-        state.backend.start_task(project_id, task.id, session_id, user_id, &now).await.map_err(classify_error)?;
-
-    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-    hooks::fire_hooks(
-        &config,
-        "task_started",
-        &updated,
-        state.backend.as_ref(),
-        Some(prev_status),
-        None,
-    ).await;
-
+    let updated = state.task_service.next_task(project_id, session_id, user_id).await.map_err(classify_error)?;
     Ok(Json(updated))
 }
 
@@ -846,7 +701,7 @@ async fn list_deps(
     Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<Json<Vec<Task>>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let deps = state.backend.list_dependencies(project_id, id).await.map_err(classify_error)?;
+    let deps = state.task_service.list_dependencies(project_id, id).await.map_err(classify_error)?;
     Ok(Json(deps))
 }
 
@@ -858,7 +713,7 @@ async fn add_dep(
     Json(body): Json<AddDepBody>,
 ) -> Result<Json<Task>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let task = state.backend.add_dependency(project_id, id, body.dep_id).await.map_err(classify_error)?;
+    let task = state.task_service.add_dependency(project_id, id, body.dep_id).await.map_err(classify_error)?;
     Ok(Json(task))
 }
 
@@ -869,7 +724,7 @@ async fn remove_dep(
     Path((project_id, id, dep_id)): Path<(i64, i64, i64)>,
 ) -> Result<Json<Task>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let task = state.backend.remove_dependency(project_id, id, dep_id).await.map_err(classify_error)?;
+    let task = state.task_service.remove_dependency(project_id, id, dep_id).await.map_err(classify_error)?;
     Ok(Json(task))
 }
 
@@ -880,7 +735,7 @@ async fn check_dod(
     Path((project_id, id, index)): Path<(i64, i64, usize)>,
 ) -> Result<Json<Task>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let task = state.backend.check_dod(project_id, id, index).await.map_err(classify_error)?;
+    let task = state.task_service.check_dod(project_id, id, index).await.map_err(classify_error)?;
     Ok(Json(task))
 }
 
@@ -891,7 +746,7 @@ async fn uncheck_dod(
     Path((project_id, id, index)): Path<(i64, i64, usize)>,
 ) -> Result<Json<Task>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let task = state.backend.uncheck_dod(project_id, id, index).await.map_err(classify_error)?;
+    let task = state.task_service.uncheck_dod(project_id, id, index).await.map_err(classify_error)?;
     Ok(Json(task))
 }
 
@@ -910,7 +765,7 @@ async fn get_stats(
     Path(project_id): Path<i64>,
 ) -> Result<Json<HashMap<String, i64>>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let stats = state.backend.task_stats(project_id).await.map_err(classify_error)?;
+    let stats = state.task_service.task_stats(project_id).await.map_err(classify_error)?;
     Ok(Json(stats))
 }
 
@@ -922,7 +777,7 @@ async fn list_users(
     auth: OptionalAuthUser,
 ) -> Result<Json<Vec<crate::models::User>>, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
-    let users = state.backend.list_users().await.map_err(classify_error)?;
+    let users = state.user_service.list_users().await.map_err(classify_error)?;
     Ok(Json(users))
 }
 
@@ -933,7 +788,7 @@ async fn create_user(
     Json(params): Json<CreateUserParams>,
 ) -> Result<(StatusCode, Json<crate::models::User>), ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
-    let user = state.backend.create_user(&params).await.map_err(classify_error)?;
+    let user = state.user_service.create_user(&params).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(user)))
 }
 
@@ -944,7 +799,7 @@ async fn get_user(
     Path(user_id): Path<i64>,
 ) -> Result<Json<crate::models::User>, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
-    let user = state.backend.get_user(user_id).await.map_err(classify_error)?;
+    let user = state.user_service.get_user(user_id).await.map_err(classify_error)?;
     Ok(Json(user))
 }
 
@@ -955,7 +810,7 @@ async fn delete_user(
     Path(user_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
-    state.backend.delete_user(user_id).await.map_err(classify_error)?;
+    state.user_service.delete_user(user_id).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -979,7 +834,7 @@ async fn list_members(
     Path(project_id): Path<i64>,
 ) -> Result<Json<Vec<crate::models::ProjectMember>>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let members = state.backend.list_project_members(project_id).await.map_err(classify_error)?;
+    let members = state.project_service.list_project_members(project_id).await.map_err(classify_error)?;
     Ok(Json(members))
 }
 
@@ -995,7 +850,7 @@ async fn add_member(
         user_id: body.user_id,
         role: body.role,
     };
-    let member = state.backend.add_project_member(project_id, &params).await.map_err(classify_error)?;
+    let member = state.project_service.add_project_member(project_id, &params).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(member)))
 }
 
@@ -1006,7 +861,7 @@ async fn get_member(
     Path((project_id, user_id)): Path<(i64, i64)>,
 ) -> Result<Json<crate::models::ProjectMember>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let member = state.backend.get_project_member(project_id, user_id).await.map_err(classify_error)?;
+    let member = state.project_service.get_project_member(project_id, user_id).await.map_err(classify_error)?;
     Ok(Json(member))
 }
 
@@ -1018,7 +873,7 @@ async fn update_member_role(
     Json(body): Json<UpdateRoleBody>,
 ) -> Result<Json<crate::models::ProjectMember>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
-    let member = state.backend.update_member_role(project_id, user_id, body.role).await.map_err(classify_error)?;
+    let member = state.project_service.update_member_role(project_id, user_id, body.role).await.map_err(classify_error)?;
     Ok(Json(member))
 }
 
@@ -1029,7 +884,7 @@ async fn remove_member(
     Path((project_id, user_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
-    state.backend.remove_project_member(project_id, user_id).await.map_err(classify_error)?;
+    state.project_service.remove_project_member(project_id, user_id).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1042,7 +897,7 @@ async fn list_api_keys(
     Path(user_id): Path<i64>,
 ) -> Result<Json<Vec<crate::models::ApiKey>>, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
-    let keys = state.backend.list_api_keys(user_id).await.map_err(classify_error)?;
+    let keys = state.user_service.list_api_keys(user_id).await.map_err(classify_error)?;
     Ok(Json(keys))
 }
 
@@ -1055,7 +910,7 @@ async fn create_api_key(
 ) -> Result<(StatusCode, Json<crate::models::ApiKeyWithSecret>), ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
     let name = body.and_then(|b| b.0.name).unwrap_or_default();
-    let key = state.backend.create_api_key(user_id, &name).await.map_err(classify_error)?;
+    let key = state.user_service.create_api_key(user_id, &name).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(key)))
 }
 
@@ -1066,58 +921,7 @@ async fn delete_api_key(
     Path((_user_id, key_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
-    state.backend.delete_api_key(key_id).await.map_err(classify_error)?;
+    state.user_service.delete_api_key(key_id).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-// --- Helpers ---
-
-fn verify_pr_status(pr_url: &str, auto_merge: bool) -> Result<(), ApiError> {
-    let mut args = vec!["pr", "view", pr_url, "--json", "state"];
-    if !auto_merge {
-        args[4] = "state,reviewDecision";
-    }
-
-    let output = std::process::Command::new("gh")
-        .args(&args)
-        .output()
-        .map_err(|e| {
-            ApiError::Internal(format!(
-                "failed to run 'gh' CLI: {e}. gh is required for pr_then_complete mode."
-            ))
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ApiError::Internal(format!(
-            "gh pr view failed: {}",
-            stderr.trim()
-        )));
-    }
-
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| ApiError::Internal(format!("failed to parse gh output: {e}")))?;
-
-    let state = json["state"].as_str().unwrap_or("");
-    if state != "MERGED" {
-        return Err(ApiError::Conflict(format!(
-            "cannot complete task: PR is not merged (current state: {state})"
-        )));
-    }
-
-    if !auto_merge {
-        let decision = json["reviewDecision"].as_str().unwrap_or("");
-        if decision != "APPROVED" {
-            return Err(ApiError::Conflict(format!(
-                "cannot complete task: PR has not been approved (reviewDecision: {})",
-                if decision.is_empty() {
-                    "none"
-                } else {
-                    decision
-                }
-            )));
-        }
-    }
-
-    Ok(())
-}

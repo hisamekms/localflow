@@ -1,3 +1,5 @@
+pub mod executor;
+
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -9,18 +11,13 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::backend::TaskBackend;
-use crate::models::{Priority, Task, TaskStatus};
+use crate::models::{Task, TaskStatus};
 
 // Re-export config types for backward compatibility
 pub use crate::domain::config::*;
 
-#[derive(Debug, Serialize, Clone)]
-pub struct UnblockedTask {
-    pub id: i64,
-    pub title: String,
-    pub priority: Priority,
-    pub metadata: Option<serde_json::Value>,
-}
+// Re-export UnblockedTask from domain for backward compatibility
+pub use crate::domain::task::UnblockedTask;
 
 #[derive(Debug, Serialize)]
 pub struct HookEvent {

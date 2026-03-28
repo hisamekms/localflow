@@ -4,6 +4,15 @@ use std::str::FromStr;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
+/// A task that became eligible (ready) after another task was completed.
+#[derive(Debug, Serialize, Clone)]
+pub struct UnblockedTask {
+    pub id: i64,
+    pub title: String,
+    pub priority: Priority,
+    pub metadata: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {

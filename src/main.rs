@@ -4,12 +4,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
+use localflow::application::port::HookExecutor;
+use localflow::application::{ProjectService, TaskService, UserService};
 use localflow::backend::TaskBackend;
 use localflow::db;
 use localflow::hooks::{self, HookMode};
 use localflow::http_backend::HttpBackend;
+use localflow::infra::hook::executor::ShellHookExecutor;
+use localflow::infra::pr_verifier::GhCliPrVerifier;
 use localflow::models::{
     AddProjectMemberParams, CreateProjectParams, CreateTaskParams, CreateUserParams,
     ListTasksFilter, Priority, Role, Task, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
@@ -23,7 +26,7 @@ const DEFAULT_PROJECT_ID: i64 = 1;
 fn create_backend(
     project_root: &std::path::Path,
     config_path: Option<&std::path::Path>,
-) -> Result<(Box<dyn TaskBackend>, bool)> {
+) -> Result<(Arc<dyn TaskBackend>, bool)> {
     let resolve_api_key = |config: &hooks::Config| -> Option<String> {
         std::env::var("LOCALFLOW_API_KEY")
             .ok()
@@ -39,7 +42,7 @@ fn create_backend(
                 Some(key) => HttpBackend::with_api_key(&url, key),
                 None => HttpBackend::new(&url),
             };
-            return Ok((Box::new(backend), true));
+            return Ok((Arc::new(backend), true));
         }
     }
 
@@ -50,7 +53,7 @@ fn create_backend(
             Some(key) => HttpBackend::with_api_key(url, key),
             None => HttpBackend::new(url),
         };
-        return Ok((Box::new(backend), true));
+        return Ok((Arc::new(backend), true));
     }
 
     // 3. DynamoDB backend (via env var or config)
@@ -72,12 +75,12 @@ fn create_backend(
         };
 
         if let Some(table_name) = table {
-            return Ok((Box::new(DynamoDbBackend::new(table_name, region)), false));
+            return Ok((Arc::new(DynamoDbBackend::new(table_name, region)), false));
         }
     }
 
     // 4. Default: SqliteBackend
-    Ok((Box::new(db::SqliteBackend::new(project_root)?), false))
+    Ok((Arc::new(db::SqliteBackend::new(project_root)?), false))
 }
 
 fn load_config_with_cli(root: &std::path::Path, cli: &Cli) -> Result<hooks::Config> {
@@ -93,6 +96,29 @@ fn should_fire_client_hooks(config: &hooks::Config, using_http: bool) -> bool {
         HookMode::Server => !using_http,
         HookMode::Client | HookMode::Both => true,
     }
+}
+
+fn create_hook_executor(config: hooks::Config, using_http: bool) -> Arc<dyn HookExecutor> {
+    let should_fire = should_fire_client_hooks(&config, using_http);
+    Arc::new(ShellHookExecutor::new(config, should_fire))
+}
+
+fn create_task_service(
+    backend: Arc<dyn TaskBackend>,
+    config: &hooks::Config,
+    using_http: bool,
+) -> TaskService {
+    let hooks = create_hook_executor(config.clone(), using_http);
+    let pr_verifier = Arc::new(GhCliPrVerifier);
+    TaskService::new(backend, hooks, pr_verifier, config.workflow.clone())
+}
+
+fn create_project_service(backend: Arc<dyn TaskBackend>) -> ProjectService {
+    ProjectService::new(backend)
+}
+
+fn create_user_service(backend: Arc<dyn TaskBackend>) -> UserService {
+    UserService::new(backend)
 }
 
 /// Resolve the project ID from CLI flag, config, or default.
@@ -693,7 +719,7 @@ async fn run(cli: Cli) -> Result<()> {
             let branch_value = if clear_branch {
                 Some(None)
             } else {
-                branch.as_ref().map(|b| Some(expand_branch_template(b, id)))
+                branch.as_ref().map(|b| Some(b.replace("${task_id}", &id.to_string())))
             };
 
             let scalar_params = UpdateTaskParams {
@@ -926,46 +952,8 @@ async fn cmd_add(
         return print_dry_run(&cli.output, &DryRunOperation { command: "add".into(), operations });
     }
 
-    // If branch contains ${task_id}, create without branch first, then update
-    let needs_template = params
-        .branch
-        .as_ref()
-        .is_some_and(|b| b.contains("${task_id}"));
-
-    let task = if needs_template {
-        let branch_template = params.branch.clone();
-        let mut params_without_branch = params;
-        params_without_branch.branch = None;
-        let created = backend.create_task(project_id, &params_without_branch).await?;
-        let expanded = expand_branch_template(branch_template.as_deref().unwrap(), created.id);
-        backend.update_task(
-            project_id,
-            created.id,
-            &UpdateTaskParams {
-                title: None,
-                background: None,
-                description: None,
-                plan: None,
-                priority: None,
-                assignee_session_id: None,
-                assignee_user_id: None,
-                started_at: None,
-                completed_at: None,
-                canceled_at: None,
-                cancel_reason: None,
-                branch: Some(Some(expanded)),
-                pr_url: None,
-                metadata: None,
-            },
-        ).await?
-    } else {
-        backend.create_task(project_id, &params).await?
-    };
-
-    // Fire hooks
-    if should_fire_client_hooks(&config, using_http) {
-        hooks::fire_hooks(&config, "task_added", &task, &*backend, None, None).await;
-    }
+    let task_service = create_task_service(backend, &config, using_http);
+    let task = task_service.create_task(project_id, &params).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -977,10 +965,6 @@ async fn cmd_add(
     }
 
     Ok(())
-}
-
-fn expand_branch_template(branch: &str, task_id: i64) -> String {
-    branch.replace("${task_id}", &task_id.to_string())
 }
 
 async fn cmd_list(
@@ -1117,24 +1101,16 @@ async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
-    let task = backend.get_task(project_id, id).await?;
-
     if cli.dry_run {
+        let task = backend.get_task(project_id, id).await?;
         let operations = vec![
             format!("Ready task #{} (status: {} → todo)", id, task.status),
         ];
         return print_dry_run(&cli.output, &DryRunOperation { command: "ready".into(), operations });
     }
 
-    let updated = backend.ready_task(project_id, id).await?;
-
-    // Fire hooks
-    if should_fire_client_hooks(&config, using_http) {
-        hooks::fire_hooks(
-            &config, "task_ready", &updated, &*backend,
-            Some(TaskStatus::Draft), None,
-        ).await;
-    }
+    let task_service = create_task_service(backend, &config, using_http);
+    let updated = task_service.ready_task(project_id, id).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -1154,9 +1130,8 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Opti
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
-    let task = backend.get_task(project_id, id).await?;
-
     if cli.dry_run {
+        let task = backend.get_task(project_id, id).await?;
         let mut operations = vec![
             format!("Start task #{} (status: {} → in_progress)", id, task.status),
         ];
@@ -1169,17 +1144,8 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Opti
         return print_dry_run(&cli.output, &DryRunOperation { command: "start".into(), operations });
     }
 
-    let prev_status = task.status;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = backend.start_task(project_id, id, session_id, user_id, &now).await?;
-
-    // Fire hooks
-    if should_fire_client_hooks(&config, using_http) {
-        hooks::fire_hooks(
-            &config, "task_started", &updated, &*backend,
-            Some(prev_status), None,
-        ).await;
-    }
+    let task_service = create_task_service(backend, &config, using_http);
+    let updated = task_service.start_task(project_id, id, session_id, user_id).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -1199,17 +1165,15 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
-    let task = match backend.next_task(project_id).await? {
-        Some(t) => t,
-        None => {
-            if should_fire_client_hooks(&config, using_http) {
-                hooks::fire_no_eligible_task_hooks(&config, &*backend, project_id).await;
-            }
-            anyhow::bail!("no eligible task found");
-        }
-    };
-
     if cli.dry_run {
+        let hook_executor = create_hook_executor(config, using_http);
+        let task = match backend.next_task(project_id).await? {
+            Some(t) => t,
+            None => {
+                hook_executor.fire_no_eligible_task_hook(backend.as_ref(), project_id).await;
+                anyhow::bail!("no eligible task found");
+            }
+        };
         let mut operations = vec![
             format!("Start next eligible task #{}: \"{}\"", task.id, task.title),
             format!("Change status: {} → in_progress", task.status),
@@ -1223,23 +1187,30 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
         return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
     }
 
-    // HttpBackend's next_task() already starts the task (API does next+start atomically),
-    // so only call start_task for SqliteBackend where next_task() just selects without starting.
-    let prev_status = task.status;
-    let updated = if using_http {
-        task
-    } else {
-        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        backend.start_task(project_id, task.id, session_id, user_id, &now).await?
-    };
-
-    // Fire hooks
-    if should_fire_client_hooks(&config, using_http) {
-        hooks::fire_hooks(
-            &config, "task_started", &updated, &*backend,
-            Some(prev_status), None,
-        ).await;
+    // HttpBackend's next_task() already starts the task atomically,
+    // so we handle the using_http case separately to avoid a redundant start_task call.
+    if using_http {
+        let hook_executor = create_hook_executor(config, using_http);
+        let task = match backend.next_task(project_id).await? {
+            Some(t) => t,
+            None => {
+                hook_executor.fire_no_eligible_task_hook(backend.as_ref(), project_id).await;
+                anyhow::bail!("no eligible task found");
+            }
+        };
+        let prev_status = task.status;
+        hook_executor
+            .fire_task_hook("task_started", &task, backend.as_ref(), Some(prev_status), None)
+            .await;
+        match cli.output {
+            OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
+            OutputFormat::Text => println!("Started task #{}: {}", task.id, task.title),
+        }
+        return Ok(());
     }
+
+    let task_service = create_task_service(backend, &config, using_http);
+    let updated = task_service.next_task(project_id, session_id, user_id).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -1259,62 +1230,16 @@ async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
-    let task = backend.get_task(project_id, id).await?;
-    task.status.transition_to(TaskStatus::Completed)?;
-
-    let unchecked: Vec<_> = task
-        .definition_of_done
-        .iter()
-        .filter(|d| !d.checked)
-        .collect();
-    if !unchecked.is_empty() {
-        bail!(
-            "cannot complete task #{}: {} unchecked DoD item(s)",
-            id,
-            unchecked.len()
-        );
-    }
-
-    // PR workflow checks
-    if !skip_pr_check
-        && config.workflow.completion_mode
-            == hooks::CompletionMode::PrThenComplete
-    {
-        let pr_url = task.pr_url.as_deref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "cannot complete task #{}: completion_mode is pr_then_complete but no pr_url is set. \
-                 Use `localflow edit {} --pr-url <url>` to set it.",
-                id, id
-            )
-        })?;
-
-        verify_pr_status(pr_url, config.workflow.auto_merge)?;
-    }
-
     if cli.dry_run {
+        let task = backend.get_task(project_id, id).await?;
         let operations = vec![
             format!("Complete task #{} (status: {} → completed)", id, task.status),
         ];
         return print_dry_run(&cli.output, &DryRunOperation { command: "complete".into(), operations });
     }
 
-    // Capture ready tasks before completion for unblocked detection
-    let prev_ready_ids: std::collections::HashSet<i64> =
-        backend.list_ready_tasks(project_id).await?.iter().map(|t| t.id).collect();
-
-    let prev_status = task.status;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = backend.complete_task(project_id, id, &now).await?;
-
-    // Fire hooks with unblocked tasks
-    if should_fire_client_hooks(&config, using_http) {
-        let unblocked = hooks::compute_unblocked(&*backend, project_id, &prev_ready_ids).await;
-        let unblocked_opt = if unblocked.is_empty() { None } else { Some(unblocked) };
-        hooks::fire_hooks(
-            &config, "task_completed", &updated, &*backend,
-            Some(prev_status), unblocked_opt,
-        ).await;
-    }
+    let task_service = create_task_service(backend, &config, using_http);
+    let updated = task_service.complete_task(project_id, id, skip_pr_check).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -1328,65 +1253,14 @@ async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     Ok(())
 }
 
-fn verify_pr_status(pr_url: &str, auto_merge: bool) -> Result<()> {
-    let mut args = vec!["pr", "view", pr_url, "--json", "state"];
-    if !auto_merge {
-        args[4] = "state,reviewDecision";
-    }
-
-    let output = std::process::Command::new("gh")
-        .args(&args)
-        .output()
-        .context(
-            "failed to run 'gh' CLI. gh is required for pr_then_complete mode. \
-             Install it from https://cli.github.com/",
-        )?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("gh pr view failed: {}", stderr.trim());
-    }
-
-    let json: serde_json::Value =
-        serde_json::from_slice(&output.stdout).context("failed to parse gh output")?;
-
-    let state = json["state"].as_str().unwrap_or("");
-    if state != "MERGED" {
-        bail!(
-            "cannot complete task: PR is not merged (current state: {}). \
-             Merge the PR first, then run complete again.",
-            state
-        );
-    }
-
-    if !auto_merge {
-        let decision = json["reviewDecision"].as_str().unwrap_or("");
-        if decision != "APPROVED" {
-            bail!(
-                "cannot complete task: PR has not been approved (reviewDecision: {}). \
-                 Get the PR reviewed and approved, then run complete again.",
-                if decision.is_empty() {
-                    "none"
-                } else {
-                    decision
-                }
-            );
-        }
-    }
-
-    Ok(())
-}
-
 async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
-    let task = backend.get_task(project_id, id).await?;
-    task.status.transition_to(TaskStatus::Canceled)?;
-
     if cli.dry_run {
+        let task = backend.get_task(project_id, id).await?;
         let mut operations = vec![
             format!("Cancel task #{} (status: {} → canceled)", id, task.status),
         ];
@@ -1396,17 +1270,8 @@ async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "cancel".into(), operations });
     }
 
-    let prev_status = task.status;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = backend.cancel_task(project_id, id, &now, reason).await?;
-
-    // Fire hooks
-    if should_fire_client_hooks(&config, using_http) {
-        hooks::fire_hooks(
-            &config, "task_canceled", &updated, &*backend,
-            Some(prev_status), None,
-        ).await;
-    }
+    let task_service = create_task_service(backend, &config, using_http);
+    let updated = task_service.cancel_task(project_id, id, reason).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -1771,9 +1636,10 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
 
 async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let task_service = create_task_service(backend, &config, using_http);
 
     match command {
         DodCommand::Check { task_id, index } => {
@@ -1789,7 +1655,7 @@ async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
                     },
                 );
             }
-            let task = backend.check_dod(project_id, task_id, index).await?;
+            let task = task_service.check_dod(project_id, task_id, index).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1811,7 +1677,7 @@ async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
                     },
                 );
             }
-            let task = backend.uncheck_dod(project_id, task_id, index).await?;
+            let task = task_service.uncheck_dod(project_id, task_id, index).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1833,9 +1699,10 @@ fn print_dod_items(items: &[localflow::models::DodItem]) {
 
 async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let task_service = create_task_service(backend, &config, using_http);
 
     match command {
         DepsCommand::Add { task_id, on } => {
@@ -1844,7 +1711,7 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Add dependency: task #{} depends on #{}", task_id, on)];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps add".into(), operations });
             }
-            let task = backend.add_dependency(project_id, task_id, on).await?;
+            let task = task_service.add_dependency(project_id, task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => println!("Added dependency: task #{} depends on #{}", task_id, on),
@@ -1856,7 +1723,7 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Remove dependency: task #{} no longer depends on #{}", task_id, on)];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps remove".into(), operations });
             }
-            let task = backend.remove_dependency(project_id, task_id, on).await?;
+            let task = task_service.remove_dependency(project_id, task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => println!("Removed dependency: task #{} no longer depends on #{}", task_id, on),
@@ -1869,7 +1736,7 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Set dependencies for task #{}: [{}]", task_id, dep_strs.join(", "))];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps set".into(), operations });
             }
-            let task = backend.set_dependencies(project_id, task_id, on).await?;
+            let task = task_service.set_dependencies(project_id, task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1884,7 +1751,7 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
         }
         DepsCommand::List { task_id } => {
             // Read-only: ignore --dry-run
-            let deps = backend.list_dependencies(project_id, *task_id).await?;
+            let deps = task_service.list_dependencies(project_id, *task_id).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&deps)?),
                 OutputFormat::Text => {
@@ -2026,10 +1893,11 @@ fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool) -> Result<()
 async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let project_service = create_project_service(backend);
 
     match action {
         ProjectAction::List => {
-            let projects = backend.list_projects().await?;
+            let projects = project_service.list_projects().await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&projects)?);
@@ -2053,7 +1921,7 @@ async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                 name: name.clone(),
                 description: description.clone(),
             };
-            let project = backend.create_project(&params).await?;
+            let project = project_service.create_project(&params).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&project)?);
@@ -2064,7 +1932,7 @@ async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
             }
         }
         ProjectAction::Delete { id } => {
-            backend.delete_project(*id).await?;
+            project_service.delete_project(*id).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::json!({"deleted": id}));
@@ -2081,10 +1949,11 @@ async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
 async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let user_service = create_user_service(backend);
 
     match action {
         UserAction::List => {
-            let users = backend.list_users().await?;
+            let users = user_service.list_users().await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&users)?);
@@ -2110,7 +1979,7 @@ async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
                 display_name: display_name.clone(),
                 email: email.clone(),
             };
-            let user = backend.create_user(&params).await?;
+            let user = user_service.create_user(&params).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&user)?);
@@ -2121,7 +1990,7 @@ async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
             }
         }
         UserAction::Delete { id } => {
-            backend.delete_user(*id).await?;
+            user_service.delete_user(*id).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::json!({"deleted": id}));
@@ -2138,10 +2007,11 @@ async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
 async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let project_service = create_project_service(backend);
 
     match action {
         MemberAction::List => {
-            let members = backend.list_project_members(DEFAULT_PROJECT_ID).await?;
+            let members = project_service.list_project_members(DEFAULT_PROJECT_ID).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&members)?);
@@ -2161,7 +2031,7 @@ async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
                 user_id: *user_id,
                 role: *role,
             };
-            let member = backend
+            let member = project_service
                 .add_project_member(DEFAULT_PROJECT_ID, &params)
                 .await?;
             match cli.output {
@@ -2177,7 +2047,7 @@ async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
             }
         }
         MemberAction::Remove { user_id } => {
-            backend
+            project_service
                 .remove_project_member(DEFAULT_PROJECT_ID, *user_id)
                 .await?;
             match cli.output {
@@ -2193,7 +2063,7 @@ async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
             }
         }
         MemberAction::SetRole { user_id, role } => {
-            let member = backend
+            let member = project_service
                 .update_member_role(DEFAULT_PROJECT_ID, *user_id, *role)
                 .await?;
             match cli.output {

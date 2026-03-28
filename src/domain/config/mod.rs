@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub hooks: HooksConfig,
@@ -22,12 +22,12 @@ pub struct AuthConfig {
     pub enabled: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProjectConfig {
     pub name: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LogConfig {
     pub dir: Option<String>,
     #[serde(default = "default_log_level")]
@@ -55,7 +55,7 @@ pub struct DynamoDbConfig {
     pub region: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BackendConfig {
     pub api_url: Option<String>,
     pub api_key: Option<String>,
@@ -97,7 +97,7 @@ impl std::fmt::Display for CompletionMode {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowConfig {
     #[serde(default)]
     pub completion_mode: CompletionMode,
@@ -138,7 +138,7 @@ mod string_or_vec {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HooksConfig {
     #[serde(default, deserialize_with = "string_or_vec::deserialize")]
     pub on_task_added: Vec<String>,
