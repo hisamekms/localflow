@@ -133,16 +133,51 @@ async fn task_handler(
 
 async fn graph_handler(
     State(state): State<AppState>,
+    Query(query): Query<ListQuery>,
 ) -> Result<Html<String>, StatusCode> {
-    let tasks = state.backend.list_tasks(1, &crate::domain::task::ListTasksFilter::default())
+    let statuses = query.status
+        .iter()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse::<TaskStatus>())
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let tags: Vec<String> = query.tag.iter().filter(|t| !t.is_empty()).cloned().collect();
+    let filter = crate::domain::task::ListTasksFilter {
+        statuses,
+        tags,
+        ..Default::default()
+    };
+    let project_id = 1;
+    let tasks = state.backend.list_tasks(project_id, &filter).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let all_tasks = state.backend.list_tasks(project_id, &crate::domain::task::ListTasksFilter::default())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut all_tags: Vec<String> = all_tasks
+        .iter()
+        .flat_map(|t| t.tags().iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    all_tags.sort();
 
-    let body = render_graph_page(&tasks);
+    let body = render_graph_page(&tasks, &query, &all_tags);
     Ok(Html(layout("Dependency Graph", &body)))
 }
 
-fn render_graph_page(tasks: &[Task]) -> String {
+fn render_graph_page(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> String {
+    let filter_form = render_filter_form("/graph", query, all_tags);
+
+    if tasks.is_empty() {
+        return format!(
+            r#"<div class="graph-page">
+<div class="graph-header"><h1>Dependency Graph</h1></div>
+{filter_form}
+<p class="empty">No tasks match the current filters.</p>
+</div>"#
+        );
+    }
+
     let mut mermaid = String::from("graph TD\n");
 
     for task in tasks {
@@ -154,10 +189,13 @@ fn render_graph_page(tasks: &[Task]) -> String {
         ));
     }
 
-    // Dependency edges: dep_id --> task_id
+    // Dependency edges (only between visible nodes)
+    let visible_ids: std::collections::HashSet<i64> = tasks.iter().map(|t| t.id()).collect();
     for task in tasks {
         for dep in task.dependencies() {
-            mermaid.push_str(&format!("    node_{} --> node_{}\n", dep, task.id()));
+            if visible_ids.contains(dep) {
+                mermaid.push_str(&format!("    node_{} --> node_{}\n", dep, task.id()));
+            }
         }
     }
 
@@ -169,7 +207,7 @@ fn render_graph_page(tasks: &[Task]) -> String {
         ));
     }
 
-    // Status-based styles
+    // Modern status-based styles with rounded corners
     let mut completed = Vec::new();
     let mut in_progress = Vec::new();
     let mut todo = Vec::new();
@@ -188,54 +226,71 @@ fn render_graph_page(tasks: &[Task]) -> String {
     }
 
     if !completed.is_empty() {
-        mermaid.push_str(&format!(
-            "    classDef completed fill:#d1fae5,stroke:#065f46,color:#065f46\n"
-        ));
-        mermaid.push_str(&format!(
-            "    class {} completed\n",
-            completed.join(",")
-        ));
+        mermaid.push_str("    classDef completed fill:#d1fae5,stroke:#059669,stroke-width:1.5px,color:#065f46,rx:12,ry:12\n");
+        mermaid.push_str(&format!("    class {} completed\n", completed.join(",")));
     }
     if !in_progress.is_empty() {
-        mermaid.push_str(&format!(
-            "    classDef in_progress fill:#fef3c7,stroke:#92400e,color:#92400e\n"
-        ));
-        mermaid.push_str(&format!(
-            "    class {} in_progress\n",
-            in_progress.join(",")
-        ));
+        mermaid.push_str("    classDef in_progress fill:#fef9c3,stroke:#ca8a04,stroke-width:1.5px,color:#854d0e,rx:12,ry:12\n");
+        mermaid.push_str(&format!("    class {} in_progress\n", in_progress.join(",")));
     }
     if !todo.is_empty() {
-        mermaid.push_str(&format!(
-            "    classDef todo fill:#dbeafe,stroke:#1e40af,color:#1e40af\n"
-        ));
+        mermaid.push_str("    classDef todo fill:#dbeafe,stroke:#3b82f6,stroke-width:1.5px,color:#1e40af,rx:12,ry:12\n");
         mermaid.push_str(&format!("    class {} todo\n", todo.join(",")));
     }
     if !draft.is_empty() {
-        mermaid.push_str(&format!(
-            "    classDef draft fill:#e0e0e0,stroke:#555,color:#555\n"
-        ));
+        mermaid.push_str("    classDef draft fill:#f3f4f6,stroke:#9ca3af,stroke-width:1.5px,color:#6b7280,rx:12,ry:12\n");
         mermaid.push_str(&format!("    class {} draft\n", draft.join(",")));
     }
     if !canceled.is_empty() {
-        mermaid.push_str(&format!(
-            "    classDef canceled fill:#fee2e2,stroke:#991b1b,color:#991b1b\n"
-        ));
-        mermaid.push_str(&format!(
-            "    class {} canceled\n",
-            canceled.join(",")
-        ));
+        mermaid.push_str("    classDef canceled fill:#fee2e2,stroke:#ef4444,stroke-width:1.5px,color:#991b1b,rx:12,ry:12\n");
+        mermaid.push_str(&format!("    class {} canceled\n", canceled.join(",")));
     }
 
     format!(
-        r#"<h1>Dependency Graph</h1>
-<div class="graph-container">
+        r#"<div class="graph-page">
+<div class="graph-header">
+<h1>Dependency Graph</h1>
+<div class="graph-toolbar">
+<button id="zoom-in" title="Zoom in">+</button>
+<button id="zoom-out" title="Zoom out">&minus;</button>
+<button id="zoom-reset" title="Reset zoom">Reset</button>
+<button id="zoom-fit" title="Fit to screen">Fit</button>
+</div>
+</div>
+{filter_form}
+<div class="graph-container" id="graph-container">
 <pre class="mermaid">
 {mermaid}
 </pre>
 </div>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-<script>mermaid.initialize({{ startOnLoad: true, securityLevel: 'loose' }});</script>"#
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom/dist/svg-pan-zoom.min.js"></script>
+<script>
+mermaid.initialize({{ startOnLoad: false, securityLevel: 'loose' }});
+mermaid.run().then(function() {{
+    var svg = document.querySelector('.mermaid svg');
+    if (!svg) return;
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', '100%');
+    svg.style.maxWidth = 'none';
+    var panZoom = svgPanZoom(svg, {{
+        zoomEnabled: true,
+        controlIconsEnabled: false,
+        fit: true,
+        center: true,
+        minZoom: 0.1,
+        maxZoom: 10,
+        zoomScaleSensitivity: 0.3
+    }});
+    document.getElementById('zoom-in').addEventListener('click', function() {{ panZoom.zoomIn(); }});
+    document.getElementById('zoom-out').addEventListener('click', function() {{ panZoom.zoomOut(); }});
+    document.getElementById('zoom-reset').addEventListener('click', function() {{ panZoom.resetZoom(); panZoom.center(); }});
+    document.getElementById('zoom-fit').addEventListener('click', function() {{ panZoom.fit(); panZoom.center(); }});
+}});
+</script>"#
     )
 }
 
@@ -343,8 +398,16 @@ pre {{ white-space: pre-wrap; word-break: break-word; }}
 .markdown p {{ margin: 0.5rem 0; }}
 .markdown p:first-child {{ margin-top: 0; }}
 .markdown p:last-child {{ margin-bottom: 0; }}
-.mermaid {{ background: #fff; padding: 1rem; border-radius: 6px; border: 1px solid #e0e0e0; overflow-x: auto; }}
-.graph-container {{ max-width: 100%; }}
+.mermaid {{ background: #fff; padding: 1rem; border-radius: 6px; border: 1px solid #e0e0e0; width: 100%; height: 100%; }}
+.graph-page {{ display: flex; flex-direction: column; height: calc(100vh - 2rem); }}
+.graph-header {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }}
+.graph-header h1 {{ margin: 0; }}
+.graph-toolbar {{ display: flex; gap: 0.5rem; }}
+.graph-toolbar button {{ padding: 0.35rem 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #374151; font-size: 0.85rem; cursor: pointer; transition: background 0.15s, border-color 0.15s; }}
+.graph-toolbar button:hover {{ background: #f3f4f6; border-color: #9ca3af; }}
+.graph-container {{ flex: 1; max-width: 100%; overflow: hidden; position: relative; }}
+.mermaid .node rect, .mermaid .node polygon {{ filter: drop-shadow(0 1px 3px rgba(0,0,0,0.08)); }}
+.main:has(.graph-page) {{ max-width: 100%; }}
 </style>
 </head>
 <body>
@@ -378,7 +441,7 @@ pre {{ white-space: pre-wrap; word-break: break-word; }}
     )
 }
 
-fn render_task_list(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> String {
+fn render_filter_form(action: &str, query: &ListQuery, all_tags: &[String]) -> String {
     let statuses = ["draft", "todo", "in_progress", "completed", "canceled"];
     let labels = ["Draft", "Todo", "In Progress", "Completed", "Canceled"];
 
@@ -422,13 +485,17 @@ fn render_task_list(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> S
         )
     };
 
-    let filter = format!(
-        r#"<form class="filter-form-multi" method="get" action="/">
+    format!(
+        r#"<form class="filter-form-multi" method="get" action="{action}">
 <div class="filter-group"><span class="filter-label">Status:</span>
 <div class="filter-options">{status_checkboxes}</div></div>
 {tag_checkboxes}
 </form>"#
-    );
+    )
+}
+
+fn render_task_list(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> String {
+    let filter = render_filter_form("/", query, all_tags);
 
     if tasks.is_empty() {
         return format!("{filter}<p class=\"empty\">No tasks found.</p>");
