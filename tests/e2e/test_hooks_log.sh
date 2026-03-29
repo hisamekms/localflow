@@ -15,6 +15,7 @@ echo "--- Test: Hooks Log ---"
 echo "[1] hooks log --path"
 LOG_PATH="$(run_lf hooks log --path)"
 assert_contains "$LOG_PATH" "hooks.log" "path contains hooks.log"
+assert_contains "$LOG_PATH" "$TEST_DIR" "log path is inside test directory"
 
 # 2. --clear when no log file may or may not exist
 echo "[2] hooks log --clear (idempotent)"

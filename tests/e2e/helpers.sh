@@ -15,6 +15,8 @@ setup_test_env() {
   # Isolate from user-level config and environment variables
   export XDG_CONFIG_HOME="$TEST_DIR/xdg-config"
   mkdir -p "$XDG_CONFIG_HOME"
+  export XDG_STATE_HOME="$TEST_DIR/xdg-state"
+  mkdir -p "$XDG_STATE_HOME"
   unset SENKO_CONFIG 2>/dev/null || true
   while IFS= read -r var; do
     unset "$var"
@@ -30,7 +32,7 @@ setup_test_env() {
     exit 1
   fi
 
-  export TEST_DIR TEST_PROJECT_ROOT XDG_CONFIG_HOME SENKO
+  export TEST_DIR TEST_PROJECT_ROOT XDG_CONFIG_HOME XDG_STATE_HOME SENKO
 }
 
 # Cleanup temp directory
