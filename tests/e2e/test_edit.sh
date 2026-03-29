@@ -133,8 +133,25 @@ OUT="$(run_lf --output json edit "$TASK_ID" --set-out-of-scope new_o1 new_o2)"
 OUT_SCOPE="$(echo "$OUT" | jq -c '.out_of_scope | sort')"
 assert_eq '["new_o1","new_o2"]' "$OUT_SCOPE" "set-out-of-scope replaces all"
 
-# 7. Non-existent task ID
-echo "[7] Non-existent task ID"
+# 7. --plan-file option
+echo "[7] --plan-file option"
+
+# 7a. Read plan from file
+PLAN_FILE="$TEST_DIR/plan.md"
+printf 'Step 1: Do X\nStep 2: Do Y\nStep 3: Done' > "$PLAN_FILE"
+OUT="$(run_lf --output json edit "$TASK_ID" --plan-file "$PLAN_FILE")"
+PLAN_CONTENT="$(echo "$OUT" | jq -r '.plan')"
+assert_contains "$PLAN_CONTENT" "Step 1: Do X" "plan-file sets plan content"
+assert_contains "$PLAN_CONTENT" "Step 3: Done" "plan-file preserves multiline"
+
+# 7b. File not found
+assert_exit_code 1 run_lf --output json edit "$TASK_ID" --plan-file "/nonexistent/plan.md"
+
+# 7c. --plan and --plan-file conflict (clap error → exit 2)
+assert_exit_code 2 run_lf --output json edit "$TASK_ID" --plan "inline" --plan-file "$PLAN_FILE"
+
+# 8. Non-existent task ID
+echo "[8] Non-existent task ID"
 assert_exit_code 1 run_lf --output json edit 9999 --title "X"
 
 test_summary
