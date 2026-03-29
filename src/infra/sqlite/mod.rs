@@ -293,6 +293,21 @@ fn copy_db_files(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Resolve the expected database path without side effects (no migration, no file checks).
+/// Used by `resolve_backend_info()` to report the DB path in hook metadata.
+///
+/// Priority: config_db_path → per-project XDG path.
+/// Returns `None` only when neither `XDG_DATA_HOME` nor `HOME` is set.
+pub fn resolve_db_path_preview(
+    project_root: &Path,
+    config_db_path: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    if let Some(p) = config_db_path {
+        return Some(std::path::PathBuf::from(p));
+    }
+    xdg_project_db_path(project_root)
+}
+
 /// Resolve the database path with the following priority (high → low):
 /// 1. `explicit_db_path` (CLI --db-path or SENKO_DB_PATH env)
 /// 2. `config_db_path` (config.toml [storage] db_path)
