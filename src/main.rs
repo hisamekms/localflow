@@ -11,8 +11,8 @@ use senko::domain::config::{CliOverrides, Config, HookEntry, HookMode};
 use senko::domain::project::CreateProjectParams;
 use senko::domain::repository::TaskBackend;
 use senko::domain::task::{
-    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
-    UpdateTaskParams,
+    CreateTaskParams, HookTrigger, ListTasksFilter, Priority, Task, TaskEvent, TaskStatus,
+    UpdateTaskArrayParams, UpdateTaskParams,
 };
 use senko::domain::user::{AddProjectMemberParams, CreateUserParams, Role};
 use senko::infra::hook as hooks;
@@ -1221,7 +1221,7 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
         let task = match backend.next_task(project_id).await? {
             Some(t) => t,
             None => {
-                hook_executor.fire_no_eligible_task_hook(backend.as_ref(), project_id).await;
+                hook_executor.fire(&HookTrigger::NoEligibleTask { project_id }, None, backend.as_ref(), None, None).await;
                 anyhow::bail!("no eligible task found");
             }
         };
@@ -1246,13 +1246,13 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
         let task = match backend.next_task(project_id).await? {
             Some(t) => t,
             None => {
-                hook_executor.fire_no_eligible_task_hook(backend.as_ref(), project_id).await;
+                hook_executor.fire(&HookTrigger::NoEligibleTask { project_id }, None, backend.as_ref(), None, None).await;
                 anyhow::bail!("no eligible task found");
             }
         };
         let prev_status = task.status();
         hook_executor
-            .fire_task_hook("task_started", &task, backend.as_ref(), Some(prev_status), None)
+            .fire(&HookTrigger::Task(TaskEvent::Started), Some(&task), backend.as_ref(), Some(prev_status), None)
             .await;
         match cli.output {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
@@ -1432,18 +1432,10 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             dry_run,
         } => {
             // Validate event name
-            let valid_events = [
-                "task_added",
-                "task_ready",
-                "task_started",
-                "task_completed",
-                "task_canceled",
-                "no_eligible_task",
-            ];
-            if !valid_events.contains(&event_name.as_str()) {
+            if HookTrigger::from_event_name(&event_name).is_none() {
                 bail!(
                     "unknown event: {event_name}. Valid events: {}",
-                    valid_events.join(", ")
+                    HookTrigger::valid_event_names().join(", ")
                 );
             }
 

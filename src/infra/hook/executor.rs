@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::application::port::HookExecutor;
 use crate::domain::repository::TaskBackend;
 use crate::domain::config::Config;
-use crate::domain::task::{Task, TaskStatus, UnblockedTask};
+use crate::domain::task::{HookTrigger, Task, TaskStatus, UnblockedTask};
 
 use super::{fire_hooks, fire_no_eligible_task_hooks, RuntimeMode, BackendInfo};
 
@@ -29,10 +29,10 @@ impl ShellHookExecutor {
 
 #[async_trait]
 impl HookExecutor for ShellHookExecutor {
-    async fn fire_task_hook(
+    async fn fire(
         &self,
-        event: &str,
-        task: &Task,
+        trigger: &HookTrigger,
+        task: Option<&Task>,
         backend: &dyn TaskBackend,
         from_status: Option<TaskStatus>,
         unblocked: Option<Vec<UnblockedTask>>,
@@ -40,17 +40,24 @@ impl HookExecutor for ShellHookExecutor {
         if !self.should_fire {
             return;
         }
-        fire_hooks(&self.config, event, task, backend, from_status, unblocked, &self.runtime_mode, &self.backend_info).await;
-    }
-
-    async fn fire_no_eligible_task_hook(
-        &self,
-        backend: &dyn TaskBackend,
-        project_id: i64,
-    ) {
-        if !self.should_fire {
+        let Some(event_name) = trigger.event_name() else {
             return;
+        };
+        match trigger {
+            HookTrigger::Task(_) => {
+                let task = task.expect("task required for Task hook trigger");
+                fire_hooks(
+                    &self.config, event_name, task, backend,
+                    from_status, unblocked,
+                    &self.runtime_mode, &self.backend_info,
+                ).await;
+            }
+            HookTrigger::NoEligibleTask { project_id } => {
+                fire_no_eligible_task_hooks(
+                    &self.config, backend, *project_id,
+                    &self.runtime_mode, &self.backend_info,
+                ).await;
+            }
         }
-        fire_no_eligible_task_hooks(&self.config, backend, project_id, &self.runtime_mode, &self.backend_info).await;
     }
 }

@@ -6,8 +6,8 @@ use anyhow::{bail, Result};
 use crate::domain::repository::TaskBackend;
 use crate::domain::config::{CompletionMode, WorkflowConfig};
 use crate::domain::task::{
-    CreateTaskParams, ListTasksFilter, Task, UnblockedTask, UpdateTaskArrayParams,
-    UpdateTaskParams,
+    CreateTaskParams, HookTrigger, ListTasksFilter, Task, TaskEvent, UnblockedTask,
+    UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::validator::has_cycle_async;
 
@@ -90,7 +90,13 @@ impl TaskService {
         };
 
         self.hooks
-            .fire_task_hook("task_added", &task, self.backend.as_ref(), None, None)
+            .fire(
+                &HookTrigger::Task(TaskEvent::Created),
+                Some(&task),
+                self.backend.as_ref(),
+                None,
+                None,
+            )
             .await;
 
         Ok(task)
@@ -101,9 +107,9 @@ impl TaskService {
         let task = self.backend.ready_task(project_id, id).await?;
 
         self.hooks
-            .fire_task_hook(
-                "task_ready",
-                &task,
+            .fire(
+                &HookTrigger::Task(TaskEvent::Readied),
+                Some(&task),
                 self.backend.as_ref(),
                 Some(prev_status),
                 None,
@@ -124,9 +130,9 @@ impl TaskService {
         let task = self.backend.start_task(project_id, id, session_id, user_id).await?;
 
         self.hooks
-            .fire_task_hook(
-                "task_started",
-                &task,
+            .fire(
+                &HookTrigger::Task(TaskEvent::Started),
+                Some(&task),
                 self.backend.as_ref(),
                 Some(prev_status),
                 None,
@@ -146,7 +152,13 @@ impl TaskService {
             Some(t) => t,
             None => {
                 self.hooks
-                    .fire_no_eligible_task_hook(self.backend.as_ref(), project_id)
+                    .fire(
+                        &HookTrigger::NoEligibleTask { project_id },
+                        None,
+                        self.backend.as_ref(),
+                        None,
+                        None,
+                    )
                     .await;
                 bail!("no eligible task found");
             }
@@ -156,9 +168,9 @@ impl TaskService {
         let task = self.backend.start_task(project_id, task.id(), session_id, user_id).await?;
 
         self.hooks
-            .fire_task_hook(
-                "task_started",
-                &task,
+            .fire(
+                &HookTrigger::Task(TaskEvent::Started),
+                Some(&task),
                 self.backend.as_ref(),
                 Some(prev_status),
                 None,
@@ -214,9 +226,9 @@ impl TaskService {
         };
 
         self.hooks
-            .fire_task_hook(
-                "task_completed",
-                &task,
+            .fire(
+                &HookTrigger::Task(TaskEvent::Completed),
+                Some(&task),
                 self.backend.as_ref(),
                 Some(prev_status),
                 unblocked_opt,
@@ -236,9 +248,9 @@ impl TaskService {
         let task = self.backend.cancel_task(project_id, id, reason).await?;
 
         self.hooks
-            .fire_task_hook(
-                "task_canceled",
-                &task,
+            .fire(
+                &HookTrigger::Task(TaskEvent::Canceled),
+                Some(&task),
                 self.backend.as_ref(),
                 Some(prev_status),
                 None,
