@@ -359,6 +359,20 @@ pre {{ white-space: pre-wrap; word-break: break-word; }}
   </aside>
   <main class="main">{body}</main>
 </div>
+<script>
+(function() {{
+  var key = 'senko-filters';
+  if (location.pathname === '/') {{
+    sessionStorage.setItem(key, location.search);
+  }}
+  var saved = sessionStorage.getItem(key);
+  if (saved) {{
+    document.querySelectorAll('a[href="/"]').forEach(function(a) {{
+      a.href = '/' + saved;
+    }});
+  }}
+}})();
+</script>
 </body>
 </html>"#
     )
