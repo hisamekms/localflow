@@ -44,11 +44,9 @@ assert_contains "$JSON_ERR" '"error"' "invalid transition returns JSON error"
 
 # ===== [5] JSON mode: no stderr leak =====
 
-echo "[5] JSON mode: no 'Error:' on stderr (only warnings allowed)"
+echo "[5] JSON mode: no 'Error:' on stderr"
 STDERR_OUT="$(run_lf --output json get 99999 2>&1 1>/dev/null || true)"
-# Filter out known warnings (e.g. .senko gitignore warning)
-STDERR_ERRORS="$(echo "$STDERR_OUT" | grep -v "^warning:" || true)"
-assert_eq "" "$STDERR_ERRORS" "no Error: on stderr in JSON mode"
+assert_eq "" "$STDERR_OUT" "no output on stderr in JSON mode"
 
 # ===== [6] Text mode: exit code is 1 =====
 

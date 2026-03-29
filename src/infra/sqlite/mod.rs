@@ -384,28 +384,7 @@ fn open_db(
 
     run_migrations(&conn)?;
 
-    warn_if_not_gitignored(project_root);
-
     Ok(conn)
-}
-
-fn warn_if_not_gitignored(project_root: &Path) {
-    let gitignore_path = project_root.join(".gitignore");
-    let dominated = match std::fs::read_to_string(&gitignore_path) {
-        Ok(content) => content
-            .lines()
-            .any(|line| {
-                let trimmed = line.trim();
-                trimmed == ".senko" || trimmed == ".senko/"
-            }),
-        Err(_) => false,
-    };
-    if !dominated {
-        eprintln!(
-            "warning: .senko/ is not in .gitignore. \
-             Add \".senko/\" to your .gitignore to avoid committing local data."
-        );
-    }
 }
 
 fn migrate_dod_checked(conn: &Connection) -> Result<()> {
