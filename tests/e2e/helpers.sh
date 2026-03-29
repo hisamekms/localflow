@@ -12,6 +12,14 @@ setup_test_env() {
   TEST_PROJECT_ROOT="$TEST_DIR/project"
   mkdir -p "$TEST_PROJECT_ROOT"
 
+  # Isolate from user-level config and environment variables
+  export XDG_CONFIG_HOME="$TEST_DIR/xdg-config"
+  mkdir -p "$XDG_CONFIG_HOME"
+  unset SENKO_CONFIG 2>/dev/null || true
+  while IFS= read -r var; do
+    unset "$var"
+  done < <(env | grep -o '^SENKO_[^=]*' || true)
+
   # Resolve binary path
   if [[ -z "${SENKO:-}" ]]; then
     SENKO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/target/debug/senko"
@@ -22,7 +30,7 @@ setup_test_env() {
     exit 1
   fi
 
-  export TEST_DIR TEST_PROJECT_ROOT SENKO
+  export TEST_DIR TEST_PROJECT_ROOT XDG_CONFIG_HOME SENKO
 }
 
 # Cleanup temp directory
