@@ -254,7 +254,35 @@ on_task_completed = ["notify-send '完了'", "curl https://example.com/done"]
   "event": "task_completed",
   "timestamp": "2026-03-24T12:00:00Z",
   "from_status": "in_progress",
-  "task": { },
+  "task": {
+    "id": 7,
+    "project_id": 1,
+    "title": "Webhookハンドラの実装",
+    "background": null,
+    "description": "外部連携用のWebhookエンドポイントを追加",
+    "plan": null,
+    "priority": "P1",
+    "status": "completed",
+    "assignee_session_id": null,
+    "assignee_user_id": null,
+    "created_at": "2026-03-24T10:00:00Z",
+    "updated_at": "2026-03-24T12:00:00Z",
+    "started_at": "2026-03-24T10:30:00Z",
+    "completed_at": "2026-03-24T12:00:00Z",
+    "canceled_at": null,
+    "cancel_reason": null,
+    "branch": "feature/webhook",
+    "pr_url": "https://github.com/org/repo/pull/42",
+    "metadata": null,
+    "definition_of_done": [
+      { "content": "ユニットテストを書く", "checked": true },
+      { "content": "APIドキュメントを更新", "checked": true }
+    ],
+    "in_scope": ["RESTエンドポイント"],
+    "out_of_scope": ["GraphQLサポート"],
+    "tags": ["backend", "api"],
+    "dependencies": [3, 5]
+  },
   "stats": { "draft": 1, "todo": 3, "in_progress": 1, "completed": 5 },
   "ready_count": 2,
   "unblocked_tasks": [{ "id": 3, "title": "次のタスク", "priority": "P1", "metadata": null }]
@@ -267,10 +295,48 @@ on_task_completed = ["notify-send '完了'", "curl https://example.com/done"]
 | `event` | string | イベント名（例: `"task_added"`, `"task_completed"`） |
 | `timestamp` | string | ISO 8601（RFC 3339）タイムスタンプ |
 | `from_status` | string \| null | 遷移前のステータス |
-| `task` | object | タスクオブジェクト全体（`senko get` と同じスキーマ） |
+| `task` | object | タスクオブジェクト全体（`senko get` と同じスキーマ — 下記参照） |
 | `stats` | object | ステータス別タスク数（`{"todo": 3, "completed": 5, ...}`） |
 | `ready_count` | integer | 依存解決済みの `todo` タスク数 |
 | `unblocked_tasks` | array \| null | このイベントで新たにブロック解除されたタスク（`task_completed` のみ） |
+
+#### `task` オブジェクト
+
+イベントペイロードに含まれるタスクオブジェクト全体。`senko get` の出力と同じスキーマです。
+
+| フィールド | 型 | 説明 |
+|-------|------|-------------|
+| `id` | integer | タスクID |
+| `project_id` | integer | プロジェクトID |
+| `title` | string | タスクタイトル |
+| `background` | string \| null | 背景情報 |
+| `description` | string \| null | タスクの説明 |
+| `plan` | string \| null | 実装計画 |
+| `priority` | string | `"P0"` – `"P3"` |
+| `status` | string | `"draft"`, `"todo"`, `"in_progress"`, `"completed"`, `"canceled"` |
+| `assignee_session_id` | string \| null | 割り当てセッションID |
+| `assignee_user_id` | integer \| null | 割り当てユーザーID |
+| `created_at` | string | ISO 8601 タイムスタンプ |
+| `updated_at` | string | ISO 8601 タイムスタンプ |
+| `started_at` | string \| null | ISO 8601 タイムスタンプ（タスク開始日時） |
+| `completed_at` | string \| null | ISO 8601 タイムスタンプ（タスク完了日時） |
+| `canceled_at` | string \| null | ISO 8601 タイムスタンプ（タスクキャンセル日時） |
+| `cancel_reason` | string \| null | キャンセル理由 |
+| `branch` | string \| null | 関連gitブランチ |
+| `pr_url` | string \| null | プルリクエストURL |
+| `metadata` | object \| null | 任意のJSONメタデータ |
+| `definition_of_done` | array | DoD項目のリスト（下記参照） |
+| `in_scope` | array | スコープ内の項目（文字列） |
+| `out_of_scope` | array | スコープ外の項目（文字列） |
+| `tags` | array | タグ文字列 |
+| `dependencies` | array | 依存タスクID（整数） |
+
+`definition_of_done` の各要素:
+
+| フィールド | 型 | 説明 |
+|-------|------|-------------|
+| `content` | string | DoD項目の内容 |
+| `checked` | boolean | チェック済みかどうか |
 
 #### `unblocked_tasks` の要素
 

@@ -258,7 +258,35 @@ The JSON object passed to hooks on stdin:
   "event": "task_completed",
   "timestamp": "2026-03-24T12:00:00Z",
   "from_status": "in_progress",
-  "task": { },
+  "task": {
+    "id": 7,
+    "project_id": 1,
+    "title": "Implement webhook handler",
+    "background": null,
+    "description": "Add webhook endpoint for external integrations",
+    "plan": null,
+    "priority": "P1",
+    "status": "completed",
+    "assignee_session_id": null,
+    "assignee_user_id": null,
+    "created_at": "2026-03-24T10:00:00Z",
+    "updated_at": "2026-03-24T12:00:00Z",
+    "started_at": "2026-03-24T10:30:00Z",
+    "completed_at": "2026-03-24T12:00:00Z",
+    "canceled_at": null,
+    "cancel_reason": null,
+    "branch": "feature/webhook",
+    "pr_url": "https://github.com/org/repo/pull/42",
+    "metadata": null,
+    "definition_of_done": [
+      { "content": "Write unit tests", "checked": true },
+      { "content": "Update API docs", "checked": true }
+    ],
+    "in_scope": ["REST endpoint"],
+    "out_of_scope": ["GraphQL support"],
+    "tags": ["backend", "api"],
+    "dependencies": [3, 5]
+  },
   "stats": { "draft": 1, "todo": 3, "in_progress": 1, "completed": 5 },
   "ready_count": 2,
   "unblocked_tasks": [{ "id": 3, "title": "Next task", "priority": "P1", "metadata": null }]
@@ -271,10 +299,48 @@ The JSON object passed to hooks on stdin:
 | `event` | string | Event name (e.g. `"task_added"`, `"task_completed"`) |
 | `timestamp` | string | ISO 8601 (RFC 3339) timestamp |
 | `from_status` | string \| null | Previous status before the transition |
-| `task` | object | Full task object (same schema as `senko get`) |
+| `task` | object | Full task object (same schema as `senko get` — see below) |
 | `stats` | object | Task count by status (`{"todo": 3, "completed": 5, ...}`) |
 | `ready_count` | integer | Number of `todo` tasks with all dependencies met |
 | `unblocked_tasks` | array \| null | Tasks newly unblocked by this event (only on `task_completed`) |
+
+#### `task` object
+
+The full task object included in the event payload. Same schema as `senko get` output.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | integer | Task ID |
+| `project_id` | integer | Project ID |
+| `title` | string | Task title |
+| `background` | string \| null | Background context |
+| `description` | string \| null | Task description |
+| `plan` | string \| null | Implementation plan |
+| `priority` | string | `"P0"` – `"P3"` |
+| `status` | string | `"draft"`, `"todo"`, `"in_progress"`, `"completed"`, `"canceled"` |
+| `assignee_session_id` | string \| null | Assigned session ID |
+| `assignee_user_id` | integer \| null | Assigned user ID |
+| `created_at` | string | ISO 8601 timestamp |
+| `updated_at` | string | ISO 8601 timestamp |
+| `started_at` | string \| null | ISO 8601 timestamp (when task was started) |
+| `completed_at` | string \| null | ISO 8601 timestamp (when task was completed) |
+| `canceled_at` | string \| null | ISO 8601 timestamp (when task was canceled) |
+| `cancel_reason` | string \| null | Cancellation reason |
+| `branch` | string \| null | Associated git branch |
+| `pr_url` | string \| null | Pull request URL |
+| `metadata` | object \| null | Arbitrary JSON metadata |
+| `definition_of_done` | array | List of DoD items (see below) |
+| `in_scope` | array | In-scope items (strings) |
+| `out_of_scope` | array | Out-of-scope items (strings) |
+| `tags` | array | Tag strings |
+| `dependencies` | array | Dependent task IDs (integers) |
+
+Each item in `definition_of_done`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | string | DoD item description |
+| `checked` | boolean | Whether the item is checked |
 
 #### `unblocked_tasks` items
 
