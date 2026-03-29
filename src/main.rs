@@ -116,9 +116,9 @@ fn resolve_backend_info(config: &Config, project_root: &std::path::Path) -> Back
     if config.backend.postgres.as_ref().and_then(|p| p.url.as_ref()).is_some() {
         return BackendInfo::Postgresql;
     }
-    let db_path = config.storage.db_path.as_deref()
-        .map(|p| p.to_string())
-        .unwrap_or_else(|| project_root.join(".senko").join("db.sqlite").display().to_string());
+    let db_path = senko::infra::sqlite::resolve_db_path_preview(project_root, config.storage.db_path.as_deref())
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
     BackendInfo::Sqlite { db_file_path: db_path }
 }
 
