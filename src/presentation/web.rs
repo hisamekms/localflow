@@ -19,7 +19,6 @@ use crate::domain::task::{DodItem, Priority, Task, TaskStatus};
 
 #[derive(Clone)]
 struct AppState {
-    project_root: Arc<PathBuf>,
     backend: Arc<dyn TaskBackend>,
 }
 
@@ -44,7 +43,6 @@ pub async fn serve(
     bootstrap::init_tracing(&config.log);
 
     let state = AppState {
-        project_root: Arc::new(project_root),
         backend,
     };
 

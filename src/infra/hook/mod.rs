@@ -11,8 +11,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::domain::config::{
-    CompletionMode, Config, HookEntry, HookMode, HooksConfig, LogFormat, RawConfig,
-    RawLogConfig, RawWorkflowConfig,
+    CompletionMode, Config, HookEntry, HookMode, LogFormat, RawConfig,
 };
 use crate::domain::repository::TaskBackend;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
@@ -544,6 +543,7 @@ pub async fn compute_unblocked(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::config::{HooksConfig, RawLogConfig, RawWorkflowConfig};
     use crate::infra::sqlite::SqliteBackend;
     use crate::domain::repository::{ProjectRepository, TaskRepository};
     use std::sync::Mutex;
