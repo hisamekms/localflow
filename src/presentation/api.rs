@@ -25,11 +25,15 @@ use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::config::Config;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
-    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
+    CreateTaskParams, ListTasksFilter, Priority, TaskStatus, UpdateTaskArrayParams,
     UpdateTaskParams,
 };
 use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role,
+};
+use super::dto::{
+    ApiKeyResponse, ApiKeyWithSecretResponse, ConfigResponse, ProjectMemberResponse,
+    ProjectResponse, TaskResponse, UserResponse,
 };
 
 #[derive(Clone)]
