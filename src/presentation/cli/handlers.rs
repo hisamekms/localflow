@@ -12,12 +12,13 @@ use crate::bootstrap::{
     create_user_service, resolve_project_id, resolve_user_id,
     DEFAULT_PROJECT_ID,
 };
-use crate::domain::config::{CliOverrides, Config};
+use crate::application::HookTrigger;
+use crate::infra::config::{CliOverrides, Config};
 use crate::bootstrap::resolve_backend_info;
 use crate::infra::hook as hooks;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
-    CreateTaskParams, HookTrigger, ListTasksFilter, Priority, Task, TaskEvent, TaskStatus,
+    CreateTaskParams, ListTasksFilter, Priority, Task, TaskEvent, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{AddProjectMemberParams, CreateUserParams};
@@ -624,7 +625,7 @@ fn extract_script_path(command: &str) -> Option<String> {
     }
 }
 
-fn run_hook_checks(entry: &crate::domain::config::HookEntry) -> Vec<CheckResult> {
+fn run_hook_checks(entry: &crate::infra::config::HookEntry) -> Vec<CheckResult> {
     let mut checks = Vec::new();
 
     // Check requires_env
@@ -1841,7 +1842,7 @@ mod tests {
 
     #[test]
     fn run_hook_checks_env_missing() {
-        let entry = crate::domain::config::HookEntry {
+        let entry = crate::infra::config::HookEntry {
             command: "echo test".to_string(),
             enabled: true,
             requires_env: vec!["SENKO_DOCTOR_TEST_NONEXISTENT_VAR_12345".to_string()],
@@ -1855,7 +1856,7 @@ mod tests {
     #[test]
     fn run_hook_checks_env_set() {
         unsafe { std::env::set_var("SENKO_DOCTOR_TEST_VAR_OK", "1"); }
-        let entry = crate::domain::config::HookEntry {
+        let entry = crate::infra::config::HookEntry {
             command: "echo test".to_string(),
             enabled: true,
             requires_env: vec!["SENKO_DOCTOR_TEST_VAR_OK".to_string()],
@@ -1868,7 +1869,7 @@ mod tests {
 
     #[test]
     fn run_hook_checks_script_not_found() {
-        let entry = crate::domain::config::HookEntry {
+        let entry = crate::infra::config::HookEntry {
             command: "/nonexistent/path/hook.sh".to_string(),
             enabled: true,
             requires_env: vec![],
@@ -1889,7 +1890,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
-        let entry = crate::domain::config::HookEntry {
+        let entry = crate::infra::config::HookEntry {
             command: script.to_str().unwrap().to_string(),
             enabled: true,
             requires_env: vec![],
@@ -1912,7 +1913,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
         }
-        let entry = crate::domain::config::HookEntry {
+        let entry = crate::infra::config::HookEntry {
             command: script.to_str().unwrap().to_string(),
             enabled: true,
             requires_env: vec![],
@@ -1927,7 +1928,7 @@ mod tests {
 
     #[test]
     fn run_hook_checks_bare_command_no_file_checks() {
-        let entry = crate::domain::config::HookEntry {
+        let entry = crate::infra::config::HookEntry {
             command: "echo hello world".to_string(),
             enabled: true,
             requires_env: vec![],
