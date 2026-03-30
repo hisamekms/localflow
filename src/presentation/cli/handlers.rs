@@ -1466,7 +1466,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
             }
         }
         MemberAction::Add { user_id, role } => {
-            let params = AddProjectMemberParams::new(*user_id, *role);
+            let params = AddProjectMemberParams::new(*user_id, role.map(|r| r.into()));
             let member = project_service
                 .add_project_member(DEFAULT_PROJECT_ID, &params, None)
                 .await?;
@@ -1500,7 +1500,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
         }
         MemberAction::SetRole { user_id, role } => {
             let member = project_service
-                .update_member_role(DEFAULT_PROJECT_ID, *user_id, *role, None)
+                .update_member_role(DEFAULT_PROJECT_ID, *user_id, (*role).into(), None)
                 .await?;
             match cli.output {
                 OutputFormat::Json => {

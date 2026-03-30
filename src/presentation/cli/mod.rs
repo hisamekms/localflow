@@ -7,14 +7,45 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::bootstrap::create_backend;
-<<<<<<< HEAD
 use crate::infra::config::CliOverrides;
-use crate::infra::hook as hooks;
-=======
-use crate::domain::config::CliOverrides;
->>>>>>> wth/wth-remove-taskbackend-from-hook-executor
 use crate::domain::task::Priority;
 use crate::domain::user::Role;
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CliPriority {
+    P0,
+    P1,
+    P2,
+    P3,
+}
+
+impl From<CliPriority> for Priority {
+    fn from(p: CliPriority) -> Self {
+        match p {
+            CliPriority::P0 => Priority::P0,
+            CliPriority::P1 => Priority::P1,
+            CliPriority::P2 => Priority::P2,
+            CliPriority::P3 => Priority::P3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CliRole {
+    Owner,
+    Member,
+    Viewer,
+}
+
+impl From<CliRole> for Role {
+    fn from(r: CliRole) -> Self {
+        match r {
+            CliRole::Owner => Role::Owner,
+            CliRole::Member => Role::Member,
+            CliRole::Viewer => Role::Viewer,
+        }
+    }
+}
 use crate::infra::project_root::resolve_project_root;
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -171,7 +202,7 @@ pub enum Command {
         #[arg(long)]
         clear_plan: bool,
         #[arg(long, value_enum)]
-        priority: Option<Priority>,
+        priority: Option<CliPriority>,
         /// Git branch name (supports ${task_id} template)
         #[arg(long)]
         branch: Option<String>,
@@ -426,7 +457,7 @@ pub enum MemberAction {
         #[arg(long)]
         user_id: i64,
         #[arg(long)]
-        role: Option<Role>,
+        role: Option<CliRole>,
     },
     /// Remove a member from the project
     Remove {
@@ -438,7 +469,7 @@ pub enum MemberAction {
         #[arg(long)]
         user_id: i64,
         #[arg(long)]
-        role: Role,
+        role: CliRole,
     },
 }
 
@@ -571,7 +602,9 @@ pub async fn run(cli: Cli) -> Result<()> {
             ref remove_definition_of_done,
             ref remove_in_scope,
             ref remove_out_of_scope,
-        } => handlers::cmd_edit(
+        } => {
+            let priority_domain = priority.map(|p| p.into());
+            handlers::cmd_edit(
             &cli,
             id,
             title,
@@ -582,7 +615,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             plan,
             plan_file,
             clear_plan,
-            priority,
+            &priority_domain,
             branch,
             clear_branch,
             pr_url,
@@ -601,7 +634,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             remove_definition_of_done,
             remove_in_scope,
             remove_out_of_scope,
-        ).await,
+        ).await
+        }
         Command::Complete { id, skip_pr_check } => handlers::cmd_complete(&cli, id, skip_pr_check).await,
         Command::Cancel { id, ref reason } => handlers::cmd_cancel(&cli, id, reason.clone()).await,
         Command::Dod { ref command } => handlers::cmd_dod(&cli, command).await,
@@ -839,7 +873,7 @@ mod tests {
             } => {
                 assert_eq!(id, 5);
                 assert_eq!(title.as_deref(), Some("new title"));
-                assert_eq!(priority, Some(Priority::P0));
+                assert!(matches!(priority, Some(CliPriority::P0)));
             }
             _ => panic!("expected Edit"),
         }

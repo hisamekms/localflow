@@ -16,6 +16,42 @@ use senko::domain::task::{
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use senko::domain::user::{AddProjectMemberParams, CreateUserParams, Role};
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliPriority {
+    P0,
+    P1,
+    P2,
+    P3,
+}
+
+impl From<CliPriority> for Priority {
+    fn from(p: CliPriority) -> Self {
+        match p {
+            CliPriority::P0 => Priority::P0,
+            CliPriority::P1 => Priority::P1,
+            CliPriority::P2 => Priority::P2,
+            CliPriority::P3 => Priority::P3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliRole {
+    Owner,
+    Member,
+    Viewer,
+}
+
+impl From<CliRole> for Role {
+    fn from(r: CliRole) -> Self {
+        match r {
+            CliRole::Owner => Role::Owner,
+            CliRole::Member => Role::Member,
+            CliRole::Viewer => Role::Viewer,
+        }
+    }
+}
 use senko::infra::hook as hooks;
 use senko::infra::hook::{RuntimeMode, BackendInfo};
 use senko::infra::http::HttpBackend;
@@ -312,7 +348,7 @@ enum Command {
         #[arg(long)]
         clear_plan: bool,
         #[arg(long, value_enum)]
-        priority: Option<Priority>,
+        priority: Option<CliPriority>,
         /// Git branch name (supports ${task_id} template)
         #[arg(long)]
         branch: Option<String>,
@@ -549,7 +585,7 @@ enum MemberAction {
         #[arg(long)]
         user_id: i64,
         #[arg(long)]
-        role: Option<Role>,
+        role: Option<CliRole>,
     },
     /// Remove a member from the project
     Remove {
@@ -561,7 +597,7 @@ enum MemberAction {
         #[arg(long)]
         user_id: i64,
         #[arg(long)]
-        role: Role,
+        role: CliRole,
     },
 }
 
@@ -725,7 +761,8 @@ async fn run(cli: Cli) -> Result<()> {
                     operations.push(format!("Update task #{}: set plan to \"{}\"", id, p));
                 }
                 if let Some(p) = priority {
-                    operations.push(format!("Update task #{}: set priority to {}", id, p));
+                    let dp: Priority = (*p).into();
+                    operations.push(format!("Update task #{}: set priority to {}", id, dp));
                 }
                 if clear_branch {
                     operations.push(format!("Update task #{}: clear branch", id));
@@ -780,7 +817,7 @@ async fn run(cli: Cli) -> Result<()> {
                 } else {
                     effective_plan.map(Some)
                 },
-                priority: priority.clone(),
+                priority: priority.map(|p| p.into()),
                 assignee_session_id: None,
                 assignee_user_id: None,
                 started_at: None,
@@ -2262,7 +2299,7 @@ async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
             }
         }
         MemberAction::Add { user_id, role } => {
-            let params = AddProjectMemberParams::new(*user_id, *role);
+            let params = AddProjectMemberParams::new(*user_id, role.map(|r| r.into()));
             let member = project_service
                 .add_project_member(DEFAULT_PROJECT_ID, &params, None)
                 .await?;
@@ -2296,7 +2333,7 @@ async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
         }
         MemberAction::SetRole { user_id, role } => {
             let member = project_service
-                .update_member_role(DEFAULT_PROJECT_ID, *user_id, *role, None)
+                .update_member_role(DEFAULT_PROJECT_ID, *user_id, (*role).into(), None)
                 .await?;
             match cli.output {
                 OutputFormat::Json => {
@@ -2773,7 +2810,7 @@ mod tests {
             } => {
                 assert_eq!(id, 5);
                 assert_eq!(title.as_deref(), Some("new title"));
-                assert_eq!(priority, Some(Priority::P0));
+                assert!(matches!(priority, Some(CliPriority::P0)));
             }
             _ => panic!("expected Edit"),
         }
