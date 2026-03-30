@@ -92,21 +92,25 @@ pub trait ProjectRepository: Send + Sync {
     async fn list_projects(&self) -> Result<Vec<Project>>;
     async fn delete_project(&self, id: i64) -> Result<()>;
 
-    // User management
-    async fn create_user(&self, params: &CreateUserParams) -> Result<User>;
-    async fn get_user(&self, id: i64) -> Result<User>;
-    async fn get_user_by_username(&self, username: &str) -> Result<User>;
-    async fn list_users(&self) -> Result<Vec<User>>;
-    async fn delete_user(&self, id: i64) -> Result<()>;
-
     // Project membership
     async fn add_project_member(&self, project_id: i64, params: &AddProjectMemberParams) -> Result<ProjectMember>;
     async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()>;
     async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>>;
     async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember>;
     async fn update_member_role(&self, project_id: i64, user_id: i64, role: Role) -> Result<ProjectMember>;
+}
 
-    // API key management
+#[async_trait]
+pub trait UserRepository: Send + Sync {
+    async fn create_user(&self, params: &CreateUserParams) -> Result<User>;
+    async fn get_user(&self, id: i64) -> Result<User>;
+    async fn get_user_by_username(&self, username: &str) -> Result<User>;
+    async fn list_users(&self) -> Result<Vec<User>>;
+    async fn delete_user(&self, id: i64) -> Result<()>;
+}
+
+#[async_trait]
+pub trait ApiKeyRepository: Send + Sync {
     async fn create_api_key(&self, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret>;
     async fn get_user_by_api_key(&self, key_hash: &str) -> Result<User>;
     async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>>;

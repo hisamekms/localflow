@@ -9,7 +9,7 @@ use tokio::sync::OnceCell;
 
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::application::port::TaskQueryPort;
-use crate::domain::repository::{ProjectRepository, TaskRepository};
+use crate::domain::repository::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
     CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
     UpdateTaskParams,
@@ -666,66 +666,6 @@ impl ProjectRepository for DynamoDbBackend {
         Ok(())
     }
 
-    // User management
-
-    async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
-        let id = self.next_id("USER").await?;
-        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let user = User::new(
-            id,
-            params.username.clone(),
-            params.display_name.clone(),
-            params.email.clone(),
-            now,
-        );
-        self.put_item(user_to_item(&user)).await?;
-        Ok(user)
-    }
-
-    async fn get_user(&self, id: i64) -> Result<User> {
-        let client = self.client().await?;
-        let resp = client
-            .get_item()
-            .table_name(&self.table_name)
-            .key("PK", AttributeValue::S(format!("USER#{id}")))
-            .key("SK", AttributeValue::S(format!("USER#{id}")))
-            .send()
-            .await
-            .context("failed to get user")?;
-        let item = resp.item().context("user not found")?;
-        item_to_user(item)
-    }
-
-    async fn get_user_by_username(&self, username: &str) -> Result<User> {
-        let users = self.list_users().await?;
-        users
-            .into_iter()
-            .find(|u| u.username() == username)
-            .ok_or_else(|| anyhow::anyhow!("user not found"))
-    }
-
-    async fn list_users(&self) -> Result<Vec<User>> {
-        let items = self.scan_items_by_prefix("USER#").await?;
-        let mut users: Vec<User> = items.iter().map(|i| item_to_user(i)).collect::<Result<_>>()?;
-        users.sort_by_key(|u| u.id());
-        Ok(users)
-    }
-
-    async fn delete_user(&self, id: i64) -> Result<()> {
-        let client = self.client().await?;
-        client
-            .delete_item()
-            .table_name(&self.table_name)
-            .key("PK", AttributeValue::S(format!("USER#{id}")))
-            .key("SK", AttributeValue::S(format!("USER#{id}")))
-            .send()
-            .await
-            .context("failed to delete user")?;
-        Ok(())
-    }
-
-    // Project membership
-
     async fn add_project_member(&self, project_id: i64, params: &AddProjectMemberParams) -> Result<ProjectMember> {
         let id = self.next_id("MEMBER").await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -783,9 +723,69 @@ impl ProjectRepository for DynamoDbBackend {
         self.put_item(member_to_item(&member)).await?;
         Ok(member)
     }
+}
 
-    // API key management (not yet implemented for DynamoDB)
+#[async_trait]
+impl UserRepository for DynamoDbBackend {
+    async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
+        let id = self.next_id("USER").await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let user = User::new(
+            id,
+            params.username.clone(),
+            params.display_name.clone(),
+            params.email.clone(),
+            now,
+        );
+        self.put_item(user_to_item(&user)).await?;
+        Ok(user)
+    }
 
+    async fn get_user(&self, id: i64) -> Result<User> {
+        let client = self.client().await?;
+        let resp = client
+            .get_item()
+            .table_name(&self.table_name)
+            .key("PK", AttributeValue::S(format!("USER#{id}")))
+            .key("SK", AttributeValue::S(format!("USER#{id}")))
+            .send()
+            .await
+            .context("failed to get user")?;
+        let item = resp.item().context("user not found")?;
+        item_to_user(item)
+    }
+
+    async fn get_user_by_username(&self, username: &str) -> Result<User> {
+        let users = self.list_users().await?;
+        users
+            .into_iter()
+            .find(|u| u.username() == username)
+            .ok_or_else(|| anyhow::anyhow!("user not found"))
+    }
+
+    async fn list_users(&self) -> Result<Vec<User>> {
+        let items = self.scan_items_by_prefix("USER#").await?;
+        let mut users: Vec<User> = items.iter().map(|i| item_to_user(i)).collect::<Result<_>>()?;
+        users.sort_by_key(|u| u.id());
+        Ok(users)
+    }
+
+    async fn delete_user(&self, id: i64) -> Result<()> {
+        let client = self.client().await?;
+        client
+            .delete_item()
+            .table_name(&self.table_name)
+            .key("PK", AttributeValue::S(format!("USER#{id}")))
+            .key("SK", AttributeValue::S(format!("USER#{id}")))
+            .send()
+            .await
+            .context("failed to delete user")?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ApiKeyRepository for DynamoDbBackend {
     async fn create_api_key(&self, _user_id: i64, _name: &str, _new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         bail!("API key management is not yet supported for DynamoDB backend")
     }

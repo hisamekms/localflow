@@ -1409,7 +1409,7 @@ use async_trait::async_trait;
 
 use crate::application::port::TaskQueryPort;
 use crate::infra::config::Config;
-use crate::domain::repository::{ProjectRepository, TaskRepository};
+use crate::domain::repository::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 
 pub struct SqliteBackend {
     conn: Arc<std::sync::Mutex<Connection>>,
@@ -1492,8 +1492,30 @@ impl ProjectRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| delete_project(conn, id))
     }
 
-    // User management
+    async fn add_project_member(&self, project_id: i64, params: &AddProjectMemberParams) -> Result<ProjectMember> {
+        let params = params.clone();
+        blocking!(self, |conn: &Connection| add_project_member(conn, project_id, &params))
+    }
 
+    async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()> {
+        blocking!(self, |conn: &Connection| remove_project_member(conn, project_id, user_id))
+    }
+
+    async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>> {
+        blocking!(self, |conn: &Connection| list_project_members(conn, project_id))
+    }
+
+    async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember> {
+        blocking!(self, |conn: &Connection| get_project_member(conn, project_id, user_id))
+    }
+
+    async fn update_member_role(&self, project_id: i64, user_id: i64, role: Role) -> Result<ProjectMember> {
+        blocking!(self, |conn: &Connection| update_member_role(conn, project_id, user_id, role))
+    }
+}
+
+#[async_trait]
+impl UserRepository for SqliteBackend {
     async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| create_user(conn, &params))
@@ -1515,32 +1537,10 @@ impl ProjectRepository for SqliteBackend {
     async fn delete_user(&self, id: i64) -> Result<()> {
         blocking!(self, |conn: &Connection| delete_user(conn, id))
     }
+}
 
-    // Project membership
-
-    async fn add_project_member(&self, project_id: i64, params: &AddProjectMemberParams) -> Result<ProjectMember> {
-        let params = params.clone();
-        blocking!(self, |conn: &Connection| add_project_member(conn, project_id, &params))
-    }
-
-    async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()> {
-        blocking!(self, |conn: &Connection| remove_project_member(conn, project_id, user_id))
-    }
-
-    async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>> {
-        blocking!(self, |conn: &Connection| list_project_members(conn, project_id))
-    }
-
-    async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember> {
-        blocking!(self, |conn: &Connection| get_project_member(conn, project_id, user_id))
-    }
-
-    async fn update_member_role(&self, project_id: i64, user_id: i64, role: Role) -> Result<ProjectMember> {
-        blocking!(self, |conn: &Connection| update_member_role(conn, project_id, user_id, role))
-    }
-
-    // API key management
-
+#[async_trait]
+impl ApiKeyRepository for SqliteBackend {
     async fn create_api_key(&self, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         let name = name.to_owned();
         let new_key = new_key.clone();
