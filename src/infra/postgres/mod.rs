@@ -7,7 +7,7 @@ use sqlx::Row;
 
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::application::port::TaskQueryPort;
-use crate::domain::repository::{ProjectRepository, TaskRepository};
+use crate::domain::repository::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
     CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
     UpdateTaskParams,
@@ -285,95 +285,6 @@ impl ProjectRepository for PostgresBackend {
         Ok(())
     }
 
-    // --- User management ---
-
-    async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
-        let pool = self.pool().await?;
-        let row = sqlx::query(
-            "INSERT INTO users (username, display_name, email) VALUES ($1, $2, $3) RETURNING id, created_at",
-        )
-        .bind(&params.username)
-        .bind(&params.display_name)
-        .bind(&params.email)
-        .fetch_one(pool)
-        .await?;
-        Ok(User::new(
-            row.get("id"),
-            params.username.clone(),
-            params.display_name.clone(),
-            params.email.clone(),
-            row.get("created_at"),
-        ))
-    }
-
-    async fn get_user(&self, id: i64) -> Result<User> {
-        let pool = self.pool().await?;
-        let row = sqlx::query(
-            "SELECT username, display_name, email, created_at FROM users WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(pool)
-        .await?
-        .context("user not found")?;
-        Ok(User::new(
-            id,
-            row.get("username"),
-            row.get("display_name"),
-            row.get("email"),
-            row.get("created_at"),
-        ))
-    }
-
-    async fn get_user_by_username(&self, username: &str) -> Result<User> {
-        let pool = self.pool().await?;
-        let row = sqlx::query(
-            "SELECT id, display_name, email, created_at FROM users WHERE username = $1",
-        )
-        .bind(username)
-        .fetch_optional(pool)
-        .await?
-        .context("user not found")?;
-        Ok(User::new(
-            row.get("id"),
-            username.to_string(),
-            row.get("display_name"),
-            row.get("email"),
-            row.get("created_at"),
-        ))
-    }
-
-    async fn list_users(&self) -> Result<Vec<User>> {
-        let pool = self.pool().await?;
-        let rows =
-            sqlx::query("SELECT id, username, display_name, email, created_at FROM users ORDER BY id")
-                .fetch_all(pool)
-                .await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| User::new(
-                r.get("id"),
-                r.get("username"),
-                r.get("display_name"),
-                r.get("email"),
-                r.get("created_at"),
-            ))
-            .collect())
-    }
-
-    async fn delete_user(&self, id: i64) -> Result<()> {
-        let pool = self.pool().await?;
-        let result = sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(id)
-            .execute(pool)
-            .await?;
-        if result.rows_affected() == 0 {
-            anyhow::bail!("user not found: {id}");
-        }
-        Ok(())
-    }
-
-    // --- Project membership ---
-
     async fn add_project_member(
         &self,
         project_id: i64,
@@ -482,9 +393,98 @@ impl ProjectRepository for PostgresBackend {
         }
         self.get_project_member(project_id, user_id).await
     }
+}
 
-    // --- API key management ---
+#[async_trait]
+impl UserRepository for PostgresBackend {
+    async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
+        let pool = self.pool().await?;
+        let row = sqlx::query(
+            "INSERT INTO users (username, display_name, email) VALUES ($1, $2, $3) RETURNING id, created_at",
+        )
+        .bind(&params.username)
+        .bind(&params.display_name)
+        .bind(&params.email)
+        .fetch_one(pool)
+        .await?;
+        Ok(User::new(
+            row.get("id"),
+            params.username.clone(),
+            params.display_name.clone(),
+            params.email.clone(),
+            row.get("created_at"),
+        ))
+    }
 
+    async fn get_user(&self, id: i64) -> Result<User> {
+        let pool = self.pool().await?;
+        let row = sqlx::query(
+            "SELECT username, display_name, email, created_at FROM users WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .context("user not found")?;
+        Ok(User::new(
+            id,
+            row.get("username"),
+            row.get("display_name"),
+            row.get("email"),
+            row.get("created_at"),
+        ))
+    }
+
+    async fn get_user_by_username(&self, username: &str) -> Result<User> {
+        let pool = self.pool().await?;
+        let row = sqlx::query(
+            "SELECT id, display_name, email, created_at FROM users WHERE username = $1",
+        )
+        .bind(username)
+        .fetch_optional(pool)
+        .await?
+        .context("user not found")?;
+        Ok(User::new(
+            row.get("id"),
+            username.to_string(),
+            row.get("display_name"),
+            row.get("email"),
+            row.get("created_at"),
+        ))
+    }
+
+    async fn list_users(&self) -> Result<Vec<User>> {
+        let pool = self.pool().await?;
+        let rows =
+            sqlx::query("SELECT id, username, display_name, email, created_at FROM users ORDER BY id")
+                .fetch_all(pool)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| User::new(
+                r.get("id"),
+                r.get("username"),
+                r.get("display_name"),
+                r.get("email"),
+                r.get("created_at"),
+            ))
+            .collect())
+    }
+
+    async fn delete_user(&self, id: i64) -> Result<()> {
+        let pool = self.pool().await?;
+        let result = sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            anyhow::bail!("user not found: {id}");
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ApiKeyRepository for PostgresBackend {
     async fn create_api_key(&self, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         let pool = self.pool().await?;
         // Verify user exists

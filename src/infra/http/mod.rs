@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::application::port::TaskQueryPort;
-use crate::domain::repository::{ProjectRepository, TaskRepository};
+use crate::domain::repository::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, Task, UpdateTaskArrayParams, UpdateTaskParams,
@@ -219,62 +219,6 @@ impl ProjectRepository for HttpBackend {
         check_success(resp).await
     }
 
-    // User management
-
-    async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
-        let resp = self.auth(self
-            .client
-            .post(self.url("/api/v1/users"))
-            .json(params))
-            .send()
-            .await?;
-        read_json_or_error(resp).await
-    }
-
-    async fn get_user(&self, id: i64) -> Result<User> {
-        let resp = self.auth(self
-            .client
-            .get(self.url(&format!("/api/v1/users/{id}"))))
-            .send()
-            .await?;
-        read_json_or_error(resp).await
-    }
-
-    async fn get_user_by_username(&self, username: &str) -> Result<User> {
-        let users: Vec<User> = {
-            let resp = self.auth(self
-                .client
-                .get(self.url("/api/v1/users")))
-                .send()
-                .await?;
-            read_json_or_error(resp).await?
-        };
-        users
-            .into_iter()
-            .find(|u| u.username() == username)
-            .ok_or_else(|| anyhow::anyhow!("user not found"))
-    }
-
-    async fn list_users(&self) -> Result<Vec<User>> {
-        let resp = self.auth(self
-            .client
-            .get(self.url("/api/v1/users")))
-            .send()
-            .await?;
-        read_json_or_error(resp).await
-    }
-
-    async fn delete_user(&self, id: i64) -> Result<()> {
-        let resp = self.auth(self
-            .client
-            .delete(self.url(&format!("/api/v1/users/{id}"))))
-            .send()
-            .await?;
-        check_success(resp).await
-    }
-
-    // Project membership
-
     async fn add_project_member(
         &self,
         project_id: i64,
@@ -328,9 +272,65 @@ impl ProjectRepository for HttpBackend {
             .await?;
         read_json_or_error(resp).await
     }
+}
 
-    // API key management
+#[async_trait]
+impl UserRepository for HttpBackend {
+    async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
+        let resp = self.auth(self
+            .client
+            .post(self.url("/api/v1/users"))
+            .json(params))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
 
+    async fn get_user(&self, id: i64) -> Result<User> {
+        let resp = self.auth(self
+            .client
+            .get(self.url(&format!("/api/v1/users/{id}"))))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn get_user_by_username(&self, username: &str) -> Result<User> {
+        let users: Vec<User> = {
+            let resp = self.auth(self
+                .client
+                .get(self.url("/api/v1/users")))
+                .send()
+                .await?;
+            read_json_or_error(resp).await?
+        };
+        users
+            .into_iter()
+            .find(|u| u.username() == username)
+            .ok_or_else(|| anyhow::anyhow!("user not found"))
+    }
+
+    async fn list_users(&self) -> Result<Vec<User>> {
+        let resp = self.auth(self
+            .client
+            .get(self.url("/api/v1/users")))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn delete_user(&self, id: i64) -> Result<()> {
+        let resp = self.auth(self
+            .client
+            .delete(self.url(&format!("/api/v1/users/{id}"))))
+            .send()
+            .await?;
+        check_success(resp).await
+    }
+}
+
+#[async_trait]
+impl ApiKeyRepository for HttpBackend {
     async fn create_api_key(&self, user_id: i64, name: &str, _new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         let resp = self.auth(
             self.client.post(self.url(&format!("/api/v1/users/{user_id}/api-keys")))

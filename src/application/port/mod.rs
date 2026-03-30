@@ -8,10 +8,10 @@ pub use hook_executor::{HookExecutor, NoOpHookExecutor};
 pub use pr_verifier::{NoOpPrVerifier, PrVerifier};
 pub use task_query::TaskQueryPort;
 
-use crate::domain::repository::{ProjectRepository, TaskRepository};
+use crate::domain::repository::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 
-/// Combined trait for backends that implement TaskRepository, ProjectRepository, and TaskQueryPort.
+/// Combined trait for backends that implement all repository traits and TaskQueryPort.
 /// Backends automatically implement TaskBackend via the blanket impl.
-pub trait TaskBackend: TaskRepository + ProjectRepository + TaskQueryPort {}
+pub trait TaskBackend: TaskRepository + ProjectRepository + UserRepository + ApiKeyRepository + TaskQueryPort {}
 
-impl<T: TaskRepository + ProjectRepository + TaskQueryPort> TaskBackend for T {}
+impl<T: TaskRepository + ProjectRepository + UserRepository + ApiKeyRepository + TaskQueryPort> TaskBackend for T {}
