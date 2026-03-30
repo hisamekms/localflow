@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::application::port::HookExecutor;
 use crate::application::HookTrigger;
-use crate::domain::repository::TaskBackend;
+use crate::application::port::TaskBackend;
 use crate::infra::config::Config;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
 

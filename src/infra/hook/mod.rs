@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::infra::config::{Config, HookEntry};
 #[cfg(test)]
 use crate::infra::config::RawConfig;
-use crate::domain::repository::TaskBackend;
+use crate::application::port::TaskBackend;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
 
 #[derive(Debug, Clone, Serialize)]
@@ -684,6 +684,7 @@ mod tests {
         CompletionMode, HookMode, HooksConfig, RawLogConfig, RawWorkflowConfig,
     };
     use crate::infra::sqlite::SqliteBackend;
+    use crate::application::port::TaskQueryPort;
     use crate::domain::repository::{ProjectRepository, TaskRepository};
     use std::sync::Mutex;
 

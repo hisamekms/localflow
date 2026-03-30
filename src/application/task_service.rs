@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
+use crate::application::port::TaskBackend;
 use crate::domain::error::DomainError;
-use crate::domain::repository::TaskBackend;
 use crate::infra::config::{CompletionMode, WorkflowConfig};
 use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, Task, TaskEvent, UnblockedTask,

@@ -10,7 +10,7 @@ use senko::application::{ProjectService, TaskService, UserService};
 use senko::application::HookTrigger;
 use senko::infra::config::{CliOverrides, Config, HookEntry, HookMode};
 use senko::domain::project::CreateProjectParams;
-use senko::domain::repository::TaskBackend;
+use senko::application::port::TaskBackend;
 use senko::domain::task::{
     CreateTaskParams, ListTasksFilter, Priority, Task, TaskEvent, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
