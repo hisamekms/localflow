@@ -16,6 +16,7 @@ use senko::domain::task::{
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use senko::domain::user::{AddProjectMemberParams, CreateUserParams, Role};
+use senko::presentation::dto::TaskResponse;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum CliPriority {
@@ -880,7 +881,7 @@ async fn run(cli: Cli) -> Result<()> {
 
             match cli.output {
                 OutputFormat::Json => {
-                    println!("{}", serde_json::to_string_pretty(&task)?);
+                    println!("{}", serde_json::to_string_pretty(&TaskResponse::from(task))?);
                 }
                 OutputFormat::Text => {
                     println!("Updated task {}", task.id());
@@ -1056,7 +1057,7 @@ async fn cmd_add(
 
     match cli.output {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&task)?);
+            println!("{}", serde_json::to_string_pretty(&TaskResponse::from(task))?);
         }
         OutputFormat::Text => {
             println!("Created task #{}: \"{}\"", task.id(), task.title());
@@ -1095,7 +1096,8 @@ async fn cmd_list(
 
     match cli.output {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&tasks)?);
+            let response: Vec<TaskResponse> = tasks.into_iter().map(TaskResponse::from).collect();
+            println!("{}", serde_json::to_string_pretty(&response)?);
         }
         OutputFormat::Text => {
             for task in &tasks {
@@ -1118,7 +1120,7 @@ async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
 
     match cli.output {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&task)?);
+            println!("{}", serde_json::to_string_pretty(&TaskResponse::from(task))?);
         }
         OutputFormat::Text => {
             println!("ID:       {}", task.id());
@@ -1219,7 +1221,7 @@ async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 
     match cli.output {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&updated)?);
+            println!("{}", serde_json::to_string_pretty(&TaskResponse::from(updated))?);
         }
         OutputFormat::Text => {
             println!("Ready task #{}: {}", updated.id(), updated.title());
@@ -1260,7 +1262,7 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Opti
 
     match cli.output {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&updated)?);
+            println!("{}", serde_json::to_string_pretty(&TaskResponse::from(updated))?);
         }
         OutputFormat::Text => {
             println!("Started task #{}: {}", updated.id(), updated.title());
@@ -1326,7 +1328,7 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
             .fire(&HookTrigger::Task(TaskEvent::Started), Some(&task), Some(prev_status), None)
             .await;
         match cli.output {
-            OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
+            OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&TaskResponse::from(task))?),
             OutputFormat::Text => println!("Started task #{}: {}", task.id(), task.title()),
         }
         return Ok(());
@@ -1337,7 +1339,7 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
 
     match cli.output {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&updated)?);
+            println!("{}", serde_json::to_string_pretty(&TaskResponse::from(updated))?);
         }
         OutputFormat::Text => {
             println!("Started task #{}: {}", updated.id(), updated.title());
@@ -1372,7 +1374,7 @@ async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
 
     match cli.output {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&updated)?);
+            println!("{}", serde_json::to_string_pretty(&TaskResponse::from(updated))?);
         }
         OutputFormat::Text => {
             println!("Completed task #{}: {}", updated.id(), updated.title());
@@ -1410,7 +1412,7 @@ async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
 
     match cli.output {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&updated)?);
+            println!("{}", serde_json::to_string_pretty(&TaskResponse::from(updated))?);
         }
         OutputFormat::Text => {
             println!("Canceled task #{}: {}", updated.id(), updated.title());
@@ -1976,7 +1978,7 @@ async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
             }
             let task = task_service.check_dod(project_id, task_id, index).await?;
             match cli.output {
-                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&TaskResponse::from(task))?),
                 OutputFormat::Text => {
                     println!("Checked DoD item #{index} of task #{task_id}");
                     print_dod_items(task.definition_of_done());
@@ -1998,7 +2000,7 @@ async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
             }
             let task = task_service.uncheck_dod(project_id, task_id, index).await?;
             match cli.output {
-                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&TaskResponse::from(task))?),
                 OutputFormat::Text => {
                     println!("Unchecked DoD item #{index} of task #{task_id}");
                     print_dod_items(task.definition_of_done());
@@ -2032,7 +2034,7 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
             }
             let task = task_service.add_dependency(project_id, task_id, on).await?;
             match cli.output {
-                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&TaskResponse::from(task))?),
                 OutputFormat::Text => println!("Added dependency: task #{} depends on #{}", task_id, on),
             }
         }
@@ -2044,7 +2046,7 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
             }
             let task = task_service.remove_dependency(project_id, task_id, on).await?;
             match cli.output {
-                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&TaskResponse::from(task))?),
                 OutputFormat::Text => println!("Removed dependency: task #{} no longer depends on #{}", task_id, on),
             }
         }
@@ -2057,7 +2059,7 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
             }
             let task = task_service.set_dependencies(project_id, task_id, on).await?;
             match cli.output {
-                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&TaskResponse::from(task))?),
                 OutputFormat::Text => {
                     if task.dependencies().is_empty() {
                         println!("Cleared all dependencies for task #{}", task_id);
@@ -2072,7 +2074,10 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
             // Read-only: ignore --dry-run
             let deps = task_service.list_dependencies(project_id, *task_id).await?;
             match cli.output {
-                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&deps)?),
+                OutputFormat::Json => {
+                    let response: Vec<TaskResponse> = deps.into_iter().map(TaskResponse::from).collect();
+                    println!("{}", serde_json::to_string_pretty(&response)?);
+                }
                 OutputFormat::Text => {
                     for task in &deps {
                         println!("[{}] #{} {} ({})", task.status(), task.id(), task.title(), task.priority());
