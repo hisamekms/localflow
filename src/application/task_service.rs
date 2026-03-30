@@ -9,19 +9,12 @@ use crate::application::port::TaskBackend;
 use crate::domain::error::DomainError;
 use crate::domain::task::{
     self, CompletionPolicy, CreateTaskParams, ListTasksFilter, Task, TaskEvent, TaskStatus,
-    UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
+    UpdateTaskArrayParams, UpdateTaskParams,
 };
-
-/// Result of completing a task, including newly unblocked tasks.
-#[derive(Debug, Clone)]
-pub struct CompleteResult {
-    pub task: Task,
-    pub unblocked: Vec<UnblockedTask>,
-}
 use crate::domain::validator::has_cycle_async;
 
 use super::HookTrigger;
-use super::port::{HookExecutor, PreviewResult, PrVerifier, TaskOperations};
+use super::port::{CompleteResult, HookExecutor, PreviewResult, PrVerifier, TaskOperations};
 
 pub struct TaskService {
     backend: Arc<dyn TaskBackend>,
