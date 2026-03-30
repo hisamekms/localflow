@@ -9,5 +9,6 @@ pub mod user_service;
 pub use hook_test_service::HookTestService;
 pub use hook_trigger::HookTrigger;
 pub use project_service::ProjectService;
+pub use crate::domain::task::ListTasksFilter;
 pub use task_service::{PreviewResult, TaskService};
 pub use user_service::UserService;

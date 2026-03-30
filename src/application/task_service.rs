@@ -407,6 +407,20 @@ impl TaskService {
         self.backend.list_tasks(project_id, filter).await
     }
 
+    pub async fn list_all_tags(&self, project_id: i64) -> Result<Vec<String>> {
+        let tasks = self
+            .backend
+            .list_tasks(project_id, &ListTasksFilter::default())
+            .await?;
+        let tags: Vec<String> = tasks
+            .iter()
+            .flat_map(|t| t.tags().iter().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Ok(tags)
+    }
+
     pub async fn task_stats(
         &self,
         project_id: i64,

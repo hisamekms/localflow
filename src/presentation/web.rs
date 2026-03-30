@@ -12,10 +12,10 @@ use tower_http::trace::TraceLayer;
 
 use pulldown_cmark::{Options, Parser};
 
-use crate::application::TaskService;
+use crate::application::{ListTasksFilter, TaskService};
 use crate::infra::config::Config;
 use crate::bootstrap;
-use crate::domain::task::{DodItem, Priority, Task, TaskStatus};
+use crate::presentation::dto::{DodItemViewModel, TaskViewModel};
 
 #[derive(Clone)]
 struct AppState {
@@ -88,29 +88,21 @@ async fn index_handler(
     let statuses = query.status
         .iter()
         .filter(|s| !s.is_empty())
-        .map(|s| s.parse::<TaskStatus>())
+        .map(|s| s.parse())
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     let tags: Vec<String> = query.tag.iter().filter(|t| !t.is_empty()).cloned().collect();
-    let filter = crate::domain::task::ListTasksFilter {
+    let filter = ListTasksFilter {
         statuses,
         tags,
         ..Default::default()
     };
     let project_id = state.project_id;
-    let tasks = state.task_service.list_tasks(project_id, &filter).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // Collect all tags from all tasks (unfiltered) for the filter UI
-    let all_tasks = state.task_service.list_tasks(project_id, &crate::domain::task::ListTasksFilter::default())
-        .await
+    let tasks: Vec<TaskViewModel> = state.task_service.list_tasks(project_id, &filter).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter().map(TaskViewModel::from).collect();
+    let all_tags = state.task_service.list_all_tags(project_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut all_tags: Vec<String> = all_tasks
-        .iter()
-        .flat_map(|t| t.tags().iter().cloned())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    all_tags.sort();
 
     let body = render_task_list(&tasks, &query, &all_tags);
     Ok(Html(layout("Tasks", &body)))
@@ -120,10 +112,12 @@ async fn task_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Html<String>, StatusCode> {
-    let task = state.task_service.get_task(state.project_id, id).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    let task: TaskViewModel = state.task_service.get_task(state.project_id, id).await
+        .map_err(|_| StatusCode::NOT_FOUND)?
+        .into();
 
+    let title = format!("#{} {}", task.id, escape_html(&task.title));
     let body = render_task_detail(&task);
-    let title = format!("#{} {}", task.id(), escape_html(task.title()));
     Ok(Html(layout(&title, &body)))
 }
 
@@ -134,34 +128,27 @@ async fn graph_handler(
     let statuses = query.status
         .iter()
         .filter(|s| !s.is_empty())
-        .map(|s| s.parse::<TaskStatus>())
+        .map(|s| s.parse())
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     let tags: Vec<String> = query.tag.iter().filter(|t| !t.is_empty()).cloned().collect();
-    let filter = crate::domain::task::ListTasksFilter {
+    let filter = ListTasksFilter {
         statuses,
         tags,
         ..Default::default()
     };
     let project_id = state.project_id;
-    let tasks = state.task_service.list_tasks(project_id, &filter).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let all_tasks = state.task_service.list_tasks(project_id, &crate::domain::task::ListTasksFilter::default())
-        .await
+    let tasks: Vec<TaskViewModel> = state.task_service.list_tasks(project_id, &filter).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter().map(TaskViewModel::from).collect();
+    let all_tags = state.task_service.list_all_tags(project_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut all_tags: Vec<String> = all_tasks
-        .iter()
-        .flat_map(|t| t.tags().iter().cloned())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    all_tags.sort();
 
     let body = render_graph_page(&tasks, &query, &all_tags);
     Ok(Html(layout("Dependency Graph", &body)))
 }
 
-fn render_graph_page(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> String {
+fn render_graph_page(tasks: &[TaskViewModel], query: &ListQuery, all_tags: &[String]) -> String {
     let filter_form = render_filter_form("/graph", query, all_tags);
 
     if tasks.is_empty() {
@@ -177,20 +164,20 @@ fn render_graph_page(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> 
     let mut mermaid = String::from("graph TD\n");
 
     for task in tasks {
-        let title = escape_mermaid(task.title());
-        let priority = task.priority();
+        let title = escape_mermaid(&task.title);
+        let priority = &task.priority;
         mermaid.push_str(&format!(
             "    node_{}[\"#{} {} ({})\"]\n",
-            task.id(), task.id(), title, priority
+            task.id, task.id, title, priority
         ));
     }
 
     // Dependency edges (only between visible nodes)
-    let visible_ids: std::collections::HashSet<i64> = tasks.iter().map(|t| t.id()).collect();
+    let visible_ids: std::collections::HashSet<i64> = tasks.iter().map(|t| t.id).collect();
     for task in tasks {
-        for dep in task.dependencies() {
+        for dep in &task.dependencies {
             if visible_ids.contains(dep) {
-                mermaid.push_str(&format!("    node_{} --> node_{}\n", dep, task.id()));
+                mermaid.push_str(&format!("    node_{} --> node_{}\n", dep, task.id));
             }
         }
     }
@@ -199,7 +186,7 @@ fn render_graph_page(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> 
     for task in tasks {
         mermaid.push_str(&format!(
             "    click node_{} \"/tasks/{}\"\n",
-            task.id(), task.id()
+            task.id, task.id
         ));
     }
 
@@ -211,13 +198,14 @@ fn render_graph_page(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> 
     let mut canceled = Vec::new();
 
     for task in tasks {
-        let node = format!("node_{}", task.id());
-        match task.status() {
-            TaskStatus::Completed => completed.push(node),
-            TaskStatus::InProgress => in_progress.push(node),
-            TaskStatus::Todo => todo.push(node),
-            TaskStatus::Draft => draft.push(node),
-            TaskStatus::Canceled => canceled.push(node),
+        let node = format!("node_{}", task.id);
+        match task.status.as_str() {
+            "completed" => completed.push(node),
+            "in_progress" => in_progress.push(node),
+            "todo" => todo.push(node),
+            "draft" => draft.push(node),
+            "canceled" => canceled.push(node),
+            _ => {}
         }
     }
 
@@ -490,7 +478,7 @@ fn render_filter_form(action: &str, query: &ListQuery, all_tags: &[String]) -> S
     )
 }
 
-fn render_task_list(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> String {
+fn render_task_list(tasks: &[TaskViewModel], query: &ListQuery, all_tags: &[String]) -> String {
     let filter = render_filter_form("/", query, all_tags);
 
     if tasks.is_empty() {
@@ -500,14 +488,14 @@ fn render_task_list(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> S
     let rows: String = tasks
         .iter()
         .map(|t| {
-            let title = escape_html(t.title());
-            let status = status_badge(t.status());
-            let priority = priority_badge(t.priority());
-            let created = escape_html(&t.created_at().split('T').next().unwrap_or(t.created_at()));
-            let tags_html = if t.tags().is_empty() {
+            let title = escape_html(&t.title);
+            let status = status_badge(&t.status);
+            let priority = priority_badge(&t.priority);
+            let created = escape_html(&t.created_at.split('T').next().unwrap_or(&t.created_at));
+            let tags_html = if t.tags.is_empty() {
                 String::new()
             } else {
-                t.tags()
+                t.tags
                     .iter()
                     .map(|tag| format!(r#"<span class="tag-pill">{}</span>"#, escape_html(tag)))
                     .collect::<Vec<_>>()
@@ -522,7 +510,7 @@ fn render_task_list(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> S
 <td>{}</td>
 <td>{}</td>
 </tr>"#,
-                t.id(), t.id(), title, status, priority, tags_html, created
+                t.id, t.id, title, status, priority, tags_html, created
             )
         })
         .collect();
@@ -538,44 +526,44 @@ fn render_task_list(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> S
     )
 }
 
-fn render_task_detail(task: &Task) -> String {
+fn render_task_detail(task: &TaskViewModel) -> String {
     let mut html = String::new();
 
     // Header
     html.push_str(&format!(
         "<h1>#{} {}</h1>",
-        task.id(),
-        escape_html(task.title())
+        task.id,
+        escape_html(&task.title)
     ));
 
     // Meta grid
     html.push_str("<div class=\"meta\">");
-    html.push_str(&meta_item("Status", &status_badge(task.status())));
-    html.push_str(&meta_item("Priority", &priority_badge(task.priority())));
-    html.push_str(&meta_item("Created", &escape_html(task.created_at())));
-    html.push_str(&meta_item("Updated", &escape_html(task.updated_at())));
-    if let Some(started) = task.started_at() {
+    html.push_str(&meta_item("Status", &status_badge(&task.status)));
+    html.push_str(&meta_item("Priority", &priority_badge(&task.priority)));
+    html.push_str(&meta_item("Created", &escape_html(&task.created_at)));
+    html.push_str(&meta_item("Updated", &escape_html(&task.updated_at)));
+    if let Some(ref started) = task.started_at {
         html.push_str(&meta_item("Started", &escape_html(started)));
     }
-    if let Some(completed) = task.completed_at() {
+    if let Some(ref completed) = task.completed_at {
         html.push_str(&meta_item("Completed", &escape_html(completed)));
     }
-    if let Some(canceled) = task.canceled_at() {
+    if let Some(ref canceled) = task.canceled_at {
         html.push_str(&meta_item("Canceled", &escape_html(canceled)));
     }
-    if let Some(session) = task.assignee_session_id() {
+    if let Some(ref session) = task.assignee_session_id {
         html.push_str(&meta_item("Assignee (session)", &escape_html(session)));
     }
-    if let Some(uid) = task.assignee_user_id() {
+    if let Some(uid) = task.assignee_user_id {
         html.push_str(&meta_item("Assignee (user)", &format!("#{uid}")));
     }
-    if let Some(branch) = task.branch() {
+    if let Some(ref branch) = task.branch {
         html.push_str(&meta_item("Branch", &escape_html(branch)));
     }
     html.push_str("</div>");
 
     // Background
-    if let Some(bg) = task.background() {
+    if let Some(ref bg) = task.background {
         html.push_str("<h2>Background</h2>");
         html.push_str(&format!(
             "<div class=\"section\"><pre>{}</pre></div>",
@@ -584,7 +572,7 @@ fn render_task_detail(task: &Task) -> String {
     }
 
     // Description
-    if let Some(description) = task.description() {
+    if let Some(ref description) = task.description {
         html.push_str("<h2>Description</h2>");
         html.push_str(&format!(
             "<div class=\"section markdown\">{}</div>",
@@ -593,7 +581,7 @@ fn render_task_detail(task: &Task) -> String {
     }
 
     // Plan
-    if let Some(plan) = task.plan() {
+    if let Some(ref plan) = task.plan {
         html.push_str("<h2>Plan</h2>");
         html.push_str(&format!(
             "<div class=\"section markdown\">{}</div>",
@@ -602,7 +590,7 @@ fn render_task_detail(task: &Task) -> String {
     }
 
     // Cancel reason
-    if let Some(reason) = task.cancel_reason() {
+    if let Some(ref reason) = task.cancel_reason {
         html.push_str("<h2>Cancel Reason</h2>");
         html.push_str(&format!(
             "<div class=\"section\"><pre>{}</pre></div>",
@@ -611,30 +599,30 @@ fn render_task_detail(task: &Task) -> String {
     }
 
     // Definition of Done
-    if !task.definition_of_done().is_empty() {
+    if !task.definition_of_done.is_empty() {
         html.push_str("<h2>Definition of Done</h2>");
         html.push_str("<div class=\"section\">");
-        for (i, item) in task.definition_of_done().iter().enumerate() {
+        for (i, item) in task.definition_of_done.iter().enumerate() {
             html.push_str(&render_dod_item(i + 1, item));
         }
         html.push_str("</div>");
     }
 
     // Tags
-    if !task.tags().is_empty() {
+    if !task.tags.is_empty() {
         html.push_str("<h2>Tags</h2>");
         html.push_str("<ul class=\"tag-list\">");
-        for tag in task.tags() {
+        for tag in &task.tags {
             html.push_str(&format!("<li>{}</li>", escape_html(tag)));
         }
         html.push_str("</ul>");
     }
 
     // Dependencies
-    if !task.dependencies().is_empty() {
+    if !task.dependencies.is_empty() {
         html.push_str("<h2>Dependencies</h2>");
         html.push_str("<div class=\"section\">");
-        for dep in task.dependencies() {
+        for dep in &task.dependencies {
             html.push_str(&format!(
                 "<div><a href=\"/tasks/{dep}\">#{dep}</a></div>"
             ));
@@ -643,20 +631,20 @@ fn render_task_detail(task: &Task) -> String {
     }
 
     // In scope
-    if !task.in_scope().is_empty() {
+    if !task.in_scope.is_empty() {
         html.push_str("<h2>In Scope</h2>");
         html.push_str("<div class=\"section\"><ul>");
-        for item in task.in_scope() {
+        for item in &task.in_scope {
             html.push_str(&format!("<li>{}</li>", escape_html(item)));
         }
         html.push_str("</ul></div>");
     }
 
     // Out of scope
-    if !task.out_of_scope().is_empty() {
+    if !task.out_of_scope.is_empty() {
         html.push_str("<h2>Out of Scope</h2>");
         html.push_str("<div class=\"section\"><ul>");
-        for item in task.out_of_scope() {
+        for item in &task.out_of_scope {
             html.push_str(&format!("<li>{}</li>", escape_html(item)));
         }
         html.push_str("</ul></div>");
@@ -671,37 +659,39 @@ fn meta_item(label: &str, value: &str) -> String {
     )
 }
 
-fn render_dod_item(index: usize, item: &DodItem) -> String {
-    let (class, icon) = if item.checked() {
+fn render_dod_item(index: usize, item: &DodItemViewModel) -> String {
+    let (class, icon) = if item.checked {
         ("dod-checked", "&#9745;")
     } else {
         ("dod-unchecked", "&#9744;")
     };
     format!(
         r#"<div class="dod-item {class}">{icon} {index}. {}</div>"#,
-        escape_html(item.content())
+        escape_html(&item.content)
     )
 }
 
-fn status_badge(status: TaskStatus) -> String {
+fn status_badge(status: &str) -> String {
     let class = match status {
-        TaskStatus::Draft => "status-draft",
-        TaskStatus::Todo => "status-todo",
-        TaskStatus::InProgress => "status-in_progress",
-        TaskStatus::Completed => "status-completed",
-        TaskStatus::Canceled => "status-canceled",
+        "draft" => "status-draft",
+        "todo" => "status-todo",
+        "in_progress" => "status-in_progress",
+        "completed" => "status-completed",
+        "canceled" => "status-canceled",
+        _ => "status-draft",
     };
-    format!(r#"<span class="badge {class}">{status}</span>"#)
+    format!(r#"<span class="badge {class}">{}</span>"#, escape_html(status))
 }
 
-fn priority_badge(priority: Priority) -> String {
-    let class = match priority {
-        Priority::P0 => "priority-p0",
-        Priority::P1 => "priority-p1",
-        Priority::P2 => "priority-p2",
-        Priority::P3 => "priority-p3",
+fn priority_badge(priority: &str) -> String {
+    let class = match priority.to_ascii_lowercase().as_str() {
+        "p0" => "priority-p0",
+        "p1" => "priority-p1",
+        "p2" => "priority-p2",
+        "p3" => "priority-p3",
+        _ => "priority-p2",
     };
-    format!(r#"<span class="badge {class}">{priority}</span>"#)
+    format!(r#"<span class="badge {class}">{}</span>"#, escape_html(priority))
 }
 
 fn render_markdown(input: &str) -> String {

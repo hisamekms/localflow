@@ -103,6 +103,74 @@ impl From<Task> for TaskResponse {
     }
 }
 
+// --- Task ViewModel (for web/HTML rendering) ---
+
+pub struct DodItemViewModel {
+    pub content: String,
+    pub checked: bool,
+}
+
+pub struct TaskViewModel {
+    pub id: i64,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+    pub tags: Vec<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub canceled_at: Option<String>,
+    pub cancel_reason: Option<String>,
+    pub background: Option<String>,
+    pub description: Option<String>,
+    pub plan: Option<String>,
+    pub assignee_session_id: Option<String>,
+    pub assignee_user_id: Option<i64>,
+    pub branch: Option<String>,
+    pub pr_url: Option<String>,
+    pub definition_of_done: Vec<DodItemViewModel>,
+    pub in_scope: Vec<String>,
+    pub out_of_scope: Vec<String>,
+    pub dependencies: Vec<i64>,
+}
+
+impl From<Task> for TaskViewModel {
+    fn from(t: Task) -> Self {
+        Self {
+            id: t.id(),
+            title: t.title().to_owned(),
+            status: t.status().to_string(),
+            priority: t.priority().to_string(),
+            tags: t.tags().to_vec(),
+            created_at: t.created_at().to_owned(),
+            updated_at: t.updated_at().to_owned(),
+            started_at: t.started_at().map(|s| s.to_owned()),
+            completed_at: t.completed_at().map(|s| s.to_owned()),
+            canceled_at: t.canceled_at().map(|s| s.to_owned()),
+            cancel_reason: t.cancel_reason().map(|s| s.to_owned()),
+            background: t.background().map(|s| s.to_owned()),
+            description: t.description().map(|s| s.to_owned()),
+            plan: t.plan().map(|s| s.to_owned()),
+            assignee_session_id: t.assignee_session_id().map(|s| s.to_owned()),
+            assignee_user_id: t.assignee_user_id(),
+            branch: t.branch().map(|s| s.to_owned()),
+            pr_url: t.pr_url().map(|s| s.to_owned()),
+            definition_of_done: t
+                .definition_of_done()
+                .iter()
+                .map(|d| DodItemViewModel {
+                    content: d.content().to_owned(),
+                    checked: d.checked(),
+                })
+                .collect(),
+            in_scope: t.in_scope().to_vec(),
+            out_of_scope: t.out_of_scope().to_vec(),
+            dependencies: t.dependencies().to_vec(),
+        }
+    }
+}
+
 // --- Preview Transition ---
 
 #[derive(Serialize, Deserialize)]
