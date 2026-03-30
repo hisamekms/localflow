@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use crate::application::port::TaskBackend;
-use crate::auth::{Permission, require_project_role};
+use crate::application::auth::{Permission, require_project_role};
 use crate::domain::project::{CreateProjectParams, Project, DEFAULT_PROJECT_ID};
 use crate::domain::task::ListTasksFilter;
 use crate::domain::user::{

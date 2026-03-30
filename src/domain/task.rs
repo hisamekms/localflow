@@ -1,9 +1,12 @@
+use std::collections::HashSet;
 use std::fmt;
 use std::str::FromStr;
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use super::error::DomainError;
+use crate::infra::config::{CompletionMode, WorkflowConfig};
 
 /// Domain event emitted by Task aggregate methods.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -723,6 +726,65 @@ impl Default for ListTasksFilter {
     }
 }
 
+// --- Domain functions ---
+
+/// Expand `${task_id}` placeholders in a branch template.
+pub fn expand_branch_template(template: &str, task_id: i64) -> String {
+    template.replace("${task_id}", &task_id.to_string())
+}
+
+/// Compute newly unblocked tasks by comparing current ready tasks against
+/// the set of ready task IDs captured before a completion.
+///
+/// This is a pure function — the caller fetches ready tasks from the backend.
+pub fn compute_unblocked(
+    current_ready: &[Task],
+    prev_ready_ids: &HashSet<i64>,
+) -> Vec<UnblockedTask> {
+    current_ready
+        .iter()
+        .filter(|t| !prev_ready_ids.contains(&t.id()))
+        .map(|t| UnblockedTask::new(t.id(), t.title().to_string(), t.priority(), t.metadata().cloned()))
+        .collect()
+}
+
+/// Domain policy for task completion workflow.
+pub struct CompletionPolicy {
+    completion_mode: CompletionMode,
+    auto_merge: bool,
+}
+
+impl CompletionPolicy {
+    pub fn from_workflow(workflow: &WorkflowConfig) -> Self {
+        Self {
+            completion_mode: workflow.completion_mode,
+            auto_merge: workflow.auto_merge,
+        }
+    }
+
+    pub fn auto_merge(&self) -> bool {
+        self.auto_merge
+    }
+
+    /// Returns the PR URL that must be verified, or `None` if no PR check is needed.
+    ///
+    /// Returns `Err` if the completion mode requires a PR URL but none is set on the task.
+    pub fn required_pr_url<'a>(&self, task: &'a Task, skip_pr_check: bool) -> Result<Option<&'a str>> {
+        if skip_pr_check || self.completion_mode != CompletionMode::PrThenComplete {
+            return Ok(None);
+        }
+        let pr_url = task.pr_url().ok_or_else(|| {
+            anyhow::anyhow!(
+                "cannot complete task #{}: completion_mode is pr_then_complete but no pr_url is set. \
+                 Use `senko edit {} --pr-url <url>` to set it.",
+                task.id(),
+                task.id(),
+            )
+        })?;
+        Ok(Some(pr_url))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1076,5 +1138,107 @@ mod tests {
     fn task_check_dod_empty_list() {
         let task = make_task(TaskStatus::InProgress);
         assert!(task.check_dod(1, "2026-01-05T00:00:00Z".to_string()).is_err());
+    }
+
+    // --- expand_branch_template tests ---
+
+    #[test]
+    fn expand_branch_template_replaces_task_id() {
+        assert_eq!(
+            super::expand_branch_template("feature/${task_id}-impl", 42),
+            "feature/42-impl"
+        );
+    }
+
+    #[test]
+    fn expand_branch_template_no_placeholder() {
+        assert_eq!(
+            super::expand_branch_template("feature/my-branch", 42),
+            "feature/my-branch"
+        );
+    }
+
+    #[test]
+    fn expand_branch_template_multiple_placeholders() {
+        assert_eq!(
+            super::expand_branch_template("${task_id}/${task_id}", 7),
+            "7/7"
+        );
+    }
+
+    // --- compute_unblocked tests ---
+
+    #[test]
+    fn compute_unblocked_finds_newly_ready() {
+        let prev_ready_ids: HashSet<i64> = [1, 3].into_iter().collect();
+        let current_ready = vec![
+            make_task_with_id(1, TaskStatus::Todo),
+            make_task_with_id(3, TaskStatus::Todo),
+            make_task_with_id(5, TaskStatus::Todo),
+        ];
+        let unblocked = super::compute_unblocked(&current_ready, &prev_ready_ids);
+        assert_eq!(unblocked.len(), 1);
+        assert_eq!(unblocked[0].id(), 5);
+    }
+
+    #[test]
+    fn compute_unblocked_empty_when_no_change() {
+        let prev_ready_ids: HashSet<i64> = [1, 2].into_iter().collect();
+        let current_ready = vec![
+            make_task_with_id(1, TaskStatus::Todo),
+            make_task_with_id(2, TaskStatus::Todo),
+        ];
+        let unblocked = super::compute_unblocked(&current_ready, &prev_ready_ids);
+        assert!(unblocked.is_empty());
+    }
+
+    fn make_task_with_id(id: i64, status: TaskStatus) -> Task {
+        Task::new(
+            id, 1, format!("task-{id}"), None, None, None, Priority::P2, status,
+            None, None,
+            "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        )
+    }
+
+    // --- CompletionPolicy tests ---
+
+    #[test]
+    fn completion_policy_merge_mode_returns_none() {
+        use crate::infra::config::WorkflowConfig;
+        let workflow = WorkflowConfig { completion_mode: CompletionMode::MergeThenComplete, auto_merge: true };
+        let policy = super::CompletionPolicy::from_workflow(&workflow);
+        let task = make_task(TaskStatus::InProgress);
+        assert!(policy.required_pr_url(&task, false).unwrap().is_none());
+    }
+
+    #[test]
+    fn completion_policy_pr_mode_no_url_errors() {
+        use crate::infra::config::WorkflowConfig;
+        let workflow = WorkflowConfig { completion_mode: CompletionMode::PrThenComplete, auto_merge: true };
+        let policy = super::CompletionPolicy::from_workflow(&workflow);
+        let task = make_task(TaskStatus::InProgress);
+        assert!(policy.required_pr_url(&task, false).is_err());
+    }
+
+    #[test]
+    fn completion_policy_pr_mode_with_url() {
+        use crate::infra::config::WorkflowConfig;
+        let workflow = WorkflowConfig { completion_mode: CompletionMode::PrThenComplete, auto_merge: true };
+        let policy = super::CompletionPolicy::from_workflow(&workflow);
+        let mut task = make_task(TaskStatus::InProgress);
+        task.pr_url = Some("https://github.com/org/repo/pull/1".to_string());
+        let result = policy.required_pr_url(&task, false).unwrap();
+        assert_eq!(result, Some("https://github.com/org/repo/pull/1"));
+    }
+
+    #[test]
+    fn completion_policy_skip_pr_check() {
+        use crate::infra::config::WorkflowConfig;
+        let workflow = WorkflowConfig { completion_mode: CompletionMode::PrThenComplete, auto_merge: true };
+        let policy = super::CompletionPolicy::from_workflow(&workflow);
+        let task = make_task(TaskStatus::InProgress);
+        assert!(policy.required_pr_url(&task, true).unwrap().is_none());
     }
 }

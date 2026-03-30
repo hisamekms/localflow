@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::application::port::auth::{AuthError, AuthProvider};
-use crate::domain::repository::TaskBackend;
+use crate::application::port::TaskBackend;
 use crate::domain::user::hash_api_key;
 
 pub struct ApiKeyProvider {

@@ -5,9 +5,9 @@ use anyhow::Result;
 
 use crate::application::port::TaskBackend;
 use crate::domain::error::DomainError;
-use crate::infra::config::{CompletionMode, WorkflowConfig};
+use crate::infra::config::WorkflowConfig;
 use crate::domain::task::{
-    CreateTaskParams, ListTasksFilter, Task, TaskEvent, UnblockedTask,
+    self, CompletionPolicy, CreateTaskParams, ListTasksFilter, Task, TaskEvent,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::validator::has_cycle_async;
@@ -61,7 +61,7 @@ impl TaskService {
                 .backend
                 .create_task(project_id, &params_without_branch)
                 .await?;
-            let expanded = expand_branch_template(
+            let expanded = task::expand_branch_template(
                 branch_template.as_deref().unwrap(),
                 created.id(),
             );
@@ -185,23 +185,15 @@ impl TaskService {
     ) -> Result<Task> {
         let task = self.backend.get_task(project_id, id).await?;
 
-        // PR workflow checks
-        if !skip_pr_check
-            && self.workflow.completion_mode == CompletionMode::PrThenComplete
-        {
-            let pr_url = task.pr_url().ok_or_else(|| {
-                DomainError::CannotCompleteTask {
-                    task_id: id,
-                    reason: format!(
-                        "completion_mode is pr_then_complete but no pr_url is set. \
-                         Use `senko edit {} --pr-url <url>` to set it.",
-                        id
-                    ),
-                }
-            })?;
-
+        // PR workflow checks (domain policy decides whether to check)
+        let policy = CompletionPolicy::from_workflow(&self.workflow);
+        if let Some(pr_url) = policy.required_pr_url(&task, skip_pr_check)
+            .map_err(|e| DomainError::CannotCompleteTask {
+                task_id: id,
+                reason: e.to_string(),
+            })? {
             self.pr_verifier
-                .verify_pr_status(pr_url, self.workflow.auto_merge)
+                .verify_pr_status(pr_url, policy.auto_merge())
                 .map_err(|e| DomainError::CannotCompleteTask {
                     task_id: id,
                     reason: e.to_string(),
@@ -221,7 +213,8 @@ impl TaskService {
         let task = self.backend.complete_task(project_id, id).await?;
 
         // Compute unblocked tasks
-        let unblocked = compute_unblocked(self.backend.as_ref(), project_id, &prev_ready_ids).await;
+        let curr_ready = self.backend.list_ready_tasks(project_id).await.unwrap_or_default();
+        let unblocked = task::compute_unblocked(&curr_ready, &prev_ready_ids);
         let unblocked_opt = if unblocked.is_empty() {
             None
         } else {
@@ -423,22 +416,3 @@ impl TaskService {
     }
 }
 
-fn expand_branch_template(branch: &str, task_id: i64) -> String {
-    branch.replace("${task_id}", &task_id.to_string())
-}
-
-async fn compute_unblocked(
-    backend: &dyn TaskBackend,
-    project_id: i64,
-    prev_ready_ids: &HashSet<i64>,
-) -> Vec<UnblockedTask> {
-    let curr_ready = backend
-        .list_ready_tasks(project_id)
-        .await
-        .unwrap_or_default();
-    curr_ready
-        .iter()
-        .filter(|t| !prev_ready_ids.contains(&t.id()))
-        .map(|t| UnblockedTask::new(t.id(), t.title().to_string(), t.priority(), t.metadata().cloned()))
-        .collect()
-}

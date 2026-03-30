@@ -144,7 +144,7 @@ impl From<AuthError> for ApiError {
 }
 
 fn classify_error(e: anyhow::Error) -> ApiError {
-    if e.downcast_ref::<crate::auth::AuthError>().is_some() {
+    if e.downcast_ref::<crate::application::port::auth::AuthError>().is_some() {
         return ApiError::Forbidden(e.to_string());
     }
     if let Some(de) = e.downcast_ref::<DomainError>() {

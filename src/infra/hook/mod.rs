@@ -14,7 +14,7 @@ use crate::infra::config::{Config, HookEntry};
 #[cfg(test)]
 use crate::infra::config::RawConfig;
 use crate::application::port::TaskBackend;
-use crate::domain::task::{Task, TaskStatus, UnblockedTask};
+use crate::domain::task::{self, Task, TaskStatus, UnblockedTask};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -669,11 +669,7 @@ pub async fn compute_unblocked(
     prev_ready_ids: &std::collections::HashSet<i64>,
 ) -> Vec<UnblockedTask> {
     let curr_ready = backend.list_ready_tasks(project_id).await.unwrap_or_default();
-    curr_ready
-        .iter()
-        .filter(|t| !prev_ready_ids.contains(&t.id()))
-        .map(|t| UnblockedTask::new(t.id(), t.title().to_string(), t.priority(), t.metadata().cloned()))
-        .collect()
+    task::compute_unblocked(&curr_ready, prev_ready_ids)
 }
 
 #[cfg(test)]
