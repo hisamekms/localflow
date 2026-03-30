@@ -30,7 +30,7 @@ pub struct PreviewResult {
 
 /// Application-level port that exposes all task operations.
 ///
-/// Both local (`TaskService`) and remote (`HttpBackend`-backed) implementations
+/// Both local (`LocalTaskOperations`) and remote (`HttpBackend`-backed) implementations
 /// can satisfy this trait, allowing the presentation layer to depend only on the
 /// abstraction rather than a concrete service type.
 #[async_trait]

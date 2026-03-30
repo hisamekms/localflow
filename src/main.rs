@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use senko::application::port::HookExecutor;
-use senko::application::{ProjectService, TaskOperations, TaskService, UserService};
+use senko::application::{LocalTaskOperations, ProjectService, TaskOperations, UserService};
 use senko::application::HookTrigger;
 use senko::infra::config::{CliOverrides, Config, HookEntry, HookMode};
 use senko::domain::project::CreateProjectParams;
@@ -57,7 +57,7 @@ use senko::infra::hook as hooks;
 use senko::infra::hook::{RuntimeMode, BackendInfo};
 use senko::infra::http::HttpBackend;
 use senko::infra::hook::executor::ShellHookExecutor;
-use senko::application::port::{NoOpPrVerifier, PrVerifier};
+use senko::application::port::PrVerifier;
 use senko::infra::pr_verifier::GhCliPrVerifier;
 use senko::infra::project_root::resolve_project_root;
 use senko::infra::sqlite as db;
@@ -170,21 +170,17 @@ fn create_hook_executor(config: Config, using_http: bool, runtime_mode: RuntimeM
     Arc::new(ShellHookExecutor::new(config, should_fire, runtime_mode, backend_info, backend))
 }
 
-fn create_task_service(
+fn create_local_task_operations(
     backend: Arc<dyn TaskBackend>,
     config: &Config,
     using_http: bool,
     project_root: &std::path::Path,
-) -> TaskService {
+) -> LocalTaskOperations {
     let backend_info = resolve_backend_info(config, project_root);
     let hooks = create_hook_executor(config.clone(), using_http, RuntimeMode::Cli, backend_info, backend.clone());
-    let pr_verifier: Arc<dyn PrVerifier> = if using_http {
-        Arc::new(NoOpPrVerifier)
-    } else {
-        Arc::new(GhCliPrVerifier)
-    };
+    let pr_verifier: Arc<dyn PrVerifier> = Arc::new(GhCliPrVerifier);
     let completion_policy = CompletionPolicy::new(config.workflow.completion_mode, config.workflow.auto_merge);
-    TaskService::new(backend, hooks, pr_verifier, completion_policy)
+    LocalTaskOperations::new(backend, hooks, pr_verifier, completion_policy)
 }
 
 fn create_project_service(backend: Arc<dyn TaskBackend>) -> ProjectService {
@@ -923,7 +919,7 @@ async fn run(cli: Cli) -> Result<()> {
             config.apply_cli(&CliOverrides { port, host: host.clone(), ..Default::default() });
             let (backend, using_http) = create_backend(&root, &config)?;
             let project_id = resolve_project_id(&*backend, &config).await?;
-            let task_service = Arc::new(create_task_service(backend, &config, using_http, &root));
+            let task_service = Arc::new(create_local_task_operations(backend, &config, using_http, &root));
             let port_is_explicit = config.web_port_is_explicit();
             let effective_port = config.web_port_or(3141);
             senko::presentation::web::serve(root, effective_port, port_is_explicit, &config, task_service, project_id).await?;
@@ -1052,7 +1048,7 @@ async fn cmd_add(
         return print_dry_run(&cli.output, &DryRunOperation { command: "add".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
     let task = task_service.create_task(project_id, &params).await?;
 
     match cli.output {
@@ -1202,7 +1198,7 @@ async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
 
     if cli.dry_run {
         let result = if using_http {
@@ -1237,7 +1233,7 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Opti
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
 
     if cli.dry_run {
         let mut result = if using_http {
@@ -1291,7 +1287,7 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
             return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
         }
         let backend_info = resolve_backend_info(&config, &root);
-        let task_service = create_task_service(backend.clone(), &config, using_http, &root);
+        let task_service = create_local_task_operations(backend.clone(), &config, using_http, &root);
         let hook_executor = create_hook_executor(config, using_http, RuntimeMode::Cli, backend_info, backend);
         match task_service.preview_next(project_id).await {
             Ok(result) => {
@@ -1334,7 +1330,7 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
         return Ok(());
     }
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
     let updated = task_service.next_task(project_id, session_id, user_id).await?;
 
     match cli.output {
@@ -1355,7 +1351,7 @@ async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
 
     if cli.dry_run {
         let result = if using_http {
@@ -1390,7 +1386,7 @@ async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
 
     if cli.dry_run {
         let mut result = if using_http {
@@ -1960,7 +1956,7 @@ async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let config = load_config_with_cli(&root, cli)?;
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
 
     match command {
         DodCommand::Check { task_id, index } => {
@@ -2023,7 +2019,7 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let config = load_config_with_cli(&root, cli)?;
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
 
     match command {
         DepsCommand::Add { task_id, on } => {

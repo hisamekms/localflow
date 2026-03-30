@@ -13,7 +13,7 @@ pub use auth::{AuthError, AuthProvider};
 pub use authentication::AuthenticationPort;
 pub use hook_executor::{HookExecutor, NoOpHookExecutor};
 pub use hook_test::HookTestPort;
-pub use pr_verifier::{NoOpPrVerifier, PrVerifier};
+pub use pr_verifier::PrVerifier;
 pub use project_query::ProjectQueryPort;
 pub use task_operations::{CompleteResult, PreviewResult, TaskOperations};
 pub use task_query::TaskQueryPort;

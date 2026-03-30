@@ -5,8 +5,8 @@ use anyhow::{bail, Context, Result};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::application::port::auth::AuthProvider;
-use crate::application::port::{HookExecutor, NoOpPrVerifier, PrVerifier};
-use crate::application::{HookTestService, ProjectService, TaskService, UserService};
+use crate::application::port::{HookExecutor, PrVerifier};
+use crate::application::{HookTestService, LocalTaskOperations, ProjectService, UserService};
 use crate::domain::task::CompletionPolicy;
 use crate::application::port::TaskBackend;
 use crate::infra::config::{Config, HookMode, LogConfig, LogFormat, RawConfig};
@@ -149,21 +149,17 @@ pub fn create_auth_provider(
     }
 }
 
-pub fn create_task_service(
+pub fn create_local_task_operations(
     backend: Arc<dyn TaskBackend>,
     config: &Config,
     using_http: bool,
     project_root: &Path,
-) -> TaskService {
+) -> LocalTaskOperations {
     let backend_info = resolve_backend_info(config, project_root);
     let hooks = create_hook_executor(config.clone(), using_http, RuntimeMode::Cli, backend_info, backend.clone());
-    let pr_verifier: Arc<dyn PrVerifier> = if using_http {
-        Arc::new(NoOpPrVerifier)
-    } else {
-        Arc::new(GhCliPrVerifier)
-    };
+    let pr_verifier: Arc<dyn PrVerifier> = Arc::new(GhCliPrVerifier);
     let completion_policy = CompletionPolicy::new(config.workflow.completion_mode, config.workflow.auto_merge);
-    TaskService::new(backend, hooks, pr_verifier, completion_policy)
+    LocalTaskOperations::new(backend, hooks, pr_verifier, completion_policy)
 }
 
 pub fn create_project_service(backend: Arc<dyn TaskBackend>) -> ProjectService {

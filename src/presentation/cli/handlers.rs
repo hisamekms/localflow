@@ -9,7 +9,7 @@ use super::{
 };
 use crate::bootstrap::{
     create_backend, create_hook_executor, create_hook_test_service, create_project_service,
-    create_task_service, create_user_service, resolve_project_id, resolve_user_id,
+    create_local_task_operations, create_user_service, resolve_project_id, resolve_user_id,
     DEFAULT_PROJECT_ID,
 };
 use crate::application::{HookTrigger, TaskOperations};
@@ -150,7 +150,7 @@ pub async fn cmd_add(
         return print_dry_run(&cli.output, &DryRunOperation { command: "add".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
     let task = task_service.create_task(project_id, &params).await?;
 
     match cli.output {
@@ -176,7 +176,7 @@ pub async fn cmd_list(
     let config = load_config(cli, &root)?;
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
 
     let statuses = status
         .into_iter()
@@ -214,7 +214,7 @@ pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
     let config = load_config(cli, &root)?;
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
     let task = task_service.get_task(project_id, task_id).await?;
 
     match cli.output {
@@ -301,7 +301,7 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
 
     if cli.dry_run {
         let result = if using_http {
@@ -339,7 +339,7 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
         None => Some(resolve_user_id(&*backend, &config).await?),
     };
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
 
     if cli.dry_run {
         let mut result = if using_http {
@@ -396,7 +396,7 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
             return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
         }
         let backend_info = resolve_backend_info(&config, &root);
-        let task_service = create_task_service(backend.clone(), &config, using_http, &root);
+        let task_service = create_local_task_operations(backend.clone(), &config, using_http, &root);
         let hook_executor = create_hook_executor(config, using_http, hooks::RuntimeMode::Cli, backend_info, backend);
         match task_service.preview_next(project_id).await {
             Ok(result) => {
@@ -416,7 +416,7 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
         }
     }
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
     let updated = task_service.next_task(project_id, session_id, user_id).await?;
 
     match cli.output {
@@ -437,7 +437,7 @@ pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()>
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
 
     if cli.dry_run {
         let result = if using_http {
@@ -471,7 +471,7 @@ pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
 
     if cli.dry_run {
         let mut result = if using_http {
@@ -967,7 +967,7 @@ pub async fn cmd_edit(
     let config = load_config(cli, &project_root)?;
     let (backend, using_http) = create_backend(&project_root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_service(backend, &config, using_http, &project_root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &project_root);
 
     // Verify task exists (even in dry-run)
     let _task = task_service.get_task(project_id, id).await?;
@@ -1141,7 +1141,7 @@ pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let config = load_config(cli, &root)?;
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
 
     match command {
         DodCommand::Check { task_id, index } => {
@@ -1204,7 +1204,7 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let config = load_config(cli, &root)?;
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task_service = create_local_task_operations(backend, &config, using_http, &root);
 
     match command {
         DepsCommand::Add { task_id, on } => {

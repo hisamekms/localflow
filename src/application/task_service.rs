@@ -16,14 +16,14 @@ use crate::domain::validator::has_cycle_async;
 use super::HookTrigger;
 use super::port::{CompleteResult, HookExecutor, PreviewResult, PrVerifier, TaskOperations};
 
-pub struct TaskService {
+pub struct LocalTaskOperations {
     backend: Arc<dyn TaskBackend>,
     hooks: Arc<dyn HookExecutor>,
     pr_verifier: Arc<dyn PrVerifier>,
     completion_policy: CompletionPolicy,
 }
 
-impl TaskService {
+impl LocalTaskOperations {
     pub fn new(
         backend: Arc<dyn TaskBackend>,
         hooks: Arc<dyn HookExecutor>,
@@ -79,7 +79,7 @@ impl TaskService {
 }
 
 #[async_trait]
-impl TaskOperations for TaskService {
+impl TaskOperations for LocalTaskOperations {
     fn backend(&self) -> &dyn TaskBackend {
         self.backend.as_ref()
     }
@@ -194,8 +194,6 @@ impl TaskOperations for TaskService {
         let task = self.backend.get_task(project_id, id).await?;
 
         // PR workflow checks (domain policy decides whether to check).
-        // For HttpBackend mode, NoOpPrVerifier is used since the API server
-        // handles PR verification server-side via its own GhCliPrVerifier.
         if let Some(pr_url) = self.completion_policy.required_pr_url(&task, skip_pr_check)
             .map_err(|e| DomainError::CannotCompleteTask {
                 task_id: id,

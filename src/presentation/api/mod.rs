@@ -15,7 +15,7 @@ use tower_http::trace::TraceLayer;
 mod auth;
 
 use crate::domain::error::DomainError;
-use crate::application::{ProjectService, TaskOperations, TaskService, UserService};
+use crate::application::{LocalTaskOperations, ProjectService, TaskOperations, UserService};
 use crate::application::auth as app_auth;
 use crate::application::auth::Permission;
 use crate::application::port::auth::{AuthError, AuthProvider};
@@ -41,7 +41,7 @@ struct AppState {
     project_root: Arc<PathBuf>,
     config_path: Option<Arc<PathBuf>>,
     backend: Arc<dyn TaskBackend>,
-    task_service: Arc<TaskService>,
+    task_service: Arc<LocalTaskOperations>,
     project_service: Arc<ProjectService>,
     user_service: Arc<UserService>,
     auth_provider: Option<Arc<dyn AuthProvider>>,
@@ -294,7 +294,7 @@ pub async fn serve(
     let hook_executor = bootstrap::create_api_hook_executor(config.clone(), backend_info, backend.clone());
     let pr_verifier = bootstrap::create_pr_verifier();
     let completion_policy = CompletionPolicy::new(config.workflow.completion_mode, config.workflow.auto_merge);
-    let task_service = Arc::new(TaskService::new(
+    let task_service = Arc::new(LocalTaskOperations::new(
         backend.clone(),
         hook_executor,
         pr_verifier,
