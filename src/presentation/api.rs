@@ -19,7 +19,6 @@ use crate::auth::{
 };
 use crate::domain::repository::TaskBackend;
 use crate::bootstrap;
-use crate::infra::hook as hooks;
 use crate::infra::hook::RuntimeMode;
 use crate::infra::hook::executor::ShellHookExecutor;
 use crate::domain::config::Config;
@@ -264,7 +263,7 @@ pub async fn serve(
 
     // Server always fires hooks (should_fire = true)
     let backend_info = bootstrap::resolve_backend_info(config, &project_root);
-    let hook_executor = Arc::new(ShellHookExecutor::new(config.clone(), true, RuntimeMode::Api, backend_info));
+    let hook_executor = Arc::new(ShellHookExecutor::new(config.clone(), true, RuntimeMode::Api, backend_info, backend.clone()));
     let pr_verifier = Arc::new(GhCliPrVerifier);
     let task_service = Arc::new(TaskService::new(
         backend.clone(),
@@ -745,7 +744,7 @@ async fn health_check() -> Json<serde_json::Value> {
 async fn get_config(
     State(state): State<AppState>,
 ) -> Result<Json<Config>, ApiError> {
-    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+    let config = crate::bootstrap::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
     Ok(Json(config))
 }
 

@@ -93,7 +93,6 @@ impl TaskService {
             .fire(
                 &HookTrigger::Task(TaskEvent::Created),
                 Some(&task),
-                self.backend.as_ref(),
                 None,
                 None,
             )
@@ -110,7 +109,6 @@ impl TaskService {
             .fire(
                 &HookTrigger::Task(TaskEvent::Readied),
                 Some(&task),
-                self.backend.as_ref(),
                 Some(prev_status),
                 None,
             )
@@ -133,7 +131,6 @@ impl TaskService {
             .fire(
                 &HookTrigger::Task(TaskEvent::Started),
                 Some(&task),
-                self.backend.as_ref(),
                 Some(prev_status),
                 None,
             )
@@ -155,7 +152,6 @@ impl TaskService {
                     .fire(
                         &HookTrigger::NoEligibleTask { project_id },
                         None,
-                        self.backend.as_ref(),
                         None,
                         None,
                     )
@@ -171,7 +167,6 @@ impl TaskService {
             .fire(
                 &HookTrigger::Task(TaskEvent::Started),
                 Some(&task),
-                self.backend.as_ref(),
                 Some(prev_status),
                 None,
             )
@@ -229,7 +224,6 @@ impl TaskService {
             .fire(
                 &HookTrigger::Task(TaskEvent::Completed),
                 Some(&task),
-                self.backend.as_ref(),
                 Some(prev_status),
                 unblocked_opt,
             )
@@ -251,7 +245,6 @@ impl TaskService {
             .fire(
                 &HookTrigger::Task(TaskEvent::Canceled),
                 Some(&task),
-                self.backend.as_ref(),
                 Some(prev_status),
                 None,
             )

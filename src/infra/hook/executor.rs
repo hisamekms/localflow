@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 
 use crate::application::port::HookExecutor;
@@ -14,15 +16,23 @@ pub struct ShellHookExecutor {
     should_fire: bool,
     runtime_mode: RuntimeMode,
     backend_info: BackendInfo,
+    backend: Arc<dyn TaskBackend>,
 }
 
 impl ShellHookExecutor {
-    pub fn new(config: Config, should_fire: bool, runtime_mode: RuntimeMode, backend_info: BackendInfo) -> Self {
+    pub fn new(
+        config: Config,
+        should_fire: bool,
+        runtime_mode: RuntimeMode,
+        backend_info: BackendInfo,
+        backend: Arc<dyn TaskBackend>,
+    ) -> Self {
         Self {
             config,
             should_fire,
             runtime_mode,
             backend_info,
+            backend,
         }
     }
 }
@@ -33,7 +43,6 @@ impl HookExecutor for ShellHookExecutor {
         &self,
         trigger: &HookTrigger,
         task: Option<&Task>,
-        backend: &dyn TaskBackend,
         from_status: Option<TaskStatus>,
         unblocked: Option<Vec<UnblockedTask>>,
     ) {
@@ -47,14 +56,14 @@ impl HookExecutor for ShellHookExecutor {
             HookTrigger::Task(_) => {
                 let task = task.expect("task required for Task hook trigger");
                 fire_hooks(
-                    &self.config, event_name, task, backend,
+                    &self.config, event_name, task, self.backend.as_ref(),
                     from_status, unblocked,
                     &self.runtime_mode, &self.backend_info,
                 ).await;
             }
             HookTrigger::NoEligibleTask { project_id } => {
                 fire_no_eligible_task_hooks(
-                    &self.config, backend, *project_id,
+                    &self.config, self.backend.as_ref(), *project_id,
                     &self.runtime_mode, &self.backend_info,
                 ).await;
             }

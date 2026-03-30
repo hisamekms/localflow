@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 
-use crate::domain::repository::TaskBackend;
 use crate::domain::task::{HookTrigger, Task, TaskStatus, UnblockedTask};
 
 /// Port trait for firing hook events after task state changes.
@@ -12,7 +11,6 @@ pub trait HookExecutor: Send + Sync {
         &self,
         trigger: &HookTrigger,
         task: Option<&Task>,
-        backend: &dyn TaskBackend,
         from_status: Option<TaskStatus>,
         unblocked: Option<Vec<UnblockedTask>>,
     );
@@ -27,7 +25,6 @@ impl HookExecutor for NoOpHookExecutor {
         &self,
         _trigger: &HookTrigger,
         _task: Option<&Task>,
-        _backend: &dyn TaskBackend,
         _from_status: Option<TaskStatus>,
         _unblocked: Option<Vec<UnblockedTask>>,
     ) {

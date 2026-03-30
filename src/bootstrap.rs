@@ -1,13 +1,13 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::application::port::HookExecutor;
 use crate::application::{ProjectService, TaskService, UserService};
 use crate::domain::repository::TaskBackend;
-use crate::domain::config::{Config, HookMode, LogConfig, LogFormat};
+use crate::domain::config::{Config, HookMode, LogConfig, LogFormat, RawConfig};
 use crate::infra::http::HttpBackend;
 use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::hook::{RuntimeMode, BackendInfo};
@@ -103,9 +103,10 @@ pub fn create_hook_executor(
     using_http: bool,
     runtime_mode: RuntimeMode,
     backend_info: BackendInfo,
+    backend: Arc<dyn TaskBackend>,
 ) -> Arc<dyn HookExecutor> {
     let should_fire = should_fire_client_hooks(&config, using_http);
-    Arc::new(ShellHookExecutor::new(config, should_fire, runtime_mode, backend_info))
+    Arc::new(ShellHookExecutor::new(config, should_fire, runtime_mode, backend_info, backend))
 }
 
 pub fn create_task_service(
@@ -115,7 +116,7 @@ pub fn create_task_service(
     project_root: &Path,
 ) -> TaskService {
     let backend_info = resolve_backend_info(config, project_root);
-    let hooks = create_hook_executor(config.clone(), using_http, RuntimeMode::Cli, backend_info);
+    let hooks = create_hook_executor(config.clone(), using_http, RuntimeMode::Cli, backend_info, backend.clone());
     let pr_verifier = Arc::new(GhCliPrVerifier);
     TaskService::new(backend, hooks, pr_verifier, config.workflow.clone())
 }
@@ -178,4 +179,111 @@ pub fn init_tracing(config: &LogConfig) {
             registry.with(tracing_subscriber::fmt::layer()).init();
         }
     }
+}
+
+pub fn load_config(project_root: &Path, explicit_config: Option<&Path>) -> Result<Config> {
+    // 1. Load user config (lowest priority layer)
+    let user_raw = load_user_config()?;
+
+    // 2. Determine and load the project/explicit config
+    let project_raw = if let Some(path) = explicit_config {
+        // Explicit --config flag: must exist
+        Some(load_config_file(path, true)?)
+    } else if let Some(env_path) = env_config_path() {
+        // SENKO_CONFIG env var: must exist
+        Some(load_config_file(&env_path, true)?)
+    } else {
+        let default_path = project_root.join(".senko").join("config.toml");
+        if default_path.exists() {
+            Some(load_config_file(&default_path, false)?)
+        } else {
+            None
+        }
+    };
+
+    // 3. Merge: user config as base, project config as overlay
+    let merged_raw = match (user_raw, project_raw) {
+        (Some(base), Some(overlay)) => base.merge(overlay),
+        (None, Some(overlay)) => overlay,
+        (Some(base), None) => base,
+        (None, None) => RawConfig::default(),
+    };
+
+    // 4. Resolve to final Config and apply env overrides
+    let mut config = merged_raw.resolve();
+    config.apply_env();
+    Ok(config)
+}
+
+/// Return the user-level config path.
+/// `$XDG_CONFIG_HOME/senko/config.toml` or `~/.config/senko/config.toml`
+fn user_config_path() -> Option<PathBuf> {
+    let config_dir = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .ok()
+        .filter(|p| p.is_absolute())
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".config"))
+        })?;
+    Some(config_dir.join("senko").join("config.toml"))
+}
+
+/// Load user-level config if it exists.
+fn load_user_config() -> Result<Option<RawConfig>> {
+    let path = match user_config_path() {
+        Some(p) if p.exists() => p,
+        _ => return Ok(None),
+    };
+    let raw = load_config_file(&path, false)?;
+    Ok(Some(raw))
+}
+
+/// Return the config path from the SENKO_CONFIG env var, if set.
+fn env_config_path() -> Option<PathBuf> {
+    std::env::var("SENKO_CONFIG")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Load and parse a config file into RawConfig, with legacy hook format detection.
+fn load_config_file(path: &Path, must_exist: bool) -> Result<RawConfig> {
+    if !path.exists() {
+        if must_exist {
+            bail!("config file not found: {}", path.display());
+        }
+        return Ok(RawConfig::default());
+    }
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read config file: {}", path.display()))?;
+    detect_legacy_hook_format(&content, path)?;
+    toml::from_str(&content)
+        .with_context(|| format!("failed to parse config file: {}", path.display()))
+}
+
+/// Check if the config uses the old array-based hook format and return a helpful error.
+fn detect_legacy_hook_format(content: &str, path: &Path) -> Result<()> {
+    let raw: toml::Value = match toml::from_str(content) {
+        Ok(v) => v,
+        Err(_) => return Ok(()), // let the real parser produce the error
+    };
+    if let Some(hooks) = raw.get("hooks").and_then(|v| v.as_table()) {
+        for (key, val) in hooks {
+            if val.is_str() || val.is_array() {
+                bail!(
+                    "Legacy hook format detected in {}.\n\
+                     The array-based hook format is no longer supported.\n\
+                     Please migrate to named hooks:\n\n\
+                     Old format:\n  [hooks]\n  {} = \"command\"\n\n\
+                     New format:\n  [hooks.{}.my-hook]\n  command = \"command\"\n",
+                    path.display(),
+                    key,
+                    key,
+                );
+            }
+        }
+    }
+    Ok(())
 }
