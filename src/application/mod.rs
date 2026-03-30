@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod hook_trigger;
 pub mod port;
 pub mod project_service;

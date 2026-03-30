@@ -12,13 +12,17 @@ use axum_extra::extract::Query;
 use serde::{Deserialize, Serialize};
 use tower_http::trace::TraceLayer;
 
+mod auth;
+
 use crate::domain::error::DomainError;
 use crate::infra::pr_verifier::GhCliPrVerifier;
 use crate::application::{ProjectService, TaskService, UserService};
-use crate::auth::{
-    self, ApiKeyProvider, AuthError, AuthProvider, HasAuth, OptionalAuthUser, Permission,
-};
+use crate::application::auth as app_auth;
+use crate::application::auth::Permission;
+use crate::application::port::auth::{AuthError, AuthProvider};
 use crate::application::port::TaskBackend;
+use crate::infra::auth::ApiKeyProvider;
+use self::auth::{HasAuth, OptionalAuthUser};
 use crate::bootstrap;
 use crate::infra::hook::RuntimeMode;
 use crate::infra::hook::executor::ShellHookExecutor;
@@ -67,7 +71,7 @@ async fn check_project_permission(
     permission: Permission,
 ) -> Result<(), ApiError> {
     if let Some(user) = require_auth_user(auth, state.auth_enabled())? {
-        auth::require_project_role(state.backend.as_ref(), user.id(), project_id, permission)
+        app_auth::require_project_role(state.backend.as_ref(), user.id(), project_id, permission)
             .await
             .map_err(ApiError::from)?;
     }
