@@ -1366,7 +1366,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::application::port::{AuthenticationPort, TaskQueryPort};
+use crate::application::port::{AuthenticationPort, ProjectQueryPort, TaskQueryPort, UserQueryPort};
 use crate::infra::config::Config;
 use crate::domain::{ApiKeyRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 
@@ -1443,10 +1443,6 @@ impl ProjectRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| get_project_by_name(conn, &name))
     }
 
-    async fn list_projects(&self) -> Result<Vec<Project>> {
-        blocking!(self, |conn: &Connection| list_projects(conn))
-    }
-
     async fn delete_project(&self, id: i64) -> Result<()> {
         blocking!(self, |conn: &Connection| delete_project(conn, id))
     }
@@ -1492,10 +1488,6 @@ impl UserRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| get_user_by_username(conn, &username))
     }
 
-    async fn list_users(&self) -> Result<Vec<User>> {
-        blocking!(self, |conn: &Connection| list_users(conn))
-    }
-
     async fn delete_user(&self, id: i64) -> Result<()> {
         blocking!(self, |conn: &Connection| delete_user(conn, id))
     }
@@ -1517,12 +1509,26 @@ impl ApiKeyRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| create_api_key(conn, user_id, &name, &new_key))
     }
 
-    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
-        blocking!(self, |conn: &Connection| list_api_keys(conn, user_id))
-    }
-
     async fn delete_api_key(&self, key_id: i64) -> Result<()> {
         blocking!(self, |conn: &Connection| delete_api_key(conn, key_id))
+    }
+}
+
+#[async_trait]
+impl ProjectQueryPort for SqliteBackend {
+    async fn list_projects(&self) -> Result<Vec<Project>> {
+        blocking!(self, |conn: &Connection| list_projects(conn))
+    }
+}
+
+#[async_trait]
+impl UserQueryPort for SqliteBackend {
+    async fn list_users(&self) -> Result<Vec<User>> {
+        blocking!(self, |conn: &Connection| list_users(conn))
+    }
+
+    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
+        blocking!(self, |conn: &Connection| list_api_keys(conn, user_id))
     }
 }
 

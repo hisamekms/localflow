@@ -4,7 +4,7 @@ use anyhow::{bail, Result};
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::application::port::TaskQueryPort;
+use crate::application::port::{ProjectQueryPort, TaskQueryPort, UserQueryPort};
 use crate::application::port::TaskTransitionPort;
 use crate::domain::error::DomainError;
 use crate::domain::task::TaskStatus;
@@ -236,15 +236,6 @@ impl ProjectRepository for HttpBackend {
             .ok_or_else(|| anyhow::anyhow!("project not found"))
     }
 
-    async fn list_projects(&self) -> Result<Vec<Project>> {
-        let resp = self.auth(self
-            .client
-            .get(self.url("/api/v1/projects")))
-            .send()
-            .await?;
-        read_json_or_error(resp).await
-    }
-
     async fn delete_project(&self, id: i64) -> Result<()> {
         let resp = self.auth(self
             .client
@@ -348,15 +339,6 @@ impl UserRepository for HttpBackend {
             .ok_or_else(|| anyhow::anyhow!("user not found"))
     }
 
-    async fn list_users(&self) -> Result<Vec<User>> {
-        let resp = self.auth(self
-            .client
-            .get(self.url("/api/v1/users")))
-            .send()
-            .await?;
-        read_json_or_error(resp).await
-    }
-
     async fn delete_user(&self, id: i64) -> Result<()> {
         let resp = self.auth(self
             .client
@@ -390,16 +372,40 @@ impl ApiKeyRepository for HttpBackend {
         read_json_or_error(resp).await
     }
 
-    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
-        let resp = self.auth(self.client.get(self.url(&format!("/api/v1/users/{user_id}/api-keys"))))
-            .send().await?;
-        read_json_or_error(resp).await
-    }
-
     async fn delete_api_key(&self, key_id: i64) -> Result<()> {
         let resp = self.auth(self.client.delete(self.url(&format!("/api/v1/users/0/api-keys/{key_id}"))))
             .send().await?;
         check_success(resp).await
+    }
+}
+
+#[async_trait]
+impl ProjectQueryPort for HttpBackend {
+    async fn list_projects(&self) -> Result<Vec<Project>> {
+        let resp = self.auth(self
+            .client
+            .get(self.url("/api/v1/projects")))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+}
+
+#[async_trait]
+impl UserQueryPort for HttpBackend {
+    async fn list_users(&self) -> Result<Vec<User>> {
+        let resp = self.auth(self
+            .client
+            .get(self.url("/api/v1/users")))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
+        let resp = self.auth(self.client.get(self.url(&format!("/api/v1/users/{user_id}/api-keys"))))
+            .send().await?;
+        read_json_or_error(resp).await
     }
 }
 

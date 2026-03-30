@@ -6,7 +6,7 @@ use sqlx::postgres::PgPool;
 use sqlx::Row;
 
 use crate::domain::project::{CreateProjectParams, Project};
-use crate::application::port::{AuthenticationPort, TaskQueryPort};
+use crate::application::port::{AuthenticationPort, ProjectQueryPort, TaskQueryPort, UserQueryPort};
 use crate::domain::{ApiKeyRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
     self, CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus,
@@ -256,23 +256,6 @@ impl ProjectRepository for PostgresBackend {
         ))
     }
 
-    async fn list_projects(&self) -> Result<Vec<Project>> {
-        let pool = self.pool().await?;
-        let rows =
-            sqlx::query("SELECT id, name, description, created_at FROM projects ORDER BY id")
-                .fetch_all(pool)
-                .await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| Project::new(
-                r.get("id"),
-                r.get("name"),
-                r.get("description"),
-                r.get("created_at"),
-            ))
-            .collect())
-    }
-
     async fn delete_project(&self, id: i64) -> Result<()> {
         let pool = self.pool().await?;
         let result = sqlx::query("DELETE FROM projects WHERE id = $1")
@@ -455,24 +438,6 @@ impl UserRepository for PostgresBackend {
         ))
     }
 
-    async fn list_users(&self) -> Result<Vec<User>> {
-        let pool = self.pool().await?;
-        let rows =
-            sqlx::query("SELECT id, username, display_name, email, created_at FROM users ORDER BY id")
-                .fetch_all(pool)
-                .await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| User::new(
-                r.get("id"),
-                r.get("username"),
-                r.get("display_name"),
-                r.get("email"),
-                r.get("created_at"),
-            ))
-            .collect())
-    }
-
     async fn delete_user(&self, id: i64) -> Result<()> {
         let pool = self.pool().await?;
         let result = sqlx::query("DELETE FROM users WHERE id = $1")
@@ -536,6 +501,63 @@ impl ApiKeyRepository for PostgresBackend {
         ))
     }
 
+    async fn delete_api_key(&self, key_id: i64) -> Result<()> {
+        let pool = self.pool().await?;
+        let result = sqlx::query("DELETE FROM api_keys WHERE id = $1")
+            .bind(key_id)
+            .execute(pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            anyhow::bail!("api key not found: {key_id}");
+        }
+        Ok(())
+    }
+}
+
+// =============================================================================
+// ProjectQueryPort / UserQueryPort
+// =============================================================================
+
+#[async_trait]
+impl ProjectQueryPort for PostgresBackend {
+    async fn list_projects(&self) -> Result<Vec<Project>> {
+        let pool = self.pool().await?;
+        let rows =
+            sqlx::query("SELECT id, name, description, created_at FROM projects ORDER BY id")
+                .fetch_all(pool)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| Project::new(
+                r.get("id"),
+                r.get("name"),
+                r.get("description"),
+                r.get("created_at"),
+            ))
+            .collect())
+    }
+}
+
+#[async_trait]
+impl UserQueryPort for PostgresBackend {
+    async fn list_users(&self) -> Result<Vec<User>> {
+        let pool = self.pool().await?;
+        let rows =
+            sqlx::query("SELECT id, username, display_name, email, created_at FROM users ORDER BY id")
+                .fetch_all(pool)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| User::new(
+                r.get("id"),
+                r.get("username"),
+                r.get("display_name"),
+                r.get("email"),
+                r.get("created_at"),
+            ))
+            .collect())
+    }
+
     async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
         let pool = self.pool().await?;
         let rows = sqlx::query(
@@ -555,18 +577,6 @@ impl ApiKeyRepository for PostgresBackend {
                 r.get("last_used_at"),
             ))
             .collect())
-    }
-
-    async fn delete_api_key(&self, key_id: i64) -> Result<()> {
-        let pool = self.pool().await?;
-        let result = sqlx::query("DELETE FROM api_keys WHERE id = $1")
-            .bind(key_id)
-            .execute(pool)
-            .await?;
-        if result.rows_affected() == 0 {
-            anyhow::bail!("api key not found: {key_id}");
-        }
-        Ok(())
     }
 }
 

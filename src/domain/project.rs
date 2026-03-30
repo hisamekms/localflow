@@ -58,7 +58,6 @@ pub trait ProjectRepository: Send + Sync {
     async fn create_project(&self, params: &CreateProjectParams) -> Result<Project>;
     async fn get_project(&self, id: i64) -> Result<Project>;
     async fn get_project_by_name(&self, name: &str) -> Result<Project>;
-    async fn list_projects(&self) -> Result<Vec<Project>>;
     async fn delete_project(&self, id: i64) -> Result<()>;
 }
 

@@ -251,7 +251,6 @@ pub trait UserRepository: Send + Sync {
     async fn create_user(&self, params: &CreateUserParams) -> Result<User>;
     async fn get_user(&self, id: i64) -> Result<User>;
     async fn get_user_by_username(&self, username: &str) -> Result<User>;
-    async fn list_users(&self) -> Result<Vec<User>>;
     async fn delete_user(&self, id: i64) -> Result<()>;
 }
 
@@ -263,6 +262,5 @@ pub trait ApiKeyRepository: Send + Sync {
     }
 
     async fn create_api_key(&self, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret>;
-    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>>;
     async fn delete_api_key(&self, key_id: i64) -> Result<()>;
 }

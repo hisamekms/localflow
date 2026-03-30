@@ -8,7 +8,7 @@ use chrono::Utc;
 use tokio::sync::OnceCell;
 
 use crate::domain::project::{CreateProjectParams, Project};
-use crate::application::port::{AuthenticationPort, TaskQueryPort};
+use crate::application::port::{AuthenticationPort, ProjectQueryPort, TaskQueryPort, UserQueryPort};
 use crate::domain::error::DomainError;
 use crate::domain::{ApiKeyRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
@@ -640,18 +640,11 @@ impl ProjectRepository for DynamoDbBackend {
     }
 
     async fn get_project_by_name(&self, name: &str) -> Result<Project> {
-        let projects = self.list_projects().await?;
+        let projects: Vec<Project> = ProjectQueryPort::list_projects(self).await?;
         projects
             .into_iter()
             .find(|p| p.name() == name)
             .ok_or_else(|| anyhow::anyhow!("project not found"))
-    }
-
-    async fn list_projects(&self) -> Result<Vec<Project>> {
-        let items = self.scan_items_by_prefix("PROJECT#").await?;
-        let mut projects: Vec<Project> = items.iter().map(|i| item_to_project(i)).collect::<Result<_>>()?;
-        projects.sort_by_key(|p| p.id());
-        Ok(projects)
     }
 
     async fn delete_project(&self, id: i64) -> Result<()> {
@@ -760,18 +753,11 @@ impl UserRepository for DynamoDbBackend {
     }
 
     async fn get_user_by_username(&self, username: &str) -> Result<User> {
-        let users = self.list_users().await?;
+        let users: Vec<User> = UserQueryPort::list_users(self).await?;
         users
             .into_iter()
             .find(|u| u.username() == username)
             .ok_or_else(|| anyhow::anyhow!("user not found"))
-    }
-
-    async fn list_users(&self) -> Result<Vec<User>> {
-        let items = self.scan_items_by_prefix("USER#").await?;
-        let mut users: Vec<User> = items.iter().map(|i| item_to_user(i)).collect::<Result<_>>()?;
-        users.sort_by_key(|u| u.id());
-        Ok(users)
     }
 
     async fn delete_user(&self, id: i64) -> Result<()> {
@@ -813,15 +799,35 @@ impl ApiKeyRepository for DynamoDbBackend {
         }.into())
     }
 
-    async fn list_api_keys(&self, _user_id: i64) -> Result<Vec<ApiKey>> {
-        Err(DomainError::UnsupportedOperation {
-            operation: "list_api_keys".into(),
-        }.into())
-    }
-
     async fn delete_api_key(&self, _key_id: i64) -> Result<()> {
         Err(DomainError::UnsupportedOperation {
             operation: "delete_api_key".into(),
+        }.into())
+    }
+}
+
+#[async_trait]
+impl ProjectQueryPort for DynamoDbBackend {
+    async fn list_projects(&self) -> Result<Vec<Project>> {
+        let items = self.scan_items_by_prefix("PROJECT#").await?;
+        let mut projects: Vec<Project> = items.iter().map(|i| item_to_project(i)).collect::<Result<_>>()?;
+        projects.sort_by_key(|p| p.id());
+        Ok(projects)
+    }
+}
+
+#[async_trait]
+impl UserQueryPort for DynamoDbBackend {
+    async fn list_users(&self) -> Result<Vec<User>> {
+        let items = self.scan_items_by_prefix("USER#").await?;
+        let mut users: Vec<User> = items.iter().map(|i| item_to_user(i)).collect::<Result<_>>()?;
+        users.sort_by_key(|u| u.id());
+        Ok(users)
+    }
+
+    async fn list_api_keys(&self, _user_id: i64) -> Result<Vec<ApiKey>> {
+        Err(DomainError::UnsupportedOperation {
+            operation: "list_api_keys".into(),
         }.into())
     }
 }
