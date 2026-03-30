@@ -189,24 +189,11 @@ impl TaskService {
         id: i64,
         skip_pr_check: bool,
     ) -> Result<Task> {
-        // Server-side completion: HttpBackend delegates to the API's complete endpoint
-        // which handles PR verification, domain validation, hooks, and unblocked detection.
-        if let Some(task) = self.backend.complete_task(project_id, id, skip_pr_check).await? {
-            self.hooks
-                .fire(
-                    &HookTrigger::Task(TaskEvent::Completed),
-                    Some(&task),
-                    Some(TaskStatus::InProgress),
-                    None,
-                )
-                .await;
-            return Ok(task);
-        }
-
-        // Local completion: PR verification + domain validation + save
         let task = self.backend.get_task(project_id, id).await?;
 
-        // PR workflow checks (domain policy decides whether to check)
+        // PR workflow checks (domain policy decides whether to check).
+        // For HttpBackend mode, NoOpPrVerifier is used since the API server
+        // handles PR verification server-side via its own GhCliPrVerifier.
         if let Some(pr_url) = self.completion_policy.required_pr_url(&task, skip_pr_check)
             .map_err(|e| DomainError::CannotCompleteTask {
                 task_id: id,
@@ -230,6 +217,8 @@ impl TaskService {
             .collect();
 
         let prev_status = task.status();
+        // TaskTransitionPort::complete_task handles both local (domain complete + save)
+        // and HttpBackend (POST /complete with server-side PR verification).
         let task = self.backend.complete_task(project_id, id, skip_pr_check).await?;
 
         // Compute unblocked tasks
