@@ -649,12 +649,11 @@ pub async fn run(cli: Cli) -> Result<()> {
                 port, host,
                 ..Default::default()
             });
-            let (backend, _) = create_backend(&root, &config)?;
+            let (task_ops, backend) = crate::bootstrap::create_task_operations(&root, &config)?;
             let project_id = crate::bootstrap::resolve_project_id(&*backend, &config).await?;
-            let task_service: std::sync::Arc<dyn crate::application::TaskOperations> = std::sync::Arc::from(crate::bootstrap::create_task_operations(&root, &config)?);
             let port_is_explicit = config.web_port_is_explicit();
             let effective_port = config.web_port_or(3141);
-            crate::presentation::web::serve(root, effective_port, port_is_explicit, &config, task_service, project_id).await?;
+            crate::presentation::web::serve(root, effective_port, port_is_explicit, &config, task_ops, project_id).await?;
             Ok(())
         }
         Command::Serve { port, host } => {
@@ -666,7 +665,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 port, host,
                 ..Default::default()
             });
-            let (backend, _) = create_backend(&root, &config)?;
+            let backend = create_backend(&root, &config)?;
             let port_is_explicit = config.web_port_is_explicit();
             let effective_port = config.web_port_or(3142);
             let auth_provider = crate::bootstrap::create_auth_provider(&config, backend.clone());

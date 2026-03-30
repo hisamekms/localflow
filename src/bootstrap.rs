@@ -5,8 +5,8 @@ use anyhow::{bail, Context, Result};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::application::port::auth::AuthProvider;
-use crate::application::port::{HookExecutor, PrVerifier, TaskOperations};
-use crate::application::{HookTestService, LocalTaskOperations, ProjectService, UserService};
+use crate::application::port::{HookExecutor, PrVerifier};
+use crate::application::{HookTestService, LocalTaskOperations, ProjectService, TaskOperations, UserService};
 use crate::domain::task::CompletionPolicy;
 use crate::application::port::TaskBackend;
 use crate::infra::config::{Config, HookMode, LogConfig, LogFormat, RawConfig};
@@ -25,18 +25,17 @@ pub use crate::infra::project_root::resolve_project_root;
 pub use crate::domain::{DEFAULT_PROJECT_ID, DEFAULT_USER_ID};
 
 /// Create the appropriate backend based on config (env + CLI already applied).
-/// Returns (backend, is_http) where is_http indicates HTTP mode for hook control.
 pub fn create_backend(
     project_root: &Path,
     config: &Config,
-) -> Result<(Arc<dyn TaskBackend>, bool)> {
+) -> Result<Arc<dyn TaskBackend>> {
     // 1. HTTP backend (api_url from env or config.toml)
     if let Some(ref url) = config.backend.api_url {
         let backend = match config.backend.api_key.as_ref() {
             Some(key) => HttpBackend::with_api_key(url, key.clone()),
             None => HttpBackend::new(url),
         };
-        return Ok((Arc::new(backend), true));
+        return Ok(Arc::new(backend));
     }
 
     // 2. DynamoDB backend
@@ -46,13 +45,10 @@ pub fn create_backend(
 
         if let Some(ref ddb_config) = config.backend.dynamodb {
             if let Some(ref table_name) = ddb_config.table_name {
-                return Ok((
-                    Arc::new(DynamoDbBackend::new(
-                        table_name.clone(),
-                        ddb_config.region.clone(),
-                    )),
-                    false,
-                ));
+                return Ok(Arc::new(DynamoDbBackend::new(
+                    table_name.clone(),
+                    ddb_config.region.clone(),
+                )));
             }
         }
     }
@@ -64,7 +60,7 @@ pub fn create_backend(
 
         if let Some(ref pg_config) = config.backend.postgres {
             if let Some(ref database_url) = pg_config.url {
-                return Ok((Arc::new(PostgresBackend::new(database_url.clone())), false));
+                return Ok(Arc::new(PostgresBackend::new(database_url.clone())));
             }
         }
     }
@@ -76,10 +72,11 @@ pub fn create_backend(
         config.storage.db_path.as_deref(),
     )?;
     sqlite.sync_config_defaults(config)?;
-    Ok((Arc::new(sqlite), false))
+    Ok(Arc::new(sqlite))
 }
 
-pub fn should_fire_client_hooks(config: &Config, using_http: bool) -> bool {
+pub fn should_fire_client_hooks(config: &Config) -> bool {
+    let using_http = config.backend.api_url.is_some();
     match config.backend.hook_mode {
         HookMode::Server => !using_http,
         HookMode::Client | HookMode::Both => true,
@@ -108,12 +105,11 @@ pub fn resolve_backend_info(config: &Config, project_root: &Path) -> BackendInfo
 
 pub fn create_hook_executor(
     config: Config,
-    using_http: bool,
     runtime_mode: RuntimeMode,
     backend_info: BackendInfo,
     backend: Arc<dyn TaskBackend>,
 ) -> Arc<dyn HookExecutor> {
-    let should_fire = should_fire_client_hooks(&config, using_http);
+    let should_fire = should_fire_client_hooks(&config);
     Arc::new(ShellHookExecutor::new(config, should_fire, runtime_mode, backend_info, backend))
 }
 
@@ -153,11 +149,10 @@ pub fn create_auth_provider(
 pub fn create_local_task_operations(
     backend: Arc<dyn TaskBackend>,
     config: &Config,
-    using_http: bool,
     project_root: &Path,
 ) -> LocalTaskOperations {
     let backend_info = resolve_backend_info(config, project_root);
-    let hooks = create_hook_executor(config.clone(), using_http, RuntimeMode::Cli, backend_info, backend.clone());
+    let hooks = create_hook_executor(config.clone(), RuntimeMode::Cli, backend_info, backend.clone());
     let pr_verifier: Arc<dyn PrVerifier> = Arc::new(GhCliPrVerifier);
     let completion_policy = CompletionPolicy::new(config.workflow.completion_mode, config.workflow.auto_merge);
     LocalTaskOperations::new(backend, hooks, pr_verifier, completion_policy)
@@ -166,32 +161,36 @@ pub fn create_local_task_operations(
 pub fn create_remote_task_operations(
     config: &Config,
     project_root: &Path,
+    backend: Arc<dyn TaskBackend>,
 ) -> RemoteTaskOperations {
-    let url = config.backend.api_url.as_ref().expect("api_url must be set for remote ops");
+    let url = config.backend.api_url.as_ref().expect("api_url required for remote operations");
     let api_key = config.backend.api_key.clone();
+
     let backend_info = resolve_backend_info(config, project_root);
-    // RemoteTaskOperations needs a hook executor. The ShellHookExecutor requires
-    // an Arc<dyn TaskBackend> for context. Create a lightweight HttpBackend for this.
-    let hook_backend: Arc<dyn TaskBackend> = match &api_key {
-        Some(key) => Arc::new(HttpBackend::with_api_key(url, key.clone())),
-        None => Arc::new(HttpBackend::new(url)),
-    };
-    let hooks = create_hook_executor(config.clone(), true, RuntimeMode::Cli, backend_info, hook_backend);
+    let hooks = create_hook_executor(
+        config.clone(),
+        RuntimeMode::Cli,
+        backend_info,
+        backend,
+    );
+
     RemoteTaskOperations::new(url, api_key, hooks)
 }
 
 /// Create the appropriate `TaskOperations` implementation based on config.
-/// Returns `RemoteTaskOperations` for HTTP backends, `LocalTaskOperations` otherwise.
+/// Returns (task_ops, backend) — backend is still needed for project/user operations.
 pub fn create_task_operations(
     project_root: &Path,
     config: &Config,
-) -> Result<Box<dyn TaskOperations>> {
-    if config.backend.api_url.is_some() {
-        Ok(Box::new(create_remote_task_operations(config, project_root)))
+) -> Result<(Arc<dyn TaskOperations>, Arc<dyn TaskBackend>)> {
+    let backend = create_backend(project_root, config)?;
+    let using_http = config.backend.api_url.is_some();
+    let task_ops: Arc<dyn TaskOperations> = if using_http {
+        Arc::new(create_remote_task_operations(config, project_root, backend.clone()))
     } else {
-        let (backend, using_http) = create_backend(project_root, config)?;
-        Ok(Box::new(create_local_task_operations(backend, config, using_http, project_root)))
-    }
+        Arc::new(create_local_task_operations(backend.clone(), config, project_root))
+    };
+    Ok((task_ops, backend))
 }
 
 pub fn create_project_service(backend: Arc<dyn TaskBackend>) -> ProjectService {

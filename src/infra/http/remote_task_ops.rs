@@ -6,22 +6,24 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::application::port::task_operations::{CompleteResult, PreviewResult};
+use crate::application::port::{HookExecutor, TaskOperations};
 use crate::application::HookTrigger;
-use crate::application::port::{CompleteResult, HookExecutor, PreviewResult, TaskOperations};
 use crate::domain::error::DomainError;
 use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, Priority, Task, TaskEvent, TaskStatus, UnblockedTask,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
-use crate::presentation::dto::PreviewTransitionResponse;
 
-use super::{array_params_to_json, check_success, extract_error, read_json_or_error, update_params_to_json};
+use super::{
+    array_params_to_json, check_success, extract_error, read_json_or_error, update_params_to_json,
+};
 
-/// Thin HTTP client implementing `TaskOperations`.
+/// HTTP client implementing `TaskOperations` directly.
 ///
-/// Each method maps to a single API endpoint call (plus an optional GET for
-/// `prev_status` when hooks need it). No domain logic lives here — the server
-/// handles validation, state transitions, cycle detection, etc.
+/// Each method maps to a single API endpoint call. Domain logic is executed
+/// server-side; this client only handles HTTP transport and optional
+/// client-side hook firing.
 pub struct RemoteTaskOperations {
     base_url: String,
     client: reqwest::Client,
@@ -29,18 +31,36 @@ pub struct RemoteTaskOperations {
     hooks: Arc<dyn HookExecutor>,
 }
 
-/// Server response for POST /tasks/{id}/complete.
+/// Deserialization wrapper for the complete-task API response.
 #[derive(Deserialize)]
-struct RemoteCompleteResponse {
+struct CompleteApiResponse {
     task: Task,
-    unblocked_tasks: Vec<RemoteUnblockedInfo>,
+    unblocked_tasks: Vec<UnblockedApiInfo>,
 }
 
 #[derive(Deserialize)]
-struct RemoteUnblockedInfo {
+struct UnblockedApiInfo {
     id: i64,
     title: String,
     #[allow(dead_code)]
+    status: String,
+    priority: String,
+}
+
+/// Deserialization wrapper for the preview-transition API response.
+#[derive(Deserialize)]
+struct PreviewApiResponse {
+    allowed: bool,
+    reason: Option<String>,
+    target_status: String,
+    operations: Vec<String>,
+    unblocked_tasks: Vec<UnblockedPreviewInfo>,
+}
+
+#[derive(Deserialize)]
+struct UnblockedPreviewInfo {
+    id: i64,
+    title: String,
     status: String,
     priority: String,
 }
@@ -51,9 +71,13 @@ impl RemoteTaskOperations {
         api_key: Option<String>,
         hooks: Arc<dyn HookExecutor>,
     ) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("failed to build HTTP client");
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
+            client,
             api_key,
             hooks,
         }
@@ -69,15 +93,16 @@ impl RemoteTaskOperations {
             None => builder,
         }
     }
+}
 
-    /// GET a single task (used internally for prev_status before transitions).
-    async fn get_task_internal(&self, project_id: i64, id: i64) -> Result<Task> {
-        let resp = self
-            .auth(self.client.get(self.project_url(project_id, &format!("/tasks/{id}"))))
-            .send()
-            .await?;
-        read_json_or_error(resp).await
-    }
+fn parse_unblocked(items: Vec<UnblockedApiInfo>) -> Vec<UnblockedTask> {
+    items
+        .into_iter()
+        .map(|u| {
+            let priority = u.priority.parse::<Priority>().unwrap_or(Priority::P2);
+            UnblockedTask::new(u.id, u.title, priority, None)
+        })
+        .collect()
 }
 
 #[async_trait]
@@ -86,23 +111,35 @@ impl TaskOperations for RemoteTaskOperations {
 
     async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
         let resp = self
-            .auth(self.client.post(self.project_url(project_id, "/tasks")).json(params))
+            .auth(
+                self.client
+                    .post(self.project_url(project_id, "/tasks"))
+                    .json(params),
+            )
             .send()
             .await?;
         let task: Task = read_json_or_error(resp).await?;
 
         self.hooks
-            .fire(&HookTrigger::Task(TaskEvent::Created), Some(&task), None, None)
+            .fire(
+                &HookTrigger::Task(TaskEvent::Created),
+                Some(&task),
+                None,
+                None,
+            )
             .await;
 
         Ok(task)
     }
 
     async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
-        let prev_status = self.get_task_internal(project_id, id).await?.status();
+        let prev_status = self.get_task(project_id, id).await?.status();
 
         let resp = self
-            .auth(self.client.post(self.project_url(project_id, &format!("/tasks/{id}/ready"))))
+            .auth(
+                self.client
+                    .post(self.project_url(project_id, &format!("/tasks/{id}/ready"))),
+            )
             .send()
             .await?;
         let task: Task = read_json_or_error(resp).await?;
@@ -126,7 +163,7 @@ impl TaskOperations for RemoteTaskOperations {
         session_id: Option<String>,
         user_id: Option<i64>,
     ) -> Result<Task> {
-        let prev_status = self.get_task_internal(project_id, id).await?.status();
+        let prev_status = self.get_task(project_id, id).await?.status();
 
         let resp = self
             .auth(
@@ -167,7 +204,12 @@ impl TaskOperations for RemoteTaskOperations {
 
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             self.hooks
-                .fire(&HookTrigger::NoEligibleTask { project_id }, None, None, None)
+                .fire(
+                    &HookTrigger::NoEligibleTask { project_id },
+                    None,
+                    None,
+                    None,
+                )
                 .await;
             return Err(DomainError::NoEligibleTask.into());
         }
@@ -182,7 +224,7 @@ impl TaskOperations for RemoteTaskOperations {
             .fire(
                 &HookTrigger::Task(TaskEvent::Started),
                 Some(&task),
-                None,
+                Some(TaskStatus::Todo),
                 None,
             )
             .await;
@@ -196,7 +238,7 @@ impl TaskOperations for RemoteTaskOperations {
         id: i64,
         skip_pr_check: bool,
     ) -> Result<CompleteResult> {
-        let prev_status = self.get_task_internal(project_id, id).await?.status();
+        let prev_status = self.get_task(project_id, id).await?.status();
 
         let body = if skip_pr_check {
             json!({ "skip_pr_check": true })
@@ -211,34 +253,20 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .send()
             .await?;
-        let remote: RemoteCompleteResponse = read_json_or_error(resp).await?;
-
-        let unblocked: Vec<UnblockedTask> = remote
-            .unblocked_tasks
-            .into_iter()
-            .map(|u| {
-                let priority = u.priority.parse::<Priority>().unwrap_or(Priority::P2);
-                UnblockedTask::new(u.id, u.title, priority, None)
-            })
-            .collect();
-
-        let unblocked_opt = if unblocked.is_empty() {
-            None
-        } else {
-            Some(unblocked.clone())
-        };
+        let api_resp: CompleteApiResponse = read_json_or_error(resp).await?;
+        let unblocked = parse_unblocked(api_resp.unblocked_tasks);
 
         self.hooks
             .fire(
                 &HookTrigger::Task(TaskEvent::Completed),
-                Some(&remote.task),
+                Some(&api_resp.task),
                 Some(prev_status),
-                unblocked_opt,
+                Some(unblocked.clone()),
             )
             .await;
 
         Ok(CompleteResult {
-            task: remote.task,
+            task: api_resp.task,
             unblocked,
         })
     }
@@ -249,7 +277,7 @@ impl TaskOperations for RemoteTaskOperations {
         id: i64,
         reason: Option<String>,
     ) -> Result<Task> {
-        let prev_status = self.get_task_internal(project_id, id).await?.status();
+        let prev_status = self.get_task(project_id, id).await?.status();
 
         let body = match reason {
             Some(ref r) => json!({ "reason": r }),
@@ -285,7 +313,7 @@ impl TaskOperations for RemoteTaskOperations {
         task_id: i64,
         target: TaskStatus,
     ) -> Result<PreviewResult> {
-        let task = self.get_task_internal(project_id, task_id).await?;
+        let task = self.get_task(project_id, task_id).await?;
 
         let resp = self
             .auth(self.client.get(self.project_url(
@@ -294,15 +322,38 @@ impl TaskOperations for RemoteTaskOperations {
             )))
             .send()
             .await?;
-        let dto: PreviewTransitionResponse = read_json_or_error(resp).await?;
+        let api: PreviewApiResponse = read_json_or_error(resp).await?;
+
+        let target_status = api.target_status.parse::<TaskStatus>()?;
+        let unblocked_tasks = api
+            .unblocked_tasks
+            .into_iter()
+            .filter_map(|u| {
+                let priority = u.priority.parse::<Priority>().ok()?;
+                let status = u.status.parse::<TaskStatus>().ok()?;
+                Some(Task::new(
+                    u.id,
+                    project_id,
+                    u.title,
+                    None, None, None,
+                    priority,
+                    status,
+                    None, None,
+                    String::new(), String::new(),
+                    None, None, None, None,
+                    None, None, None,
+                    Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+                ))
+            })
+            .collect();
 
         Ok(PreviewResult {
-            allowed: dto.allowed,
-            reason: dto.reason,
+            allowed: api.allowed,
+            reason: api.reason,
             task,
-            target_status: target,
-            operations: dto.operations,
-            unblocked_tasks: vec![],
+            target_status,
+            operations: api.operations,
+            unblocked_tasks,
         })
     }
 
@@ -319,24 +370,23 @@ impl TaskOperations for RemoteTaskOperations {
             return Err(DomainError::NoEligibleTask.into());
         }
 
-        let dto: PreviewTransitionResponse = read_json_or_error(resp).await?;
+        let api: PreviewApiResponse = read_json_or_error(resp).await?;
 
-        // The server preview-next doesn't return the candidate task directly.
-        // Fetch the first ready task to populate the required `task` field.
-        let task = self
-            .list_ready_tasks(project_id)
-            .await
-            .unwrap_or_default()
+        // Fetch the next eligible task for the PreviewResult.task field
+        let ready_tasks = self.list_ready_tasks(project_id).await?;
+        let task = ready_tasks
             .into_iter()
             .next()
             .ok_or(DomainError::NoEligibleTask)?;
 
+        let target_status = api.target_status.parse::<TaskStatus>()?;
+
         Ok(PreviewResult {
-            allowed: dto.allowed,
-            reason: dto.reason,
+            allowed: api.allowed,
+            reason: api.reason,
             task,
-            target_status: TaskStatus::InProgress,
-            operations: dto.operations,
+            target_status,
+            operations: api.operations,
             unblocked_tasks: vec![],
         })
     }
@@ -344,10 +394,21 @@ impl TaskOperations for RemoteTaskOperations {
     // --- Queries ---
 
     async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
-        self.get_task_internal(project_id, id).await
+        let resp = self
+            .auth(
+                self.client
+                    .get(self.project_url(project_id, &format!("/tasks/{id}"))),
+            )
+            .send()
+            .await?;
+        read_json_or_error(resp).await
     }
 
-    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+    async fn list_tasks(
+        &self,
+        project_id: i64,
+        filter: &ListTasksFilter,
+    ) -> Result<Vec<Task>> {
         let mut url = self.project_url(project_id, "/tasks");
         let mut params: Vec<String> = Vec::new();
 
@@ -379,15 +440,19 @@ impl TaskOperations for RemoteTaskOperations {
         let mut tags: Vec<String> = tasks
             .iter()
             .flat_map(|t| t.tags().iter().cloned())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
             .collect();
         tags.sort();
-        tags.dedup();
         Ok(tags)
     }
 
     async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
         let resp = self
-            .auth(self.client.get(self.project_url(project_id, "/stats")))
+            .auth(
+                self.client
+                    .get(self.project_url(project_id, "/stats")),
+            )
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -445,23 +510,37 @@ impl TaskOperations for RemoteTaskOperations {
 
     // --- Definition of Done ---
 
-    async fn check_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
+    async fn check_dod(
+        &self,
+        project_id: i64,
+        task_id: i64,
+        index: usize,
+    ) -> Result<Task> {
         let resp = self
-            .auth(self.client.post(self.project_url(
-                project_id,
-                &format!("/tasks/{task_id}/dod/{index}/check"),
-            )))
+            .auth(
+                self.client.post(self.project_url(
+                    project_id,
+                    &format!("/tasks/{task_id}/dod/{index}/check"),
+                )),
+            )
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
-    async fn uncheck_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
+    async fn uncheck_dod(
+        &self,
+        project_id: i64,
+        task_id: i64,
+        index: usize,
+    ) -> Result<Task> {
         let resp = self
-            .auth(self.client.post(self.project_url(
-                project_id,
-                &format!("/tasks/{task_id}/dod/{index}/uncheck"),
-            )))
+            .auth(
+                self.client.post(self.project_url(
+                    project_id,
+                    &format!("/tasks/{task_id}/dod/{index}/uncheck"),
+                )),
+            )
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -469,7 +548,12 @@ impl TaskOperations for RemoteTaskOperations {
 
     // --- Dependencies ---
 
-    async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
+    async fn add_dependency(
+        &self,
+        project_id: i64,
+        task_id: i64,
+        dep_id: i64,
+    ) -> Result<Task> {
         let resp = self
             .auth(
                 self.client
@@ -488,10 +572,12 @@ impl TaskOperations for RemoteTaskOperations {
         dep_id: i64,
     ) -> Result<Task> {
         let resp = self
-            .auth(self.client.delete(self.project_url(
-                project_id,
-                &format!("/tasks/{task_id}/deps/{dep_id}"),
-            )))
+            .auth(
+                self.client.delete(self.project_url(
+                    project_id,
+                    &format!("/tasks/{task_id}/deps/{dep_id}"),
+                )),
+            )
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -514,12 +600,16 @@ impl TaskOperations for RemoteTaskOperations {
         read_json_or_error(resp).await
     }
 
-    async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
+    async fn list_dependencies(
+        &self,
+        project_id: i64,
+        task_id: i64,
+    ) -> Result<Vec<Task>> {
         let resp = self
-            .auth(self.client.get(self.project_url(
-                project_id,
-                &format!("/tasks/{task_id}/deps"),
-            )))
+            .auth(
+                self.client
+                    .get(self.project_url(project_id, &format!("/tasks/{task_id}/deps"))),
+            )
             .send()
             .await?;
         read_json_or_error(resp).await

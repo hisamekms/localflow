@@ -9,12 +9,12 @@ use super::{
 };
 use crate::bootstrap::{
     create_backend, create_hook_test_service, create_project_service,
-    create_task_operations, create_user_service, resolve_project_id, resolve_user_id,
-    DEFAULT_PROJECT_ID,
+    create_task_operations, create_user_service,
+    resolve_project_id, resolve_user_id, DEFAULT_PROJECT_ID,
 };
+use crate::bootstrap::hook as hooks;
 use crate::application::HookTrigger;
 use crate::infra::config::{CliOverrides, Config};
-use crate::bootstrap::hook as hooks;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, Priority, TaskStatus,
@@ -59,7 +59,7 @@ pub async fn cmd_add(
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let (task_ops, backend) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
     let params = if from_json {
@@ -140,8 +140,7 @@ pub async fn cmd_add(
         return print_dry_run(&cli.output, &DryRunOperation { command: "add".into(), operations });
     }
 
-    let task_service = create_task_operations(&root, &config)?;
-    let task = task_service.create_task(project_id, &params).await?;
+    let task = task_ops.create_task(project_id, &params).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -164,9 +163,8 @@ pub async fn cmd_list(
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let (task_ops, backend) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_operations(&root, &config)?;
 
     let statuses = status
         .into_iter()
@@ -181,7 +179,7 @@ pub async fn cmd_list(
         ready,
     };
 
-    let tasks = task_service.list_tasks(project_id, &filter).await?;
+    let tasks = task_ops.list_tasks(project_id, &filter).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -202,10 +200,9 @@ pub async fn cmd_list(
 pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let (task_ops, backend) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_operations(&root, &config)?;
-    let task = task_service.get_task(project_id, task_id).await?;
+    let task = task_ops.get_task(project_id, task_id).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -288,20 +285,18 @@ pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
 pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let (task_ops, backend) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
-    let task_service = create_task_operations(&root, &config)?;
-
     if cli.dry_run {
-        let result = task_service.preview_transition(project_id, id, TaskStatus::Todo).await?;
+        let result = task_ops.preview_transition(project_id, id, TaskStatus::Todo).await?;
         if !result.allowed {
             anyhow::bail!("{}", result.reason.unwrap_or_default());
         }
         return print_dry_run(&cli.output, &DryRunOperation { command: "ready".into(), operations: result.operations });
     }
 
-    let updated = task_service.ready_task(project_id, id).await?;
+    let updated = task_ops.ready_task(project_id, id).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -318,17 +313,15 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let (task_ops, backend) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
     let user_id = match user_id {
         Some(id) => Some(id),
         None => Some(resolve_user_id(&*backend, &config).await?),
     };
 
-    let task_service = create_task_operations(&root, &config)?;
-
     if cli.dry_run {
-        let mut result = task_service.preview_transition(project_id, id, TaskStatus::InProgress).await?;
+        let mut result = task_ops.preview_transition(project_id, id, TaskStatus::InProgress).await?;
         if !result.allowed {
             anyhow::bail!("{}", result.reason.unwrap_or_default());
         }
@@ -341,7 +334,7 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
         return print_dry_run(&cli.output, &DryRunOperation { command: "start".into(), operations: result.operations });
     }
 
-    let updated = task_service.start_task(project_id, id, session_id, user_id).await?;
+    let updated = task_ops.start_task(project_id, id, session_id, user_id).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -358,17 +351,15 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
 pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let (task_ops, backend) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
     let user_id = match user_id {
         Some(id) => Some(id),
         None => Some(resolve_user_id(&*backend, &config).await?),
     };
 
-    let task_service = create_task_operations(&root, &config)?;
-
     if cli.dry_run {
-        let result = task_service.preview_next(project_id).await?;
+        let result = task_ops.preview_next(project_id).await?;
         let mut operations = result.operations;
         if let Some(ref sid) = session_id {
             operations.push(format!("Set assignee_session_id to \"{}\"", sid));
@@ -379,7 +370,7 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
         return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
     }
 
-    let updated = task_service.next_task(project_id, session_id, user_id).await?;
+    let updated = task_ops.next_task(project_id, session_id, user_id).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -396,20 +387,18 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
 pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let (task_ops, backend) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
-    let task_service = create_task_operations(&root, &config)?;
-
     if cli.dry_run {
-        let result = task_service.preview_transition(project_id, id, TaskStatus::Completed).await?;
+        let result = task_ops.preview_transition(project_id, id, TaskStatus::Completed).await?;
         if !result.allowed {
             anyhow::bail!("{}", result.reason.unwrap_or_default());
         }
         return print_dry_run(&cli.output, &DryRunOperation { command: "complete".into(), operations: result.operations });
     }
 
-    let result = task_service.complete_task(project_id, id, skip_pr_check).await?;
+    let result = task_ops.complete_task(project_id, id, skip_pr_check).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -426,13 +415,11 @@ pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()>
 pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let (task_ops, backend) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
-    let task_service = create_task_operations(&root, &config)?;
-
     if cli.dry_run {
-        let mut result = task_service.preview_transition(project_id, id, TaskStatus::Canceled).await?;
+        let mut result = task_ops.preview_transition(project_id, id, TaskStatus::Canceled).await?;
         if !result.allowed {
             anyhow::bail!("{}", result.reason.unwrap_or_default());
         }
@@ -442,7 +429,7 @@ pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()
         return print_dry_run(&cli.output, &DryRunOperation { command: "cancel".into(), operations: result.operations });
     }
 
-    let updated = task_service.cancel_task(project_id, id, reason).await?;
+    let updated = task_ops.cancel_task(project_id, id, reason).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -805,7 +792,7 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
 
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = load_config(cli, &root)?;
-            let (backend, _) = create_backend(&root, &config)?;
+            let backend = create_backend(&root, &config)?;
             let project_id = resolve_project_id(&*backend, &config).await?;
 
             let hook_test_service = create_hook_test_service(backend, &config, &root);
@@ -919,12 +906,11 @@ pub async fn cmd_edit(
 ) -> Result<()> {
     let project_root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &project_root)?;
-    let (backend, _) = create_backend(&project_root, &config)?;
+    let (task_ops, backend) = create_task_operations(&project_root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_operations(&project_root, &config)?;
 
     // Verify task exists (even in dry-run)
-    let _task = task_service.get_task(project_id, id).await?;
+    let _task = task_ops.get_task(project_id, id).await?;
 
     // Resolve effective plan: --plan-file takes precedence over --plan (they conflict via clap)
     let effective_plan = if let Some(path) = plan_file {
@@ -1051,9 +1037,9 @@ pub async fn cmd_edit(
         remove_out_of_scope: remove_out_of_scope.to_vec(),
     };
 
-    task_service.edit_task(project_id, id, &scalar_params).await?;
-    task_service.edit_task_arrays(project_id, id, &array_params).await?;
-    let task = task_service.get_task(project_id, id).await?;
+    task_ops.edit_task(project_id, id, &scalar_params).await?;
+    task_ops.edit_task_arrays(project_id, id, &array_params).await?;
+    let task = task_ops.get_task(project_id, id).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -1093,9 +1079,8 @@ pub async fn cmd_edit(
 pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let (task_ops, backend) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_operations(&root, &config)?;
 
     match command {
         DodCommand::Check { task_id, index } => {
@@ -1111,7 +1096,7 @@ pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
                     },
                 );
             }
-            let task = task_service.check_dod(project_id, task_id, index).await?;
+            let task = task_ops.check_dod(project_id, task_id, index).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1133,7 +1118,7 @@ pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
                     },
                 );
             }
-            let task = task_service.uncheck_dod(project_id, task_id, index).await?;
+            let task = task_ops.uncheck_dod(project_id, task_id, index).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1156,9 +1141,8 @@ fn print_dod_items(items: &[crate::domain::task::DodItem]) {
 pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let (task_ops, backend) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_operations(&root, &config)?;
 
     match command {
         DepsCommand::Add { task_id, on } => {
@@ -1167,7 +1151,7 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Add dependency: task #{} depends on #{}", task_id, on)];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps add".into(), operations });
             }
-            let task = task_service.add_dependency(project_id, task_id, on).await?;
+            let task = task_ops.add_dependency(project_id, task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => println!("Added dependency: task #{} depends on #{}", task_id, on),
@@ -1179,7 +1163,7 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Remove dependency: task #{} no longer depends on #{}", task_id, on)];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps remove".into(), operations });
             }
-            let task = task_service.remove_dependency(project_id, task_id, on).await?;
+            let task = task_ops.remove_dependency(project_id, task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => println!("Removed dependency: task #{} no longer depends on #{}", task_id, on),
@@ -1192,7 +1176,7 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Set dependencies for task #{}: [{}]", task_id, dep_strs.join(", "))];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps set".into(), operations });
             }
-            let task = task_service.set_dependencies(project_id, task_id, on).await?;
+            let task = task_ops.set_dependencies(project_id, task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1207,7 +1191,7 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
         }
         DepsCommand::List { task_id } => {
             // Read-only: ignore --dry-run
-            let deps = task_service.list_dependencies(project_id, *task_id).await?;
+            let deps = task_ops.list_dependencies(project_id, *task_id).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&deps)?),
                 OutputFormat::Text => {
@@ -1224,7 +1208,7 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
 pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let backend = create_backend(&root, &config)?;
     let project_service = create_project_service(backend);
 
     match action {
@@ -1280,7 +1264,7 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
 pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let backend = create_backend(&root, &config)?;
     let user_service = create_user_service(backend);
 
     match action {
@@ -1338,7 +1322,7 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
 pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let backend = create_backend(&root, &config)?;
     let project_service = create_project_service(backend);
 
     match action {

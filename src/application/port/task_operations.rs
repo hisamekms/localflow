@@ -142,4 +142,5 @@ pub trait TaskOperations: Send + Sync {
     ) -> Result<Vec<Task>>;
     async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>>;
     async fn ready_count(&self, project_id: i64) -> Result<i64>;
+
 }
