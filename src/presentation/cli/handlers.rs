@@ -36,7 +36,7 @@ fn build_cli_overrides(cli: &Cli) -> CliOverrides {
 }
 
 fn load_config(cli: &Cli, root: &std::path::Path) -> Result<Config> {
-    let mut config = hooks::load_config(root, cli.config.as_deref())?;
+    let mut config = crate::bootstrap::load_config(root, cli.config.as_deref())?;
     config.apply_cli(&build_cli_overrides(cli));
     Ok(config)
 }
@@ -368,11 +368,11 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
 
     if cli.dry_run {
         let backend_info = resolve_backend_info(&config, &root);
-        let hook_executor = create_hook_executor(config, using_http, hooks::RuntimeMode::Cli, backend_info);
+        let hook_executor = create_hook_executor(config, using_http, hooks::RuntimeMode::Cli, backend_info, backend.clone());
         let task = match backend.next_task(project_id).await? {
             Some(t) => t,
             None => {
-                hook_executor.fire(&HookTrigger::NoEligibleTask { project_id }, None, backend.as_ref(), None, None).await;
+                hook_executor.fire(&HookTrigger::NoEligibleTask { project_id }, None, None, None).await;
                 anyhow::bail!("no eligible task found");
             }
         };
@@ -393,17 +393,17 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
     // so we handle the using_http case separately to avoid a redundant start_task call.
     if using_http {
         let backend_info = resolve_backend_info(&config, &root);
-        let hook_executor = create_hook_executor(config, using_http, hooks::RuntimeMode::Cli, backend_info);
+        let hook_executor = create_hook_executor(config, using_http, hooks::RuntimeMode::Cli, backend_info, backend.clone());
         let task = match backend.next_task(project_id).await? {
             Some(t) => t,
             None => {
-                hook_executor.fire(&HookTrigger::NoEligibleTask { project_id }, None, backend.as_ref(), None, None).await;
+                hook_executor.fire(&HookTrigger::NoEligibleTask { project_id }, None, None, None).await;
                 anyhow::bail!("no eligible task found");
             }
         };
         let prev_status = task.status();
         hook_executor
-            .fire(&HookTrigger::Task(TaskEvent::Started), Some(&task), backend.as_ref(), Some(prev_status), None)
+            .fire(&HookTrigger::Task(TaskEvent::Started), Some(&task), Some(prev_status), None)
             .await;
         match cli.output {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
@@ -518,7 +518,7 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
         return Ok(());
     }
 
-    let config = hooks::load_config(&root, cli.config.as_deref())?;
+    let config = crate::bootstrap::load_config(&root, cli.config.as_deref())?;
     match cli.output {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&config)?);
@@ -689,7 +689,7 @@ fn run_hook_checks(entry: &crate::infra::config::HookEntry) -> Vec<CheckResult> 
 
 pub fn cmd_doctor(cli: &Cli) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let config = hooks::load_config(&root, cli.config.as_deref())?;
+    let config = crate::bootstrap::load_config(&root, cli.config.as_deref())?;
 
     let events = [
         ("on_task_added", &config.hooks.on_task_added),

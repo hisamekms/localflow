@@ -88,7 +88,7 @@ fn build_cli_overrides(cli: &Cli) -> CliOverrides {
 }
 
 fn load_config_with_cli(root: &std::path::Path, cli: &Cli) -> Result<Config> {
-    let mut config = hooks::load_config(root, cli.config.as_deref())?;
+    let mut config = senko::bootstrap::load_config(root, cli.config.as_deref())?;
     config.apply_cli(&build_cli_overrides(cli));
     Ok(config)
 }
@@ -118,9 +118,9 @@ fn resolve_backend_info(config: &Config, project_root: &std::path::Path) -> Back
     BackendInfo::Sqlite { db_file_path: db_path }
 }
 
-fn create_hook_executor(config: Config, using_http: bool, runtime_mode: RuntimeMode, backend_info: BackendInfo) -> Arc<dyn HookExecutor> {
+fn create_hook_executor(config: Config, using_http: bool, runtime_mode: RuntimeMode, backend_info: BackendInfo, backend: Arc<dyn TaskBackend>) -> Arc<dyn HookExecutor> {
     let should_fire = should_fire_client_hooks(&config, using_http);
-    Arc::new(ShellHookExecutor::new(config, should_fire, runtime_mode, backend_info))
+    Arc::new(ShellHookExecutor::new(config, should_fire, runtime_mode, backend_info, backend))
 }
 
 fn create_task_service(
@@ -130,7 +130,7 @@ fn create_task_service(
     project_root: &std::path::Path,
 ) -> TaskService {
     let backend_info = resolve_backend_info(config, project_root);
-    let hooks = create_hook_executor(config.clone(), using_http, RuntimeMode::Cli, backend_info);
+    let hooks = create_hook_executor(config.clone(), using_http, RuntimeMode::Cli, backend_info, backend.clone());
     let pr_verifier = Arc::new(GhCliPrVerifier);
     TaskService::new(backend, hooks, pr_verifier, config.workflow.clone())
 }
@@ -1213,11 +1213,11 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
 
     if cli.dry_run {
         let backend_info = resolve_backend_info(&config, &root);
-        let hook_executor = create_hook_executor(config, using_http, RuntimeMode::Cli, backend_info);
+        let hook_executor = create_hook_executor(config, using_http, RuntimeMode::Cli, backend_info, backend.clone());
         let task = match backend.next_task(project_id).await? {
             Some(t) => t,
             None => {
-                hook_executor.fire(&HookTrigger::NoEligibleTask { project_id }, None, backend.as_ref(), None, None).await;
+                hook_executor.fire(&HookTrigger::NoEligibleTask { project_id }, None, None, None).await;
                 anyhow::bail!("no eligible task found");
             }
         };
@@ -1238,17 +1238,17 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
     // so we handle the using_http case separately to avoid a redundant start_task call.
     if using_http {
         let backend_info = resolve_backend_info(&config, &root);
-        let hook_executor = create_hook_executor(config, using_http, RuntimeMode::Cli, backend_info);
+        let hook_executor = create_hook_executor(config, using_http, RuntimeMode::Cli, backend_info, backend.clone());
         let task = match backend.next_task(project_id).await? {
             Some(t) => t,
             None => {
-                hook_executor.fire(&HookTrigger::NoEligibleTask { project_id }, None, backend.as_ref(), None, None).await;
+                hook_executor.fire(&HookTrigger::NoEligibleTask { project_id }, None, None, None).await;
                 anyhow::bail!("no eligible task found");
             }
         };
         let prev_status = task.status();
         hook_executor
-            .fire(&HookTrigger::Task(TaskEvent::Started), Some(&task), backend.as_ref(), Some(prev_status), None)
+            .fire(&HookTrigger::Task(TaskEvent::Started), Some(&task), Some(prev_status), None)
             .await;
         match cli.output {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
@@ -1706,7 +1706,7 @@ fn run_hook_checks(entry: &HookEntry) -> Vec<DoctorCheckResult> {
 
 fn cmd_doctor(cli: &Cli) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let config = hooks::load_config(&root, cli.config.as_deref())?;
+    let config = senko::bootstrap::load_config(&root, cli.config.as_deref())?;
 
     let events = [
         ("on_task_added", &config.hooks.on_task_added),
@@ -1819,7 +1819,7 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
         return Ok(());
     }
 
-    let config = hooks::load_config(&root, cli.config.as_deref())?;
+    let config = senko::bootstrap::load_config(&root, cli.config.as_deref())?;
     match cli.output {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&config)?);

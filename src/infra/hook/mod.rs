@@ -4,13 +4,15 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::infra::config::{Config, HookEntry, RawConfig};
+use crate::infra::config::{Config, HookEntry};
+#[cfg(test)]
+use crate::infra::config::RawConfig;
 use crate::domain::repository::TaskBackend;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
 
@@ -191,113 +193,6 @@ fn truncate_output(bytes: &[u8]) -> String {
         let start = bytes.len() - MAX_OUTPUT_BYTES;
         String::from_utf8_lossy(&bytes[start..]).into_owned()
     }
-}
-
-pub fn load_config(project_root: &Path, explicit_config: Option<&Path>) -> Result<Config> {
-    // 1. Load user config (lowest priority layer)
-    let user_raw = load_user_config()?;
-
-    // 2. Determine and load the project/explicit config
-    let project_raw = if let Some(path) = explicit_config {
-        // Explicit --config flag: must exist
-        Some(load_config_file(path, true)?)
-    } else if let Some(env_path) = env_config_path() {
-        // SENKO_CONFIG env var: must exist
-        Some(load_config_file(&env_path, true)?)
-    } else {
-        let default_path = project_root.join(".senko").join("config.toml");
-        if default_path.exists() {
-            Some(load_config_file(&default_path, false)?)
-        } else {
-            None
-        }
-    };
-
-    // 3. Merge: user config as base, project config as overlay
-    let merged_raw = match (user_raw, project_raw) {
-        (Some(base), Some(overlay)) => base.merge(overlay),
-        (None, Some(overlay)) => overlay,
-        (Some(base), None) => base,
-        (None, None) => RawConfig::default(),
-    };
-
-    // 4. Resolve to final Config and apply env overrides
-    let mut config = merged_raw.resolve();
-    config.apply_env();
-    Ok(config)
-}
-
-/// Return the user-level config path.
-/// `$XDG_CONFIG_HOME/senko/config.toml` or `~/.config/senko/config.toml`
-fn user_config_path() -> Option<PathBuf> {
-    let config_dir = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .ok()
-        .filter(|p| p.is_absolute())
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| PathBuf::from(h).join(".config"))
-        })?;
-    Some(config_dir.join("senko").join("config.toml"))
-}
-
-/// Load user-level config if it exists.
-fn load_user_config() -> Result<Option<RawConfig>> {
-    let path = match user_config_path() {
-        Some(p) if p.exists() => p,
-        _ => return Ok(None),
-    };
-    let raw = load_config_file(&path, false)?;
-    Ok(Some(raw))
-}
-
-/// Return the config path from the SENKO_CONFIG env var, if set.
-fn env_config_path() -> Option<PathBuf> {
-    std::env::var("SENKO_CONFIG")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-}
-
-/// Load and parse a config file into RawConfig, with legacy hook format detection.
-fn load_config_file(path: &Path, must_exist: bool) -> Result<RawConfig> {
-    if !path.exists() {
-        if must_exist {
-            bail!("config file not found: {}", path.display());
-        }
-        return Ok(RawConfig::default());
-    }
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read config file: {}", path.display()))?;
-    detect_legacy_hook_format(&content, path)?;
-    toml::from_str(&content)
-        .with_context(|| format!("failed to parse config file: {}", path.display()))
-}
-
-/// Check if the config uses the old array-based hook format and return a helpful error.
-fn detect_legacy_hook_format(content: &str, path: &Path) -> Result<()> {
-    let raw: toml::Value = match toml::from_str(content) {
-        Ok(v) => v,
-        Err(_) => return Ok(()), // let the real parser produce the error
-    };
-    if let Some(hooks) = raw.get("hooks").and_then(|v| v.as_table()) {
-        for (key, val) in hooks {
-            if val.is_str() || val.is_array() {
-                bail!(
-                    "Legacy hook format detected in {}.\n\
-                     The array-based hook format is no longer supported.\n\
-                     Please migrate to named hooks:\n\n\
-                     Old format:\n  [hooks]\n  {} = \"command\"\n\n\
-                     New format:\n  [hooks.{}.my-hook]\n  command = \"command\"\n",
-                    path.display(),
-                    key,
-                    key,
-                );
-            }
-        }
-    }
-    Ok(())
 }
 
 pub async fn build_event(
@@ -784,6 +679,7 @@ pub async fn compute_unblocked(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bootstrap::load_config;
     use crate::infra::config::{
         CompletionMode, HookMode, HooksConfig, RawLogConfig, RawWorkflowConfig,
     };
