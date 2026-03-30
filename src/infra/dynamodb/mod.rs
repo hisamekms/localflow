@@ -1037,3 +1037,5 @@ impl TaskQueryPort for DynamoDbBackend {
         }).await
     }
 }
+
+crate::impl_task_transition_default!(DynamoDbBackend);

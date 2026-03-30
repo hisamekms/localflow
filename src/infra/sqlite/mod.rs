@@ -1651,6 +1651,8 @@ impl TaskQueryPort for SqliteBackend {
     }
 }
 
+crate::impl_task_transition_default!(SqliteBackend);
+
 #[cfg(test)]
 mod tests {
     use super::*;

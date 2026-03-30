@@ -1315,6 +1315,8 @@ async fn update_content_array(
     Ok(())
 }
 
+crate::impl_task_transition_default!(PostgresBackend);
+
 #[cfg(test)]
 mod tests {
     use super::*;

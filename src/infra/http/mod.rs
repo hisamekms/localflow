@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::application::port::TaskQueryPort;
+use crate::application::port::TaskTransitionPort;
 use crate::domain::error::DomainError;
 use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::project::{CreateProjectParams, Project};
@@ -539,5 +540,72 @@ impl TaskQueryPort for HttpBackend {
             ready: true,
             ..Default::default()
         }).await
+    }
+}
+
+#[async_trait]
+impl TaskTransitionPort for HttpBackend {
+    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
+        let resp = self.auth(self
+            .client
+            .post(self.project_url(project_id, &format!("/tasks/{id}/ready"))))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn start_task(
+        &self,
+        project_id: i64,
+        id: i64,
+        session_id: Option<String>,
+        user_id: Option<i64>,
+    ) -> Result<Task> {
+        let resp = self.auth(self
+            .client
+            .post(self.project_url(project_id, &format!("/tasks/{id}/start")))
+            .json(&json!({ "session_id": session_id, "user_id": user_id })))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn complete_task(
+        &self,
+        project_id: i64,
+        id: i64,
+        skip_pr_check: bool,
+    ) -> Result<Task> {
+        let body = if skip_pr_check {
+            json!({ "skip_pr_check": true })
+        } else {
+            json!({})
+        };
+        let resp = self.auth(self
+            .client
+            .post(self.project_url(project_id, &format!("/tasks/{id}/complete")))
+            .json(&body))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn cancel_task(
+        &self,
+        project_id: i64,
+        id: i64,
+        reason: Option<String>,
+    ) -> Result<Task> {
+        let body = match reason {
+            Some(ref r) => json!({ "reason": r }),
+            None => json!({}),
+        };
+        let resp = self.auth(self
+            .client
+            .post(self.project_url(project_id, &format!("/tasks/{id}/cancel")))
+            .json(&body))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
     }
 }
