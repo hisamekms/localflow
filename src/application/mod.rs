@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod port;
 pub mod project_service;
 pub mod task_service;

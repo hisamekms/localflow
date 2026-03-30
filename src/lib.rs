@@ -1,5 +1,5 @@
 pub mod application;
-pub mod auth;
+// bootstrap: composition root — wires all layers together, intentionally at crate root
 pub mod bootstrap;
 pub mod domain;
 pub mod infra;
