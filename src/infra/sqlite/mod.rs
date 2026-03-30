@@ -6,8 +6,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::domain::error::DomainError;
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
-    CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
-    UpdateTaskParams,
+    self, CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus,
+    UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
@@ -759,6 +759,16 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
         rusqlite::params![params.title, params.background, params.description, priority, params.branch, params.pr_url, metadata_str, project_id],
     )?;
     let task_id = conn.last_insert_rowid();
+
+    if let Some(ref branch) = params.branch {
+        if branch.contains("${task_id}") {
+            let expanded = task::expand_branch_template(branch, task_id);
+            conn.execute(
+                "UPDATE tasks SET branch = ?1 WHERE id = ?2",
+                params![expanded, task_id],
+            )?;
+        }
+    }
 
     for item in &params.definition_of_done {
         conn.execute(

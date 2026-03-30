@@ -9,8 +9,8 @@ use crate::domain::project::{CreateProjectParams, Project};
 use crate::application::port::{AuthenticationPort, TaskQueryPort};
 use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
-    CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
-    UpdateTaskParams,
+    self, CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus,
+    UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
@@ -602,6 +602,17 @@ impl TaskRepository for PostgresBackend {
         .fetch_one(&mut *tx)
         .await?;
         let task_id: i64 = row.get("id");
+
+        if let Some(ref branch) = params.branch {
+            if branch.contains("${task_id}") {
+                let expanded = task::expand_branch_template(branch, task_id);
+                sqlx::query("UPDATE tasks SET branch = $1 WHERE id = $2")
+                    .bind(&expanded)
+                    .bind(task_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
 
         for item in &params.definition_of_done {
             sqlx::query(

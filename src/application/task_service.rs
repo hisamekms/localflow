@@ -59,48 +59,7 @@ impl TaskService {
         project_id: i64,
         params: &CreateTaskParams,
     ) -> Result<Task> {
-        let needs_template = params
-            .branch
-            .as_ref()
-            .is_some_and(|b| b.contains("${task_id}"));
-
-        let task = if needs_template {
-            let branch_template = params.branch.clone();
-            let mut params_without_branch = params.clone();
-            params_without_branch.branch = None;
-            let created = self
-                .backend
-                .create_task(project_id, &params_without_branch)
-                .await?;
-            let expanded = task::expand_branch_template(
-                branch_template.as_deref().unwrap(),
-                created.id(),
-            );
-            self.backend
-                .update_task(
-                    project_id,
-                    created.id(),
-                    &UpdateTaskParams {
-                        title: None,
-                        background: None,
-                        description: None,
-                        plan: None,
-                        priority: None,
-                        assignee_session_id: None,
-                        assignee_user_id: None,
-                        started_at: None,
-                        completed_at: None,
-                        canceled_at: None,
-                        cancel_reason: None,
-                        branch: Some(Some(expanded)),
-                        pr_url: None,
-                        metadata: None,
-                    },
-                )
-                .await?
-        } else {
-            self.backend.create_task(project_id, params).await?
-        };
+        let task = self.backend.create_task(project_id, params).await?;
 
         self.hooks
             .fire(

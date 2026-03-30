@@ -12,8 +12,8 @@ use crate::application::port::{AuthenticationPort, TaskQueryPort};
 use crate::domain::error::DomainError;
 use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
-    CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
-    UpdateTaskParams,
+    self, CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus,
+    UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
@@ -830,6 +830,14 @@ impl TaskRepository for DynamoDbBackend {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let priority = params.priority.unwrap_or(Priority::P2);
 
+        let branch = params.branch.as_ref().map(|b| {
+            if b.contains("${task_id}") {
+                task::expand_branch_template(b, id)
+            } else {
+                b.clone()
+            }
+        });
+
         let task = Task::new(
             id,
             project_id,
@@ -847,7 +855,7 @@ impl TaskRepository for DynamoDbBackend {
             None,
             None,
             None,
-            params.branch.clone(),
+            branch,
             params.pr_url.clone(),
             params.metadata.clone(),
             params
