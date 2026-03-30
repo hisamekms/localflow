@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::application::port::TaskBackend;
 use crate::application::auth::{Permission, require_project_role};
-use crate::domain::project::{CreateProjectParams, Project, DEFAULT_PROJECT_ID};
+use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::ListTasksFilter;
 use crate::domain::user::{
     AddProjectMemberParams, ProjectMember, Role,
@@ -39,13 +39,9 @@ impl ProjectService {
         if let Some(uid) = caller_user_id {
             require_project_role(self.backend.as_ref(), uid, id, Permission::Admin).await?;
         }
-        if id == DEFAULT_PROJECT_ID {
-            anyhow::bail!("cannot delete the default project");
-        }
+        let project = self.backend.get_project(id).await?;
         let tasks = self.backend.list_tasks(id, &ListTasksFilter::default()).await?;
-        if !tasks.is_empty() {
-            anyhow::bail!("cannot delete project with {} existing task(s)", tasks.len());
-        }
+        project.validate_deletable(tasks.len() as i64)?;
         self.backend.delete_project(id).await
     }
 

@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use super::error::DomainError;
 use super::user::{AddProjectMemberParams, ProjectMember, Role};
 
 /// The default project (id=1) cannot be deleted.
@@ -34,6 +35,16 @@ impl Project {
 
     pub fn created_at(&self) -> &str {
         &self.created_at
+    }
+
+    pub fn validate_deletable(&self, task_count: i64) -> Result<(), DomainError> {
+        if self.id == DEFAULT_PROJECT_ID {
+            return Err(DomainError::CannotDeleteDefaultProject);
+        }
+        if task_count > 0 {
+            return Err(DomainError::CannotDeleteProjectWithTasks { count: task_count });
+        }
+        Ok(())
     }
 }
 
