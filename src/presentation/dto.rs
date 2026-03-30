@@ -1,5 +1,6 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
+use crate::application::PreviewResult;
 use crate::infra::config::Config;
 use crate::domain::project::Project;
 use crate::domain::task::{DodItem, Task};
@@ -98,6 +99,47 @@ impl From<Task> for TaskResponse {
             out_of_scope: t.out_of_scope().to_vec(),
             tags: t.tags().to_vec(),
             dependencies: t.dependencies().to_vec(),
+        }
+    }
+}
+
+// --- Preview Transition ---
+
+#[derive(Serialize, Deserialize)]
+pub struct PreviewTransitionResponse {
+    pub allowed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub target_status: String,
+    pub operations: Vec<String>,
+    pub unblocked_tasks: Vec<UnblockedTaskInfo>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct UnblockedTaskInfo {
+    pub id: i64,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+}
+
+impl From<PreviewResult> for PreviewTransitionResponse {
+    fn from(r: PreviewResult) -> Self {
+        Self {
+            allowed: r.allowed,
+            reason: r.reason,
+            target_status: r.target_status.to_string(),
+            operations: r.operations,
+            unblocked_tasks: r
+                .unblocked_tasks
+                .into_iter()
+                .map(|t| UnblockedTaskInfo {
+                    id: t.id(),
+                    title: t.title().to_owned(),
+                    status: t.status().to_string(),
+                    priority: t.priority().to_string(),
+                })
+                .collect(),
         }
     }
 }

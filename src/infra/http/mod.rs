@@ -7,6 +7,8 @@ use serde_json::json;
 use crate::application::port::TaskQueryPort;
 use crate::application::port::TaskTransitionPort;
 use crate::domain::error::DomainError;
+use crate::domain::task::TaskStatus;
+use crate::presentation::dto::PreviewTransitionResponse;
 use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
@@ -55,6 +57,36 @@ impl HttpBackend {
             Some(key) => builder.bearer_auth(key),
             None => builder,
         }
+    }
+
+    pub async fn preview_transition(
+        &self,
+        project_id: i64,
+        task_id: i64,
+        target: TaskStatus,
+    ) -> Result<PreviewTransitionResponse> {
+        let resp = self
+            .auth(self.client.get(self.project_url(
+                project_id,
+                &format!("/tasks/{task_id}/preview-transition?target={target}"),
+            )))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    pub async fn preview_next(
+        &self,
+        project_id: i64,
+    ) -> Result<PreviewTransitionResponse> {
+        let resp = self
+            .auth(
+                self.client
+                    .get(self.project_url(project_id, "/tasks/preview-next")),
+            )
+            .send()
+            .await?;
+        read_json_or_error(resp).await
     }
 }
 

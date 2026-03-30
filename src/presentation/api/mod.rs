@@ -33,8 +33,8 @@ use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role,
 };
 use super::dto::{
-    ApiKeyResponse, ApiKeyWithSecretResponse, ConfigResponse, ProjectMemberResponse,
-    ProjectResponse, TaskResponse, UserResponse,
+    ApiKeyResponse, ApiKeyWithSecretResponse, ConfigResponse, PreviewTransitionResponse,
+    ProjectMemberResponse, ProjectResponse, TaskResponse, UserResponse,
 };
 
 #[derive(Clone)]
@@ -219,6 +219,11 @@ struct AddDepBody {
     dep_id: i64,
 }
 
+#[derive(Deserialize)]
+struct PreviewTransitionQuery {
+    target: String,
+}
+
 #[derive(Deserialize, Default)]
 struct EditTaskBody {
     title: Option<String>,
@@ -349,10 +354,14 @@ pub async fn serve(
             "/api/v1/projects/{project_id}/members/{user_id}",
             get(get_member).put(update_member_role).delete(remove_member),
         )
-        // Task next (static path before wildcard)
+        // Task next + preview (static paths before wildcard)
         .route(
             "/api/v1/projects/{project_id}/tasks/next",
             post(next_task),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/tasks/preview-next",
+            get(preview_next),
         )
         // Task CRUD
         .route(
@@ -362,6 +371,11 @@ pub async fn serve(
         .route(
             "/api/v1/projects/{project_id}/tasks/{id}",
             get(get_task).put(edit_task).delete(delete_task),
+        )
+        // Preview transition (read-only)
+        .route(
+            "/api/v1/projects/{project_id}/tasks/{id}/preview-transition",
+            get(preview_transition),
         )
         // Status transitions
         .route(
@@ -712,6 +726,36 @@ async fn next_task(
         .unwrap_or((None, None));
     let updated = state.task_service.next_task(project_id, session_id, user_id).await.map_err(classify_error)?;
     Ok(Json(TaskResponse::from(updated)))
+}
+
+// GET /api/v1/projects/{project_id}/tasks/{id}/preview-transition?target=todo
+async fn preview_transition(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path((project_id, id)): Path<(i64, i64)>,
+    Query(query): Query<PreviewTransitionQuery>,
+) -> Result<Json<PreviewTransitionResponse>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::View).await?;
+    let target: TaskStatus = query.target.parse().map_err(classify_error)?;
+    let result = state.task_service
+        .preview_transition(project_id, id, target)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(PreviewTransitionResponse::from(result)))
+}
+
+// GET /api/v1/projects/{project_id}/tasks/preview-next
+async fn preview_next(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(project_id): Path<i64>,
+) -> Result<Json<PreviewTransitionResponse>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::View).await?;
+    let result = state.task_service
+        .preview_next(project_id)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(PreviewTransitionResponse::from(result)))
 }
 
 // GET /api/v1/projects/{project_id}/tasks/{id}/deps

@@ -10,6 +10,17 @@ use crate::domain::task::{
     self, CompletionPolicy, CreateTaskParams, ListTasksFilter, Task, TaskEvent, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
+
+/// Result of previewing a status transition without executing it.
+#[derive(Debug, Clone)]
+pub struct PreviewResult {
+    pub allowed: bool,
+    pub reason: Option<String>,
+    pub task: Task,
+    pub target_status: TaskStatus,
+    pub operations: Vec<String>,
+    pub unblocked_tasks: Vec<Task>,
+}
 use crate::domain::validator::has_cycle_async;
 
 use super::HookTrigger;
@@ -263,17 +274,164 @@ impl TaskService {
         Ok(task)
     }
 
-    /// Validate that a status transition is possible without executing it.
-    /// Returns the current task if the transition is valid.
+    /// Preview a status transition without executing it.
+    /// Returns whether the transition is allowed, with impact information.
     pub async fn preview_transition(
         &self,
         project_id: i64,
         task_id: i64,
         target: TaskStatus,
-    ) -> Result<Task> {
+    ) -> Result<PreviewResult> {
         let task = self.backend.get_task(project_id, task_id).await?;
-        task.status().transition_to(target)?;
-        Ok(task)
+        let mut operations = Vec::new();
+
+        // Check basic transition validity
+        let allowed = task.status().can_transition_to(target);
+        if !allowed {
+            return Ok(PreviewResult {
+                allowed: false,
+                reason: Some(format!(
+                    "invalid status transition: {} → {}",
+                    task.status(),
+                    target
+                )),
+                task,
+                target_status: target,
+                operations,
+                unblocked_tasks: vec![],
+            });
+        }
+
+        operations.push(format!(
+            "Change task #{} status: {} → {}",
+            task_id,
+            task.status(),
+            target
+        ));
+
+        // For completion: check DoD items
+        if target == TaskStatus::Completed {
+            let unchecked = task
+                .definition_of_done()
+                .iter()
+                .filter(|d| !d.checked())
+                .count();
+            if unchecked > 0 {
+                return Ok(PreviewResult {
+                    allowed: false,
+                    reason: Some(format!("{} unchecked DoD item(s)", unchecked)),
+                    task,
+                    target_status: target,
+                    operations,
+                    unblocked_tasks: vec![],
+                });
+            }
+
+            // Check PR requirements
+            match self.completion_policy.required_pr_url(&task, false) {
+                Err(e) => {
+                    return Ok(PreviewResult {
+                        allowed: false,
+                        reason: Some(e.to_string()),
+                        task,
+                        target_status: target,
+                        operations,
+                        unblocked_tasks: vec![],
+                    });
+                }
+                Ok(Some(pr_url)) => {
+                    operations.push(format!("Verify PR status: {}", pr_url));
+                }
+                Ok(None) => {}
+            }
+        }
+
+        // For completion: compute would-be-unblocked tasks
+        let unblocked_tasks = if target == TaskStatus::Completed {
+            self.compute_would_be_unblocked(project_id, task_id)
+                .await
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
+
+        for t in &unblocked_tasks {
+            operations.push(format!("Unblock task #{}: \"{}\"", t.id(), t.title()));
+        }
+
+        Ok(PreviewResult {
+            allowed: true,
+            reason: None,
+            task,
+            target_status: target,
+            operations,
+            unblocked_tasks,
+        })
+    }
+
+    /// Preview the next eligible task without starting it.
+    pub async fn preview_next(&self, project_id: i64) -> Result<PreviewResult> {
+        let task = match self.backend.next_task(project_id).await? {
+            Some(t) => t,
+            None => return Err(DomainError::NoEligibleTask.into()),
+        };
+
+        let operations = vec![
+            format!(
+                "Start next eligible task #{}: \"{}\"",
+                task.id(),
+                task.title()
+            ),
+            format!("Change status: {} → in_progress", task.status()),
+        ];
+
+        Ok(PreviewResult {
+            allowed: true,
+            reason: None,
+            task,
+            target_status: TaskStatus::InProgress,
+            operations,
+            unblocked_tasks: vec![],
+        })
+    }
+
+    /// Find tasks that would become ready if the given task were completed.
+    async fn compute_would_be_unblocked(
+        &self,
+        project_id: i64,
+        completing_task_id: i64,
+    ) -> Result<Vec<Task>> {
+        let all_tasks = self
+            .backend
+            .list_tasks(project_id, &ListTasksFilter::default())
+            .await?;
+        let mut result = Vec::new();
+
+        for t in &all_tasks {
+            if !t.dependencies().contains(&completing_task_id) {
+                continue;
+            }
+            // Only consider tasks that are waiting (draft or todo)
+            if t.status() != TaskStatus::Draft && t.status() != TaskStatus::Todo {
+                continue;
+            }
+            // Check if all other deps are completed
+            let all_other_done = t
+                .dependencies()
+                .iter()
+                .filter(|&&dep_id| dep_id != completing_task_id)
+                .all(|&dep_id| {
+                    all_tasks
+                        .iter()
+                        .find(|tt| tt.id() == dep_id)
+                        .is_some_and(|tt| tt.status() == TaskStatus::Completed)
+                });
+            if all_other_done {
+                result.push(t.clone());
+            }
+        }
+
+        Ok(result)
     }
 
     // --- Passthrough methods (no hooks) ---

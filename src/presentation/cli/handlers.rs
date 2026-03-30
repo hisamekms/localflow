@@ -14,6 +14,7 @@ use crate::bootstrap::{
 };
 use crate::application::HookTrigger;
 use crate::infra::config::{CliOverrides, Config};
+use crate::infra::http::HttpBackend;
 use crate::bootstrap::resolve_backend_info;
 use crate::bootstrap::hook as hooks;
 use crate::domain::project::CreateProjectParams;
@@ -23,6 +24,14 @@ use crate::domain::task::{
 };
 use crate::domain::user::{AddProjectMemberParams, CreateUserParams};
 use crate::bootstrap::resolve_project_root;
+
+fn create_http_backend(config: &Config) -> HttpBackend {
+    let url = config.backend.api_url.as_ref().expect("api_url must be set when using_http");
+    match config.backend.api_key.as_ref() {
+        Some(key) => HttpBackend::with_api_key(url, key.clone()),
+        None => HttpBackend::new(url),
+    }
+}
 
 fn build_cli_overrides(cli: &Cli) -> CliOverrides {
     CliOverrides {
@@ -295,11 +304,15 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let task_service = create_task_service(backend, &config, using_http, &root);
 
     if cli.dry_run {
-        let task = task_service.preview_transition(project_id, id, TaskStatus::Todo).await?;
-        let operations = vec![
-            format!("Ready task #{} (status: {} → todo)", id, task.status()),
-        ];
-        return print_dry_run(&cli.output, &DryRunOperation { command: "ready".into(), operations });
+        let result = if using_http {
+            create_http_backend(&config).preview_transition(project_id, id, TaskStatus::Todo).await?
+        } else {
+            task_service.preview_transition(project_id, id, TaskStatus::Todo).await?.into()
+        };
+        if !result.allowed {
+            anyhow::bail!("{}", result.reason.unwrap_or_default());
+        }
+        return print_dry_run(&cli.output, &DryRunOperation { command: "ready".into(), operations: result.operations });
     }
 
     let updated = task_service.ready_task(project_id, id).await?;
@@ -329,17 +342,21 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
     let task_service = create_task_service(backend, &config, using_http, &root);
 
     if cli.dry_run {
-        let task = task_service.preview_transition(project_id, id, TaskStatus::InProgress).await?;
-        let mut operations = vec![
-            format!("Start task #{} (status: {} → in_progress)", id, task.status()),
-        ];
+        let mut result = if using_http {
+            create_http_backend(&config).preview_transition(project_id, id, TaskStatus::InProgress).await?
+        } else {
+            task_service.preview_transition(project_id, id, TaskStatus::InProgress).await?.into()
+        };
+        if !result.allowed {
+            anyhow::bail!("{}", result.reason.unwrap_or_default());
+        }
         if let Some(ref sid) = session_id {
-            operations.push(format!("Set assignee_session_id to \"{}\"", sid));
+            result.operations.push(format!("Set assignee_session_id to \"{}\"", sid));
         }
         if let Some(uid) = user_id {
-            operations.push(format!("Set assignee_user_id to {}", uid));
+            result.operations.push(format!("Set assignee_user_id to {}", uid));
         }
-        return print_dry_run(&cli.output, &DryRunOperation { command: "start".into(), operations });
+        return print_dry_run(&cli.output, &DryRunOperation { command: "start".into(), operations: result.operations });
     }
 
     let updated = task_service.start_task(project_id, id, session_id, user_id).await?;
@@ -367,26 +384,36 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
     };
 
     if cli.dry_run {
-        let backend_info = resolve_backend_info(&config, &root);
-        let hook_executor = create_hook_executor(config, using_http, hooks::RuntimeMode::Cli, backend_info, backend.clone());
-        let task = match backend.next_task(project_id).await? {
-            Some(t) => t,
-            None => {
-                hook_executor.fire(&HookTrigger::NoEligibleTask { project_id }, None, None, None).await;
-                anyhow::bail!("no eligible task found");
+        if using_http {
+            let result = create_http_backend(&config).preview_next(project_id).await?;
+            let mut operations = result.operations;
+            if let Some(ref sid) = session_id {
+                operations.push(format!("Set assignee_session_id to \"{}\"", sid));
             }
-        };
-        let mut operations = vec![
-            format!("Start next eligible task #{}: \"{}\"", task.id(), task.title()),
-            format!("Change status: {} → in_progress", task.status()),
-        ];
-        if let Some(ref sid) = session_id {
-            operations.push(format!("Set assignee_session_id to \"{}\"", sid));
+            if let Some(uid) = user_id {
+                operations.push(format!("Set assignee_user_id to {}", uid));
+            }
+            return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
         }
-        if let Some(uid) = user_id {
-            operations.push(format!("Set assignee_user_id to {}", uid));
+        let backend_info = resolve_backend_info(&config, &root);
+        let task_service = create_task_service(backend.clone(), &config, using_http, &root);
+        let hook_executor = create_hook_executor(config, using_http, hooks::RuntimeMode::Cli, backend_info, backend);
+        match task_service.preview_next(project_id).await {
+            Ok(result) => {
+                let mut operations = result.operations;
+                if let Some(ref sid) = session_id {
+                    operations.push(format!("Set assignee_session_id to \"{}\"", sid));
+                }
+                if let Some(uid) = user_id {
+                    operations.push(format!("Set assignee_user_id to {}", uid));
+                }
+                return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
+            }
+            Err(e) => {
+                hook_executor.fire(&HookTrigger::NoEligibleTask { project_id }, None, None, None).await;
+                return Err(e);
+            }
         }
-        return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
     }
 
     let task_service = create_task_service(backend, &config, using_http, &root);
@@ -413,11 +440,15 @@ pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()>
     let task_service = create_task_service(backend, &config, using_http, &root);
 
     if cli.dry_run {
-        let task = task_service.preview_transition(project_id, id, TaskStatus::Completed).await?;
-        let operations = vec![
-            format!("Complete task #{} (status: {} → completed)", id, task.status()),
-        ];
-        return print_dry_run(&cli.output, &DryRunOperation { command: "complete".into(), operations });
+        let result = if using_http {
+            create_http_backend(&config).preview_transition(project_id, id, TaskStatus::Completed).await?
+        } else {
+            task_service.preview_transition(project_id, id, TaskStatus::Completed).await?.into()
+        };
+        if !result.allowed {
+            anyhow::bail!("{}", result.reason.unwrap_or_default());
+        }
+        return print_dry_run(&cli.output, &DryRunOperation { command: "complete".into(), operations: result.operations });
     }
 
     let updated = task_service.complete_task(project_id, id, skip_pr_check).await?;
@@ -443,14 +474,18 @@ pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()
     let task_service = create_task_service(backend, &config, using_http, &root);
 
     if cli.dry_run {
-        let task = task_service.preview_transition(project_id, id, TaskStatus::Canceled).await?;
-        let mut operations = vec![
-            format!("Cancel task #{} (status: {} → canceled)", id, task.status()),
-        ];
-        if let Some(ref r) = reason {
-            operations.push(format!("Set cancel reason: \"{}\"", r));
+        let mut result = if using_http {
+            create_http_backend(&config).preview_transition(project_id, id, TaskStatus::Canceled).await?
+        } else {
+            task_service.preview_transition(project_id, id, TaskStatus::Canceled).await?.into()
+        };
+        if !result.allowed {
+            anyhow::bail!("{}", result.reason.unwrap_or_default());
         }
-        return print_dry_run(&cli.output, &DryRunOperation { command: "cancel".into(), operations });
+        if let Some(ref r) = reason {
+            result.operations.push(format!("Set cancel reason: \"{}\"", r));
+        }
+        return print_dry_run(&cli.output, &DryRunOperation { command: "cancel".into(), operations: result.operations });
     }
 
     let updated = task_service.cancel_task(project_id, id, reason).await?;
