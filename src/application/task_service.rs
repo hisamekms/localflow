@@ -273,6 +273,19 @@ impl TaskService {
         Ok(task)
     }
 
+    /// Validate that a status transition is possible without executing it.
+    /// Returns the current task if the transition is valid.
+    pub async fn preview_transition(
+        &self,
+        project_id: i64,
+        task_id: i64,
+        target: TaskStatus,
+    ) -> Result<Task> {
+        let task = self.backend.get_task(project_id, task_id).await?;
+        task.status().transition_to(target)?;
+        Ok(task)
+    }
+
     // --- Passthrough methods (no hooks) ---
 
     pub async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {

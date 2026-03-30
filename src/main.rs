@@ -1185,16 +1185,16 @@ async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
+    let task_service = create_task_service(backend, &config, using_http, &root);
+
     if cli.dry_run {
-        let task = backend.get_task(project_id, id).await?;
-        task.status().transition_to(TaskStatus::Todo)?;
+        let task = task_service.preview_transition(project_id, id, TaskStatus::Todo).await?;
         let operations = vec![
             format!("Ready task #{} (status: {} → todo)", id, task.status()),
         ];
         return print_dry_run(&cli.output, &DryRunOperation { command: "ready".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.ready_task(project_id, id).await?;
 
     match cli.output {
@@ -1215,9 +1215,10 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Opti
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
+    let task_service = create_task_service(backend, &config, using_http, &root);
+
     if cli.dry_run {
-        let task = backend.get_task(project_id, id).await?;
-        task.status().transition_to(TaskStatus::InProgress)?;
+        let task = task_service.preview_transition(project_id, id, TaskStatus::InProgress).await?;
         let mut operations = vec![
             format!("Start task #{} (status: {} → in_progress)", id, task.status()),
         ];
@@ -1230,7 +1231,6 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Opti
         return print_dry_run(&cli.output, &DryRunOperation { command: "start".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.start_task(project_id, id, session_id, user_id).await?;
 
     match cli.output {
@@ -1318,16 +1318,16 @@ async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
+    let task_service = create_task_service(backend, &config, using_http, &root);
+
     if cli.dry_run {
-        let task = backend.get_task(project_id, id).await?;
-        task.status().transition_to(TaskStatus::Completed)?;
+        let task = task_service.preview_transition(project_id, id, TaskStatus::Completed).await?;
         let operations = vec![
             format!("Complete task #{} (status: {} → completed)", id, task.status()),
         ];
         return print_dry_run(&cli.output, &DryRunOperation { command: "complete".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.complete_task(project_id, id, skip_pr_check).await?;
 
     match cli.output {
@@ -1348,9 +1348,10 @@ async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
 
+    let task_service = create_task_service(backend, &config, using_http, &root);
+
     if cli.dry_run {
-        let task = backend.get_task(project_id, id).await?;
-        task.status().transition_to(TaskStatus::Canceled)?;
+        let task = task_service.preview_transition(project_id, id, TaskStatus::Canceled).await?;
         let mut operations = vec![
             format!("Cancel task #{} (status: {} → canceled)", id, task.status()),
         ];
@@ -1360,7 +1361,6 @@ async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "cancel".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.cancel_task(project_id, id, reason).await?;
 
     match cli.output {
