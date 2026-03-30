@@ -97,6 +97,7 @@ enum ApiError {
     Unauthorized(String),
     Forbidden(String),
     Conflict(String),
+    NotImplemented(String),
     Internal(String),
 }
 
@@ -113,6 +114,7 @@ impl IntoResponse for ApiError {
             ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
             ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
+            ApiError::NotImplemented(msg) => (StatusCode::NOT_IMPLEMENTED, msg.clone()),
             ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
         };
         let error_type = match self {
@@ -121,6 +123,7 @@ impl IntoResponse for ApiError {
             ApiError::Unauthorized(_) => "unauthorized",
             ApiError::Forbidden(_) => "forbidden",
             ApiError::Conflict(_) => "conflict",
+            ApiError::NotImplemented(_) => "not_implemented",
             ApiError::Internal(_) => "internal",
         };
         tracing::warn!(
@@ -169,6 +172,8 @@ fn classify_error(e: anyhow::Error) -> ApiError {
             | DomainError::CannotCompleteTask { .. }
             | DomainError::CannotDeleteDefaultProject
             | DomainError::CannotDeleteProjectWithTasks { .. } => ApiError::Conflict(msg),
+
+            DomainError::UnsupportedOperation { .. } => ApiError::NotImplemented(msg),
         };
     }
     tracing::error!(error = ?e, "unclassified internal error");
@@ -278,8 +283,15 @@ pub async fn serve(
     bootstrap::init_tracing(&config.log);
 
     let auth_provider: Option<Arc<dyn AuthProvider>> = if config.auth.enabled {
-        tracing::info!("authentication enabled");
-        Some(Arc::new(ApiKeyProvider::new(backend.clone())))
+        if backend.supports_api_key_auth() {
+            tracing::info!("authentication enabled");
+            Some(Arc::new(ApiKeyProvider::new(backend.clone())))
+        } else {
+            tracing::warn!(
+                "authentication requested but backend does not support API key auth; disabling"
+            );
+            None
+        }
     } else {
         tracing::info!("authentication disabled");
         None
