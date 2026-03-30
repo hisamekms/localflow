@@ -1,4 +1,5 @@
 pub mod executor;
+pub mod test_executor;
 
 use std::collections::HashMap;
 use std::io::Write;

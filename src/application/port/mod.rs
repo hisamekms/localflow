@@ -1,10 +1,12 @@
 pub mod auth;
 pub mod hook_executor;
+pub mod hook_test;
 pub mod pr_verifier;
 pub mod task_query;
 
 pub use auth::{AuthError, AuthProvider};
 pub use hook_executor::{HookExecutor, NoOpHookExecutor};
+pub use hook_test::HookTestPort;
 pub use pr_verifier::{NoOpPrVerifier, PrVerifier};
 pub use task_query::TaskQueryPort;
 

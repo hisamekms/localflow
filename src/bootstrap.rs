@@ -5,12 +5,13 @@ use anyhow::{bail, Context, Result};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::application::port::HookExecutor;
-use crate::application::{ProjectService, TaskService, UserService};
+use crate::application::{HookTestService, ProjectService, TaskService, UserService};
 use crate::domain::task::CompletionPolicy;
 use crate::application::port::TaskBackend;
 use crate::infra::config::{Config, HookMode, LogConfig, LogFormat, RawConfig};
 use crate::infra::http::HttpBackend;
 use crate::infra::hook::executor::ShellHookExecutor;
+use crate::infra::hook::test_executor::ShellHookTestExecutor;
 use crate::infra::hook::{RuntimeMode, BackendInfo};
 use crate::infra::pr_verifier::GhCliPrVerifier;
 
@@ -145,6 +146,21 @@ pub fn create_project_service(backend: Arc<dyn TaskBackend>) -> ProjectService {
 
 pub fn create_user_service(backend: Arc<dyn TaskBackend>) -> UserService {
     UserService::new(backend)
+}
+
+pub fn create_hook_test_service(
+    backend: Arc<dyn TaskBackend>,
+    config: &Config,
+    project_root: &Path,
+) -> HookTestService {
+    let backend_info = resolve_backend_info(config, project_root);
+    let hook_test = Arc::new(ShellHookTestExecutor::new(
+        config.clone(),
+        RuntimeMode::Cli,
+        backend_info,
+        backend.clone(),
+    ));
+    HookTestService::new(backend, hook_test)
 }
 
 /// Resolve the project ID from config (CLI > env > config.toml already applied).

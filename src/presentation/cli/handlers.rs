@@ -8,8 +8,8 @@ use super::{
     OutputFormat, ProjectAction, UserAction, CONFIG_TEMPLATE, print_dry_run,
 };
 use crate::bootstrap::{
-    create_backend, create_hook_executor, create_project_service, create_task_service,
-    create_user_service, resolve_project_id, resolve_user_id,
+    create_backend, create_hook_executor, create_hook_test_service, create_project_service,
+    create_task_service, create_user_service, resolve_project_id, resolve_user_id,
     DEFAULT_PROJECT_ID,
 };
 use crate::application::HookTrigger;
@@ -18,7 +18,7 @@ use crate::bootstrap::resolve_backend_info;
 use crate::bootstrap::hook as hooks;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
-    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus,
+    CreateTaskParams, ListTasksFilter, Priority, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{AddProjectMemberParams, CreateUserParams};
@@ -806,7 +806,7 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             task_id,
             dry_run,
         } => {
-            // Validate event name
+            // Validate event name (input validation stays in presentation layer)
             if HookTrigger::from_event_name(&event_name).is_none() {
                 bail!(
                     "unknown event: {event_name}. Valid events: {}",
@@ -819,109 +819,36 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             let (backend, _) = create_backend(&root, &config)?;
             let project_id = resolve_project_id(&*backend, &config).await?;
 
-            let backend_info = resolve_backend_info(&config, &root);
+            let hook_test_service = create_hook_test_service(backend, &config, &root);
+            let output = hook_test_service
+                .test_event(project_id, event_name, *task_id, *dry_run)
+                .await?;
 
-            let (envelope_project, envelope_user) = hooks::resolve_envelope_context(&config, &*backend).await;
-
-            // no_eligible_task uses a different event structure (no task object)
-            if event_name == "no_eligible_task" {
-                let stats = backend.task_stats(project_id).await.unwrap_or_default();
-                let ready_count = backend.ready_count(project_id).await.unwrap_or(0);
-                let event = hooks::NoEligibleTaskEvent {
-                    event_id: uuid::Uuid::new_v4().to_string(),
-                    event: "no_eligible_task".into(),
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                    stats,
-                    ready_count,
-                };
-                let envelope = hooks::HookEnvelope {
-                    runtime: hooks::RuntimeMode::Cli,
-                    backend: backend_info,
-                    project: envelope_project,
-                    user: envelope_user,
-                    event,
-                };
-                let json = serde_json::to_string_pretty(&envelope)?;
-
-                if *dry_run {
-                    println!("{json}");
-                    return Ok(());
+            use crate::application::hook_test_service::HookTestOutput;
+            match output {
+                HookTestOutput::DryRun { envelope_json } => {
+                    println!("{envelope_json}");
                 }
-
-                let commands = hooks::get_commands_for_event(&config, event_name)
-                    .expect("already validated event name");
-                if commands.is_empty() {
+                HookTestOutput::NoHooksConfigured => {
                     eprintln!("No hooks configured for event: {event_name}");
-                    return Ok(());
                 }
-
-                let compact_json = serde_json::to_string(&envelope)?;
-                for (i, cmd) in commands.iter().enumerate() {
-                    if commands.len() > 1 {
-                        eprintln!("--- hook {}/{}: {} ---", i + 1, commands.len(), cmd);
-                    }
-                    match hooks::execute_hook_sync(cmd, &compact_json) {
-                        Ok(status) => {
-                            eprintln!("exit code: {}", status.code().unwrap_or(-1));
+                HookTestOutput::Executed { results } => {
+                    for r in &results {
+                        if results.len() > 1 {
+                            eprintln!(
+                                "--- hook {}/{}: {} ---",
+                                r.index, r.total, r.command
+                            );
                         }
-                        Err(e) => {
-                            eprintln!("hook error: {e:#}");
+                        match &r.error {
+                            Some(e) => eprintln!("hook error: {e}"),
+                            None => {
+                                eprintln!(
+                                    "exit code: {}",
+                                    r.exit_code.unwrap_or(-1)
+                                );
+                            }
                         }
-                    }
-                }
-
-                return Ok(());
-            }
-
-            // Build the event using a real task or a sample task
-            let task = if let Some(id) = task_id {
-                backend.get_task(project_id, *id).await?
-            } else {
-                use crate::domain::task::{Priority, TaskStatus};
-                Task::new(
-                    0, project_id, "Sample task".into(), None,
-                    Some("This is a sample task for hook testing".into()),
-                    None, Priority::P2, TaskStatus::Todo, None, None,
-                    chrono::Utc::now().to_rfc3339(), chrono::Utc::now().to_rfc3339(),
-                    None, None, None, None, None, None, None,
-                    vec![], vec![], vec![], vec![], vec![],
-                )
-            };
-
-            let event = hooks::build_event(event_name, &task, &*backend, None, None).await;
-            let envelope = hooks::HookEnvelope {
-                runtime: hooks::RuntimeMode::Cli,
-                backend: backend_info,
-                project: envelope_project,
-                user: envelope_user,
-                event,
-            };
-            let json = serde_json::to_string_pretty(&envelope)?;
-
-            if *dry_run {
-                println!("{json}");
-                return Ok(());
-            }
-
-            let commands = hooks::get_commands_for_event(&config, event_name)
-                .expect("already validated event name");
-
-            if commands.is_empty() {
-                eprintln!("No hooks configured for event: {event_name}");
-                return Ok(());
-            }
-
-            let compact_json = serde_json::to_string(&envelope)?;
-            for (i, cmd) in commands.iter().enumerate() {
-                if commands.len() > 1 {
-                    eprintln!("--- hook {}/{}: {} ---", i + 1, commands.len(), cmd);
-                }
-                match hooks::execute_hook_sync(cmd, &compact_json) {
-                    Ok(status) => {
-                        eprintln!("exit code: {}", status.code().unwrap_or(-1));
-                    }
-                    Err(e) => {
-                        eprintln!("hook error: {e:#}");
                     }
                 }
             }
