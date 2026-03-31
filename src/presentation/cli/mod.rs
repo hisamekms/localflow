@@ -298,6 +298,9 @@ pub enum Command {
         /// Skip confirmation prompts
         #[arg(long)]
         yes: bool,
+        /// Clean install: remove existing install directories before installing
+        #[arg(long)]
+        force: bool,
     },
     /// Manage hooks
     Hooks {
@@ -685,8 +688,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             crate::presentation::api::serve(root, effective_port, port_is_explicit, &config, cli.config.clone(), backend, auth_provider).await?;
             Ok(())
         }
-        Command::SkillInstall { ref output_dir, yes } => {
-            skill::skill_install(&cli, output_dir.clone(), yes)
+        Command::SkillInstall { ref output_dir, yes, force } => {
+            skill::skill_install(&cli, output_dir.clone(), yes, force)
         }
         Command::Hooks { ref command } => handlers::cmd_hooks(&cli, command).await,
         Command::Doctor => handlers::cmd_doctor(&cli),
@@ -1074,9 +1077,10 @@ mod tests {
     fn parse_skill_install_with_output_dir() {
         let cli = Cli::parse_from(["senko", "skill-install", "--output-dir", "/tmp/out"]);
         match cli.command {
-            Command::SkillInstall { output_dir, yes } => {
+            Command::SkillInstall { output_dir, yes, force } => {
                 assert_eq!(output_dir, Some(PathBuf::from("/tmp/out")));
                 assert!(!yes);
+                assert!(!force);
             }
             _ => panic!("expected SkillInstall"),
         }
@@ -1086,9 +1090,10 @@ mod tests {
     fn parse_skill_install_without_output_dir() {
         let cli = Cli::parse_from(["senko", "skill-install"]);
         match cli.command {
-            Command::SkillInstall { output_dir, yes } => {
+            Command::SkillInstall { output_dir, yes, force } => {
                 assert!(output_dir.is_none());
                 assert!(!yes);
+                assert!(!force);
             }
             _ => panic!("expected SkillInstall"),
         }
@@ -1098,9 +1103,23 @@ mod tests {
     fn parse_skill_install_with_yes() {
         let cli = Cli::parse_from(["senko", "skill-install", "--yes"]);
         match cli.command {
-            Command::SkillInstall { output_dir, yes } => {
+            Command::SkillInstall { output_dir, yes, force } => {
                 assert!(output_dir.is_none());
                 assert!(yes);
+                assert!(!force);
+            }
+            _ => panic!("expected SkillInstall"),
+        }
+    }
+
+    #[test]
+    fn parse_skill_install_with_force() {
+        let cli = Cli::parse_from(["senko", "skill-install", "--force"]);
+        match cli.command {
+            Command::SkillInstall { output_dir, yes, force } => {
+                assert!(output_dir.is_none());
+                assert!(!yes);
+                assert!(force);
             }
             _ => panic!("expected SkillInstall"),
         }

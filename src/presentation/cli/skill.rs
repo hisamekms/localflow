@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
@@ -26,6 +26,9 @@ pub const INSTALLABLE_FILES: &[InstallableFile] = &[
         content: DOD_VERIFIER_AGENT_CONTENT,
     },
 ];
+
+/// Directories under `.claude/` owned by senko. Deleted entirely during clean install.
+const CLEAN_INSTALL_DIRS: &[&[&str]] = &[&["skills", "senko"]];
 
 /// Check if a file needs to be written and optionally prompt for overwrite confirmation.
 /// Returns `true` if the file should be written.
@@ -58,7 +61,77 @@ pub fn should_write_file(path: &std::path::Path, content: &str, yes: bool) -> Re
     }
 }
 
-pub fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool) -> Result<()> {
+/// Returns true if any installable file already exists under `base_dir`.
+fn any_install_target_exists(base_dir: &Path) -> bool {
+    INSTALLABLE_FILES.iter().any(|f| {
+        let path = f.segments.iter().fold(base_dir.to_path_buf(), |p, s| p.join(s));
+        path.exists()
+    })
+}
+
+/// Returns true if any installable file already exists (flat layout) under `dir`.
+fn any_install_target_exists_flat(dir: &Path) -> bool {
+    INSTALLABLE_FILES.iter().any(|f| {
+        let filename = f.segments.last().unwrap();
+        dir.join(filename).exists()
+    })
+}
+
+/// Remove senko-owned directories and individual files under `base_dir` for clean install.
+fn clean_install_targets(base_dir: &Path) -> Result<()> {
+    // Remove senko-owned directories
+    for segments in CLEAN_INSTALL_DIRS {
+        let dir = segments.iter().fold(base_dir.to_path_buf(), |p, s| p.join(s));
+        if dir.exists() {
+            fs::remove_dir_all(&dir)
+                .with_context(|| format!("failed to remove directory: {}", dir.display()))?;
+            println!("Removed {}", dir.display());
+        }
+    }
+    // Remove individual files not covered by CLEAN_INSTALL_DIRS
+    for file in INSTALLABLE_FILES {
+        let path = file.segments.iter().fold(base_dir.to_path_buf(), |p, s| p.join(s));
+        if !path.exists() {
+            continue;
+        }
+        let covered = CLEAN_INSTALL_DIRS.iter().any(|dir_segs| {
+            file.segments.len() > dir_segs.len()
+                && file.segments[..dir_segs.len()] == **dir_segs
+        });
+        if !covered {
+            fs::remove_file(&path)
+                .with_context(|| format!("failed to remove file: {}", path.display()))?;
+            println!("Removed {}", path.display());
+        }
+    }
+    Ok(())
+}
+
+/// Remove individual installable files (flat layout) from `dir` for clean install.
+fn clean_install_targets_flat(dir: &Path) -> Result<()> {
+    for file in INSTALLABLE_FILES {
+        let filename = file.segments.last().unwrap();
+        let path = dir.join(filename);
+        if path.exists() {
+            fs::remove_file(&path)
+                .with_context(|| format!("failed to remove file: {}", path.display()))?;
+            println!("Removed {}", path.display());
+        }
+    }
+    Ok(())
+}
+
+/// Prompt user for confirmation and return true if they accept.
+fn confirm(prompt: &str) -> Result<bool> {
+    eprint!("{prompt}");
+    let mut input = String::new();
+    std::io::stdin()
+        .read_line(&mut input)
+        .context("failed to read from stdin")?;
+    Ok(input.trim().eq_ignore_ascii_case("y"))
+}
+
+pub fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool, force: bool) -> Result<()> {
     if cli.dry_run {
         let operations: Vec<String> = if let Some(ref dir) = output_dir {
             INSTALLABLE_FILES
@@ -83,6 +156,14 @@ pub fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool) -> Resul
     }
 
     if let Some(dir) = output_dir {
+        // Clean install for --output-dir mode
+        if force && any_install_target_exists_flat(&dir) {
+            clean_install_targets_flat(&dir)?;
+        } else if !force && any_install_target_exists_flat(&dir) {
+            if confirm("Existing files found. Clean install? [y/N] ")? {
+                clean_install_targets_flat(&dir)?;
+            }
+        }
         for file in INSTALLABLE_FILES {
             let filename = file.segments.last().unwrap();
             let path = dir.join(filename);
@@ -98,17 +179,21 @@ pub fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool) -> Resul
     let claude_dir = project_root.join(".claude");
     let created_claude_dir = !claude_dir.exists();
 
-    if created_claude_dir && !yes {
-        eprint!(
+    if created_claude_dir && !yes && !force {
+        if !confirm(&format!(
             ".claude/ directory does not exist. Create it at {}? [y/N] ",
             claude_dir.display()
-        );
-        let mut input = String::new();
-        std::io::stdin()
-            .read_line(&mut input)
-            .context("failed to read from stdin")?;
-        if !input.trim().eq_ignore_ascii_case("y") {
+        ))? {
             bail!("aborted");
+        }
+    }
+
+    // Clean install when targets already exist
+    if !created_claude_dir && any_install_target_exists(&claude_dir) {
+        if force {
+            clean_install_targets(&claude_dir)?;
+        } else if confirm("Existing files found. Clean install? [y/N] ")? {
+            clean_install_targets(&claude_dir)?;
         }
     }
 
@@ -136,12 +221,10 @@ mod tests {
     use super::*;
     use super::super::{Command, OutputFormat};
 
-    #[test]
-    fn skill_install_with_output_dir_creates_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let cli = Cli {
+    fn make_cli(tmp: &tempfile::TempDir) -> Cli {
+        Cli {
             output: OutputFormat::Text,
-            project_root: None,
+            project_root: Some(tmp.path().to_path_buf()),
             config: None,
             dry_run: false,
             log_dir: None,
@@ -149,12 +232,26 @@ mod tests {
             postgres_url: None,
             project: None,
             user: None,
-            command: super::super::Command::SkillInstall {
+            command: Command::SkillInstall {
+                output_dir: None,
+                yes: true,
+                force: false,
+            },
+        }
+    }
+
+    #[test]
+    fn skill_install_with_output_dir_creates_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = Cli {
+            command: Command::SkillInstall {
                 output_dir: Some(dir.path().to_path_buf()),
                 yes: false,
+                force: false,
             },
+            ..make_cli(&dir)
         };
-        skill_install(&cli, Some(dir.path().to_path_buf()), false).unwrap();
+        skill_install(&cli, Some(dir.path().to_path_buf()), false, false).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("SKILL.md")).unwrap();
         assert_eq!(content, SKILL_MD_CONTENT);
@@ -166,22 +263,8 @@ mod tests {
     #[test]
     fn skill_install_default_places_in_claude_skills() {
         let tmp = tempfile::tempdir().unwrap();
-        let cli = Cli {
-            output: OutputFormat::Text,
-            project_root: Some(tmp.path().to_path_buf()),
-            config: None,
-            dry_run: false,
-            log_dir: None,
-            db_path: None,
-            postgres_url: None,
-            project: None,
-            user: None,
-            command: super::super::Command::SkillInstall {
-                output_dir: None,
-                yes: true,
-            },
-        };
-        skill_install(&cli, None, true).unwrap();
+        let cli = make_cli(&tmp);
+        skill_install(&cli, None, true, false).unwrap();
 
         let skill_path = tmp
             .path()
@@ -206,41 +289,14 @@ mod tests {
     #[test]
     fn skill_install_existing_claude_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        // Pre-create .claude/
         std::fs::create_dir_all(tmp.path().join(".claude")).unwrap();
 
-        let cli = Cli {
-            output: OutputFormat::Text,
-            project_root: Some(tmp.path().to_path_buf()),
-            config: None,
-            dry_run: false,
-            log_dir: None,
-            db_path: None,
-            postgres_url: None,
-            project: None,
-            user: None,
-            command: super::super::Command::SkillInstall {
-                output_dir: None,
-                yes: false,
-            },
-        };
-        // Should not prompt since .claude/ already exists
-        skill_install(&cli, None, false).unwrap();
+        let cli = make_cli(&tmp);
+        // Should not prompt since .claude/ already exists (no existing install targets)
+        skill_install(&cli, None, false, false).unwrap();
 
-        let skill_path = tmp
-            .path()
-            .join(".claude")
-            .join("skills")
-            .join("senko")
-            .join("SKILL.md");
-        assert!(skill_path.exists());
-
-        let agent_path = tmp
-            .path()
-            .join(".claude")
-            .join("agents")
-            .join("dod-verifier.md");
-        assert!(agent_path.exists());
+        assert!(tmp.path().join(".claude/skills/senko/SKILL.md").exists());
+        assert!(tmp.path().join(".claude/agents/dod-verifier.md").exists());
     }
 
     #[test]
@@ -248,32 +304,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         assert!(!tmp.path().join(".claude").exists());
 
-        let cli = Cli {
-            output: OutputFormat::Text,
-            project_root: Some(tmp.path().to_path_buf()),
-            config: None,
-            dry_run: false,
-            log_dir: None,
-            db_path: None,
-            postgres_url: None,
-            project: None,
-            user: None,
-            command: super::super::Command::SkillInstall {
-                output_dir: None,
-                yes: true,
-            },
-        };
-        skill_install(&cli, None, true).unwrap();
+        let cli = make_cli(&tmp);
+        skill_install(&cli, None, true, false).unwrap();
 
         assert!(tmp.path().join(".claude").exists());
-        assert!(tmp
-            .path()
-            .join(".claude/skills/senko/SKILL.md")
-            .exists());
-        assert!(tmp
-            .path()
-            .join(".claude/agents/dod-verifier.md")
-            .exists());
+        assert!(tmp.path().join(".claude/skills/senko/SKILL.md").exists());
+        assert!(tmp.path().join(".claude/agents/dod-verifier.md").exists());
     }
 
     #[test]
@@ -302,25 +338,10 @@ mod tests {
     #[test]
     fn skill_install_skips_up_to_date_files() {
         let tmp = tempfile::tempdir().unwrap();
-        let cli = Cli {
-            output: OutputFormat::Text,
-            project_root: Some(tmp.path().to_path_buf()),
-            config: None,
-            dry_run: false,
-            log_dir: None,
-            db_path: None,
-            postgres_url: None,
-            project: None,
-            user: None,
-            command: super::super::Command::SkillInstall {
-                output_dir: None,
-                yes: true,
-            },
-        };
-        // First install
-        skill_install(&cli, None, true).unwrap();
+        let cli = make_cli(&tmp);
+        skill_install(&cli, None, true, false).unwrap();
         // Second install should succeed (files are up to date)
-        skill_install(&cli, None, true).unwrap();
+        skill_install(&cli, None, true, false).unwrap();
 
         let skill_path = tmp.path().join(".claude/skills/senko/SKILL.md");
         let content = std::fs::read_to_string(&skill_path).unwrap();
@@ -330,30 +351,94 @@ mod tests {
     #[test]
     fn skill_install_overwrites_with_yes() {
         let tmp = tempfile::tempdir().unwrap();
-        let cli = Cli {
-            output: OutputFormat::Text,
-            project_root: Some(tmp.path().to_path_buf()),
-            config: None,
-            dry_run: false,
-            log_dir: None,
-            db_path: None,
-            postgres_url: None,
-            project: None,
-            user: None,
-            command: super::super::Command::SkillInstall {
-                output_dir: None,
-                yes: true,
-            },
-        };
-        // First install
-        skill_install(&cli, None, true).unwrap();
+        let cli = make_cli(&tmp);
+        skill_install(&cli, None, true, false).unwrap();
         // Tamper with the file
         let skill_path = tmp.path().join(".claude/skills/senko/SKILL.md");
         std::fs::write(&skill_path, "modified content").unwrap();
         // Reinstall with --yes should overwrite
-        skill_install(&cli, None, true).unwrap();
+        skill_install(&cli, None, true, false).unwrap();
         let content = std::fs::read_to_string(&skill_path).unwrap();
         assert_eq!(content, SKILL_MD_CONTENT);
+    }
+
+    #[test]
+    fn skill_install_force_removes_old_files_and_reinstalls() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli = make_cli(&tmp);
+        // First install
+        skill_install(&cli, None, true, false).unwrap();
+        // Add a stale file in the senko skill directory
+        let stale_file = tmp.path().join(".claude/skills/senko/old-file.md");
+        std::fs::write(&stale_file, "stale").unwrap();
+        assert!(stale_file.exists());
+
+        // Force reinstall should remove the stale file
+        skill_install(&cli, None, true, true).unwrap();
+        assert!(!stale_file.exists());
+        // Fresh files should be present
+        assert!(tmp.path().join(".claude/skills/senko/SKILL.md").exists());
+        assert!(tmp.path().join(".claude/agents/dod-verifier.md").exists());
+    }
+
+    #[test]
+    fn skill_install_force_removes_individual_files_not_in_clean_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli = make_cli(&tmp);
+        skill_install(&cli, None, true, false).unwrap();
+
+        // Verify agents/dod-verifier.md exists
+        let agent_path = tmp.path().join(".claude/agents/dod-verifier.md");
+        assert!(agent_path.exists());
+
+        // Add another file in agents/ (should NOT be removed)
+        let user_agent = tmp.path().join(".claude/agents/my-agent.md");
+        std::fs::write(&user_agent, "user agent").unwrap();
+
+        // Force reinstall
+        skill_install(&cli, None, true, true).unwrap();
+        // dod-verifier.md should be reinstalled
+        assert!(agent_path.exists());
+        // User's agent should be untouched
+        assert!(user_agent.exists());
+        let content = std::fs::read_to_string(&user_agent).unwrap();
+        assert_eq!(content, "user agent");
+    }
+
+    #[test]
+    fn skill_install_force_no_existing_files_installs_normally() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli = make_cli(&tmp);
+        // Force on fresh install should work fine
+        skill_install(&cli, None, true, true).unwrap();
+        assert!(tmp.path().join(".claude/skills/senko/SKILL.md").exists());
+        assert!(tmp.path().join(".claude/agents/dod-verifier.md").exists());
+    }
+
+    #[test]
+    fn skill_install_force_with_output_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        // Pre-create files
+        std::fs::write(dir.path().join("SKILL.md"), "old").unwrap();
+        std::fs::write(dir.path().join("dod-verifier.md"), "old").unwrap();
+        std::fs::write(dir.path().join("unrelated.txt"), "keep").unwrap();
+
+        let cli = Cli {
+            command: Command::SkillInstall {
+                output_dir: Some(dir.path().to_path_buf()),
+                yes: false,
+                force: true,
+            },
+            ..make_cli(&dir)
+        };
+        skill_install(&cli, Some(dir.path().to_path_buf()), false, true).unwrap();
+
+        // Installable files should be refreshed
+        let content = std::fs::read_to_string(dir.path().join("SKILL.md")).unwrap();
+        assert_eq!(content, SKILL_MD_CONTENT);
+        // Unrelated file should remain
+        let unrelated = std::fs::read_to_string(dir.path().join("unrelated.txt")).unwrap();
+        assert_eq!(unrelated, "keep");
     }
 
     #[test]
