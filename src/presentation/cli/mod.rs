@@ -498,6 +498,19 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 [workflow]
 # completion_mode = "merge_then_complete"  # or "pr_then_complete"
 # auto_merge = true
+# branch_mode = "worktree"  # or "branch"
+# merge_strategy = "rebase"  # or "squash"
+#
+# Workflow event directives (type: "command" or "prompt")
+# [[workflow.events]]
+# point = "pre_merge"
+# type = "command"
+# command = "cargo test --all"
+#
+# [[workflow.events]]
+# point = "post_pr"
+# type = "prompt"
+# content = "Add reviewers to the PR"
 
 [backend]
 # api_url = "http://127.0.0.1:3142"  # uncomment to use HTTP backend

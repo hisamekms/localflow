@@ -106,6 +106,9 @@ senko config --init                    # generate template config.toml
 - **Workflow configuration** (`[workflow]` in `.senko/config.toml`):
   - `completion_mode`: `merge_then_complete` (default) or `pr_then_complete`
   - `auto_merge`: `true` (default) / `false`
+  - `branch_mode`: `worktree` (default) or `branch`
+  - `merge_strategy`: `rebase` (default) or `squash`
+  - `events`: list of workflow event directives (`type: command` or `type: prompt`) at specific points
   - When `completion_mode = "pr_then_complete"`, `complete` requires `pr_url` to be set and the PR to be merged (checked via `gh`). Use `--skip-pr-check` to bypass.
   - When `auto_merge = false`, the PR must also be approved.
 
@@ -313,86 +316,13 @@ Generate a branch name from the task title. Use the `/wth` skill to create a wor
 
 Use `EnterPlanMode` to create an implementation plan. Investigate the codebase based on the task's description.
 
-Before creating the plan, run `senko config` to check the workflow configuration. Include a Pre-start section and a Post-completion section in the plan. Based on the `completion_mode` and `auto_merge` settings, use the appropriate post-completion template:
+Before creating the plan, generate the workflow-specific Pre-start and Post-completion sections by running:
 
-**When `completion_mode = "merge_then_complete"` (default):**
-
-```
-# Pre-start
-- Save this plan to the task:
-  1. Write the full approved plan text to a temporary file (e.g., `/tmp/senko-plan-<id>.md`)
-  2. Run `senko edit <id> --plan-file /tmp/senko-plan-<id>.md`
-  3. Delete the temporary file
-- This must be done before starting implementation.
-
-# Post-completion
-- When implementation is done, verify DoD items using the dod-verifier subagent:
-  1. Run `senko get <id>` and check `definition_of_done` for unchecked items
-  2. Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
-  3. Process the subagent's results for each item:
-     - **VERIFIED**: `senko dod check <id> <index>`
-     - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
-     - **NOT_ACHIEVED**: Go back and implement the missing item, then re-verify
-  4. All DoD items must be checked before proceeding to merge
-- Rebase merge the branch into main using the rebase-merge script (all DoD items must be checked before this step):
-  `bash ${CLAUDE_SKILL_DIR}/scripts/rebase-merge.sh <branch-name>`
-- Use `AskUserQuestion` to ask the user for completion approval
-- Complete the task: `senko complete <id>`
-- Delete the worktree (using `/wth` skill)
+```bash
+bash ${CLAUDE_SKILL_DIR}/scripts/generate-plan-sections.sh <id>
 ```
 
-**When `completion_mode = "pr_then_complete"` and `auto_merge = true`:**
-
-```
-# Pre-start
-- Save this plan to the task:
-  1. Write the full approved plan text to a temporary file (e.g., `/tmp/senko-plan-<id>.md`)
-  2. Run `senko edit <id> --plan-file /tmp/senko-plan-<id>.md`
-  3. Delete the temporary file
-- This must be done before starting implementation.
-
-# Post-completion
-- When implementation is done, verify DoD items using the dod-verifier subagent:
-  1. Run `senko get <id>` and check `definition_of_done` for unchecked items
-  2. Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
-  3. Process the subagent's results for each item:
-     - **VERIFIED**: `senko dod check <id> <index>`
-     - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
-     - **NOT_ACHIEVED**: Go back and implement the missing item, then re-verify
-  4. All DoD items must be checked before proceeding to PR
-- Create PR and merge (all DoD items must be checked before this step)
-- After creating the PR, save the PR URL: `senko edit <id> --pr-url <pr_url>`
-- Use `AskUserQuestion` to ask the user for completion approval
-- Complete the task: `senko complete <id>`
-- Delete the worktree (using `/wth` skill)
-```
-
-**When `completion_mode = "pr_then_complete"` and `auto_merge = false`:**
-
-```
-# Pre-start
-- Save this plan to the task:
-  1. Write the full approved plan text to a temporary file (e.g., `/tmp/senko-plan-<id>.md`)
-  2. Run `senko edit <id> --plan-file /tmp/senko-plan-<id>.md`
-  3. Delete the temporary file
-- This must be done before starting implementation.
-
-# Post-completion
-- When implementation is done, verify DoD items using the dod-verifier subagent:
-  1. Run `senko get <id>` and check `definition_of_done` for unchecked items
-  2. Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
-  3. Process the subagent's results for each item:
-     - **VERIFIED**: `senko dod check <id> <index>`
-     - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
-     - **NOT_ACHIEVED**: Go back and implement the missing item, then re-verify
-  4. All DoD items must be checked before proceeding to PR
-- Create PR (all DoD items must be checked before this step)
-- After creating the PR, save the PR URL: `senko edit <id> --pr-url <pr_url>`
-- Request review and wait for approval before merging
-- Use `AskUserQuestion` to ask the user for completion approval
-- Complete the task: `senko complete <id>`
-- Delete the worktree (using `/wth` skill)
-```
+Include the script's output verbatim in the plan as the Pre-start and Post-completion sections.
 
 Wait for the user to approve the plan.
 

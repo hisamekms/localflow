@@ -1964,6 +1964,7 @@ dir = "/var/log/senko"
             workflow: RawWorkflowConfig {
                 completion_mode: Some(CompletionMode::MergeThenComplete),
                 auto_merge: Some(true),
+                ..Default::default()
             },
             log: RawLogConfig {
                 level: Some("debug".into()),
@@ -1975,6 +1976,7 @@ dir = "/var/log/senko"
             workflow: RawWorkflowConfig {
                 completion_mode: Some(CompletionMode::PrThenComplete),
                 auto_merge: None,
+                ..Default::default()
             },
             ..Default::default()
         };

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::domain::task::CompletionMode;
+pub use crate::domain::task::{BranchMode, CompletionMode, MergeStrategy};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -111,11 +111,31 @@ pub enum HookMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum WorkflowEventType {
+    Command { command: String },
+    Prompt { content: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowEvent {
+    pub point: String,
+    #[serde(flatten)]
+    pub event_type: WorkflowEventType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowConfig {
     #[serde(default)]
     pub completion_mode: CompletionMode,
     #[serde(default = "default_true")]
     pub auto_merge: bool,
+    #[serde(default)]
+    pub branch_mode: BranchMode,
+    #[serde(default)]
+    pub merge_strategy: MergeStrategy,
+    #[serde(default)]
+    pub events: Vec<WorkflowEvent>,
 }
 
 fn default_true() -> bool {
@@ -127,6 +147,9 @@ impl Default for WorkflowConfig {
         Self {
             completion_mode: CompletionMode::default(),
             auto_merge: true,
+            branch_mode: BranchMode::default(),
+            merge_strategy: MergeStrategy::default(),
+            events: Vec::new(),
         }
     }
 }
@@ -222,6 +245,9 @@ pub struct RawConfig {
 pub struct RawWorkflowConfig {
     pub completion_mode: Option<CompletionMode>,
     pub auto_merge: Option<bool>,
+    pub branch_mode: Option<BranchMode>,
+    pub merge_strategy: Option<MergeStrategy>,
+    pub events: Option<Vec<WorkflowEvent>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -261,6 +287,9 @@ impl RawConfig {
             workflow: RawWorkflowConfig {
                 completion_mode: overlay.workflow.completion_mode.or(self.workflow.completion_mode),
                 auto_merge: overlay.workflow.auto_merge.or(self.workflow.auto_merge),
+                branch_mode: overlay.workflow.branch_mode.or(self.workflow.branch_mode),
+                merge_strategy: overlay.workflow.merge_strategy.or(self.workflow.merge_strategy),
+                events: overlay.workflow.events.or(self.workflow.events),
             },
             backend: RawBackendConfig {
                 api_url: overlay.backend.api_url.or(self.backend.api_url),
@@ -302,6 +331,9 @@ impl RawConfig {
             workflow: WorkflowConfig {
                 completion_mode: self.workflow.completion_mode.unwrap_or_default(),
                 auto_merge: self.workflow.auto_merge.unwrap_or(true),
+                branch_mode: self.workflow.branch_mode.unwrap_or_default(),
+                merge_strategy: self.workflow.merge_strategy.unwrap_or_default(),
+                events: self.workflow.events.unwrap_or_default(),
             },
             backend: BackendConfig {
                 api_url: self.backend.api_url,
@@ -387,6 +419,20 @@ impl Config {
                 "true" | "1" | "yes" => self.workflow.auto_merge = true,
                 "false" | "0" | "no" => self.workflow.auto_merge = false,
                 other => eprintln!("warning: unknown SENKO_AUTO_MERGE={other}, ignoring"),
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_BRANCH_MODE") {
+            match val.as_str() {
+                "worktree" => self.workflow.branch_mode = BranchMode::Worktree,
+                "branch" => self.workflow.branch_mode = BranchMode::Branch,
+                other => eprintln!("warning: unknown SENKO_BRANCH_MODE={other}, ignoring"),
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_MERGE_STRATEGY") {
+            match val.as_str() {
+                "rebase" => self.workflow.merge_strategy = MergeStrategy::Rebase,
+                "squash" => self.workflow.merge_strategy = MergeStrategy::Squash,
+                other => eprintln!("warning: unknown SENKO_MERGE_STRATEGY={other}, ignoring"),
             }
         }
 

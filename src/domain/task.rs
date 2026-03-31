@@ -30,6 +30,50 @@ impl fmt::Display for CompletionMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BranchMode {
+    Worktree,
+    Branch,
+}
+
+impl Default for BranchMode {
+    fn default() -> Self {
+        BranchMode::Worktree
+    }
+}
+
+impl fmt::Display for BranchMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BranchMode::Worktree => write!(f, "worktree"),
+            BranchMode::Branch => write!(f, "branch"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeStrategy {
+    Rebase,
+    Squash,
+}
+
+impl Default for MergeStrategy {
+    fn default() -> Self {
+        MergeStrategy::Rebase
+    }
+}
+
+impl fmt::Display for MergeStrategy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MergeStrategy::Rebase => write!(f, "rebase"),
+            MergeStrategy::Squash => write!(f, "squash"),
+        }
+    }
+}
+
 /// Domain event emitted by Task aggregate methods.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskEvent {

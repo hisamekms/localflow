@@ -484,6 +484,24 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                 config.workflow.completion_mode
             );
             println!("    auto_merge: {}", config.workflow.auto_merge);
+            println!("    branch_mode: {}", config.workflow.branch_mode);
+            println!("    merge_strategy: {}", config.workflow.merge_strategy);
+            if config.workflow.events.is_empty() {
+                println!("    events: (none)");
+            } else {
+                println!("    events:");
+                for event in &config.workflow.events {
+                    use crate::infra::config::WorkflowEventType;
+                    match &event.event_type {
+                        WorkflowEventType::Command { command } => {
+                            println!("      - [{}] command: {}", event.point, command);
+                        }
+                        WorkflowEventType::Prompt { content } => {
+                            println!("      - [{}] prompt: {}", event.point, content);
+                        }
+                    }
+                }
+            }
             println!("  [hooks]");
             for (event, hooks) in [
                 ("on_task_added", &config.hooks.on_task_added),
