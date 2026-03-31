@@ -482,8 +482,9 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 # Config layering (priority high → low):
 #   1. CLI flag (--config)
 #   2. SENKO_CONFIG env var
-#   3. Project config (.senko/config.toml)
-#   4. User config (~/.config/senko/config.toml)
+#   3. Local config (.senko/config.local.toml) — git-ignored, per-user overrides
+#   4. Project config (.senko/config.toml)
+#   5. User config (~/.config/senko/config.toml)
 
 # Named hooks: [hooks.<event>.<name>]
 # Each hook has a `command` and optional `enabled` (default: true).
