@@ -37,7 +37,7 @@ For each section, explain every item's **current value**, whether it's the **def
 **storage**
 | Key | Default | Options | Description |
 |---|---|---|---|
-| `db_path` | auto (`$XDG_DATA_HOME/senko/projects/<hash>/data.db`) | file path | Path to the SQLite database file. |
+| `db_path` | auto (`$XDG_DATA_HOME/senko/projects/<dir-name>/data.db`) | file path | Path to the SQLite database file. |
 
 **log**
 | Key | Default | Options | Description |
