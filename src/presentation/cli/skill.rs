@@ -9,6 +9,41 @@ use crate::bootstrap::resolve_project_root;
 pub const SKILL_MD_CONTENT: &str = include_str!("../../skill_md.txt");
 pub const DOD_VERIFIER_AGENT_CONTENT: &str = include_str!("../../dod_verifier_agent.md");
 
+const CLI_REFERENCE_CONTENT: &str =
+    include_str!("../../../.claude/skills/senko/cli-reference.md");
+
+const WF_ADD_TASK: &str =
+    include_str!("../../../.claude/skills/senko/workflows/add-task.md");
+const WF_AUTO_SELECT: &str =
+    include_str!("../../../.claude/skills/senko/workflows/auto-select.md");
+const WF_CANCEL_TASK: &str =
+    include_str!("../../../.claude/skills/senko/workflows/cancel-task.md");
+const WF_COMPLETE_TASK: &str =
+    include_str!("../../../.claude/skills/senko/workflows/complete-task.md");
+const WF_CONFIG_EXPLAIN: &str =
+    include_str!("../../../.claude/skills/senko/workflows/config-explain.md");
+const WF_CONFIG_SETUP: &str =
+    include_str!("../../../.claude/skills/senko/workflows/config-setup.md");
+const WF_DEPENDENCY_GRAPH: &str =
+    include_str!("../../../.claude/skills/senko/workflows/dependency-graph.md");
+const WF_DOD_CHECK: &str =
+    include_str!("../../../.claude/skills/senko/workflows/dod-check.md");
+const WF_EXECUTE_TASK: &str =
+    include_str!("../../../.claude/skills/senko/workflows/execute-task.md");
+const WF_LIST_TASKS: &str =
+    include_str!("../../../.claude/skills/senko/workflows/list-tasks.md");
+const WF_MANAGE_DEPS: &str =
+    include_str!("../../../.claude/skills/senko/workflows/manage-dependencies.md");
+
+const SCRIPT_CHECK_WORKFLOW_CONFIG: &str =
+    include_str!("../../../.claude/skills/senko/scripts/check-workflow-config.sh");
+const SCRIPT_GENERATE_PLAN_SECTIONS: &str =
+    include_str!("../../../.claude/skills/senko/scripts/generate-plan-sections.sh");
+const SCRIPT_REBASE_MERGE: &str =
+    include_str!("../../../.claude/skills/senko/scripts/rebase-merge.sh");
+const SCRIPT_SQUASH_MERGE: &str =
+    include_str!("../../../.claude/skills/senko/scripts/squash-merge.sh");
+
 /// File to install with its relative path under `.claude/` and content.
 pub struct InstallableFile {
     /// Path segments under `.claude/` (e.g. `["skills", "senko", "SKILL.md"]`)
@@ -17,10 +52,79 @@ pub struct InstallableFile {
 }
 
 pub const INSTALLABLE_FILES: &[InstallableFile] = &[
+    // Main skill definition
     InstallableFile {
         segments: &["skills", "senko", "SKILL.md"],
         content: SKILL_MD_CONTENT,
     },
+    // CLI reference
+    InstallableFile {
+        segments: &["skills", "senko", "cli-reference.md"],
+        content: CLI_REFERENCE_CONTENT,
+    },
+    // Workflows
+    InstallableFile {
+        segments: &["skills", "senko", "workflows", "add-task.md"],
+        content: WF_ADD_TASK,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "workflows", "auto-select.md"],
+        content: WF_AUTO_SELECT,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "workflows", "cancel-task.md"],
+        content: WF_CANCEL_TASK,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "workflows", "complete-task.md"],
+        content: WF_COMPLETE_TASK,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "workflows", "config-explain.md"],
+        content: WF_CONFIG_EXPLAIN,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "workflows", "config-setup.md"],
+        content: WF_CONFIG_SETUP,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "workflows", "dependency-graph.md"],
+        content: WF_DEPENDENCY_GRAPH,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "workflows", "dod-check.md"],
+        content: WF_DOD_CHECK,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "workflows", "execute-task.md"],
+        content: WF_EXECUTE_TASK,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "workflows", "list-tasks.md"],
+        content: WF_LIST_TASKS,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "workflows", "manage-dependencies.md"],
+        content: WF_MANAGE_DEPS,
+    },
+    // Scripts
+    InstallableFile {
+        segments: &["skills", "senko", "scripts", "check-workflow-config.sh"],
+        content: SCRIPT_CHECK_WORKFLOW_CONFIG,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "scripts", "generate-plan-sections.sh"],
+        content: SCRIPT_GENERATE_PLAN_SECTIONS,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "scripts", "rebase-merge.sh"],
+        content: SCRIPT_REBASE_MERGE,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "scripts", "squash-merge.sh"],
+        content: SCRIPT_SQUASH_MERGE,
+    },
+    // Agent
     InstallableFile {
         segments: &["agents", "dod-verifier.md"],
         content: DOD_VERIFIER_AGENT_CONTENT,
@@ -258,6 +362,11 @@ mod tests {
         let agent_content =
             std::fs::read_to_string(dir.path().join("dod-verifier.md")).unwrap();
         assert_eq!(agent_content, DOD_VERIFIER_AGENT_CONTENT);
+        // Verify workflow and other files are present (flat mode uses last segment as filename)
+        assert!(dir.path().join("cli-reference.md").exists());
+        assert!(dir.path().join("add-task.md").exists());
+        assert!(dir.path().join("execute-task.md").exists());
+        assert!(dir.path().join("rebase-merge.sh").exists());
     }
 
     #[test]
@@ -266,21 +375,47 @@ mod tests {
         let cli = make_cli(&tmp);
         skill_install(&cli, None, true, false).unwrap();
 
-        let skill_path = tmp
-            .path()
-            .join(".claude")
-            .join("skills")
-            .join("senko")
-            .join("SKILL.md");
+        let senko_dir = tmp.path().join(".claude/skills/senko");
+
+        let skill_path = senko_dir.join("SKILL.md");
         assert!(skill_path.exists());
         let content = std::fs::read_to_string(&skill_path).unwrap();
         assert_eq!(content, SKILL_MD_CONTENT);
 
-        let agent_path = tmp
-            .path()
-            .join(".claude")
-            .join("agents")
-            .join("dod-verifier.md");
+        // CLI reference
+        assert!(senko_dir.join("cli-reference.md").exists());
+
+        // Workflows
+        let wf_dir = senko_dir.join("workflows");
+        for name in [
+            "add-task.md",
+            "auto-select.md",
+            "cancel-task.md",
+            "complete-task.md",
+            "config-explain.md",
+            "config-setup.md",
+            "dependency-graph.md",
+            "dod-check.md",
+            "execute-task.md",
+            "list-tasks.md",
+            "manage-dependencies.md",
+        ] {
+            assert!(wf_dir.join(name).exists(), "missing workflow: {name}");
+        }
+
+        // Scripts
+        let scripts_dir = senko_dir.join("scripts");
+        for name in [
+            "check-workflow-config.sh",
+            "generate-plan-sections.sh",
+            "rebase-merge.sh",
+            "squash-merge.sh",
+        ] {
+            assert!(scripts_dir.join(name).exists(), "missing script: {name}");
+        }
+
+        // Agent
+        let agent_path = tmp.path().join(".claude/agents/dod-verifier.md");
         assert!(agent_path.exists());
         let agent_content = std::fs::read_to_string(&agent_path).unwrap();
         assert_eq!(agent_content, DOD_VERIFIER_AGENT_CONTENT);
