@@ -253,9 +253,17 @@ fn xdg_data_base() -> Option<std::path::PathBuf> {
         })
 }
 
-/// Compute a per-project XDG database path using a hash of the project root.
-/// Returns `$XDG_DATA_HOME/senko/projects/<hash>/data.db`.
+/// Compute a per-project XDG database path using the project directory name.
+/// Returns `$XDG_DATA_HOME/senko/projects/<dir-name>/data.db`.
 fn xdg_project_db_path(project_root: &Path) -> Option<std::path::PathBuf> {
+    let data_dir = xdg_data_base()?;
+    let dir_name = project_root.file_name()?.to_string_lossy();
+    Some(data_dir.join("senko").join("projects").join(dir_name.as_ref()).join("data.db"))
+}
+
+/// Legacy hash-based per-project XDG database path (for migration).
+/// Returns `$XDG_DATA_HOME/senko/projects/<sha256-16chars>/data.db`.
+fn xdg_project_db_path_legacy_hash(project_root: &Path) -> Option<std::path::PathBuf> {
     use sha2::{Sha256, Digest};
     let data_dir = xdg_data_base()?;
     let canonical = project_root.canonicalize().ok()
@@ -313,9 +321,10 @@ pub fn resolve_db_path_preview(
 /// 1. `explicit_db_path` (CLI --db-path or SENKO_DB_PATH env)
 /// 2. `config_db_path` (config.toml [storage] db_path)
 /// 3. Per-project XDG path (already exists)
-/// 4. Migration from old global XDG path → per-project XDG path
+/// 4. Migration from hash-based XDG path → dir-name-based XDG path
 /// 5. Migration from legacy `.senko/data.db` → per-project XDG path
-/// 6. New installation: per-project XDG default
+/// 6. Migration from old global XDG path → per-project XDG path
+/// 7. New installation: per-project XDG default
 fn resolve_db_path(
     project_root: &Path,
     explicit_db_path: Option<&Path>,
@@ -339,7 +348,21 @@ fn resolve_db_path(
         return Ok(xdg_path);
     }
 
-    // 4. Migrate from legacy project-local path
+    // 4. Migrate from hash-based XDG path → dir-name-based XDG path
+    if let Some(hash_path) = xdg_project_db_path_legacy_hash(project_root) {
+        if hash_path.exists() {
+            copy_db_files(&hash_path, &xdg_path)?;
+            eprintln!(
+                "warning: migrated database from {} to {}. \
+                 The hash-based path has been kept. You can remove it after verifying the migration.",
+                hash_path.display(),
+                xdg_path.display()
+            );
+            return Ok(xdg_path);
+        }
+    }
+
+    // 5. Migrate from legacy project-local path
     let legacy_path = project_root.join(".senko").join("data.db");
     if legacy_path.exists() {
         copy_db_files(&legacy_path, &xdg_path)?;
@@ -352,7 +375,7 @@ fn resolve_db_path(
         return Ok(xdg_path);
     }
 
-    // 5. Migrate from old global XDG path (pre-per-project layout)
+    // 6. Migrate from old global XDG path (pre-per-project layout)
     if let Some(global_path) = xdg_global_db_path() {
         if global_path.exists() {
             copy_db_files(&global_path, &xdg_path)?;
@@ -372,7 +395,7 @@ fn resolve_db_path(
         }
     }
 
-    // 6. New installation: per-project XDG default
+    // 7. New installation: per-project XDG default
     Ok(xdg_path)
 }
 
