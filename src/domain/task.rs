@@ -10,22 +10,24 @@ use super::error::DomainError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CompletionMode {
-    MergeThenComplete,
-    PrThenComplete,
+pub enum MergeVia {
+    #[serde(alias = "merge_then_complete")]
+    Direct,
+    #[serde(alias = "pr_then_complete")]
+    Pr,
 }
 
-impl Default for CompletionMode {
+impl Default for MergeVia {
     fn default() -> Self {
-        CompletionMode::MergeThenComplete
+        MergeVia::Direct
     }
 }
 
-impl fmt::Display for CompletionMode {
+impl fmt::Display for MergeVia {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CompletionMode::MergeThenComplete => write!(f, "merge_then_complete"),
-            CompletionMode::PrThenComplete => write!(f, "pr_then_complete"),
+            MergeVia::Direct => write!(f, "direct"),
+            MergeVia::Pr => write!(f, "pr"),
         }
     }
 }
@@ -865,14 +867,14 @@ pub fn compute_unblocked(
 
 /// Domain policy for task completion workflow.
 pub struct CompletionPolicy {
-    completion_mode: CompletionMode,
+    merge_via: MergeVia,
     auto_merge: bool,
 }
 
 impl CompletionPolicy {
-    pub fn new(completion_mode: CompletionMode, auto_merge: bool) -> Self {
+    pub fn new(merge_via: MergeVia, auto_merge: bool) -> Self {
         Self {
-            completion_mode,
+            merge_via,
             auto_merge,
         }
     }
@@ -883,14 +885,14 @@ impl CompletionPolicy {
 
     /// Returns the PR URL that must be verified, or `None` if no PR check is needed.
     ///
-    /// Returns `Err` if the completion mode requires a PR URL but none is set on the task.
+    /// Returns `Err` if the merge_via mode requires a PR URL but none is set on the task.
     pub fn required_pr_url<'a>(&self, task: &'a Task, skip_pr_check: bool) -> Result<Option<&'a str>> {
-        if skip_pr_check || self.completion_mode != CompletionMode::PrThenComplete {
+        if skip_pr_check || self.merge_via != MergeVia::Pr {
             return Ok(None);
         }
         let pr_url = task.pr_url().ok_or_else(|| {
             anyhow::anyhow!(
-                "cannot complete task #{}: completion_mode is pr_then_complete but no pr_url is set. \
+                "cannot complete task #{}: merge_via is pr but no pr_url is set. \
                  Use `senko edit {} --pr-url <url>` to set it.",
                 task.id(),
                 task.id(),
@@ -1333,21 +1335,21 @@ mod tests {
 
     #[test]
     fn completion_policy_merge_mode_returns_none() {
-        let policy = super::CompletionPolicy::new(CompletionMode::MergeThenComplete, true);
+        let policy = super::CompletionPolicy::new(MergeVia::Direct, true);
         let task = make_task(TaskStatus::InProgress);
         assert!(policy.required_pr_url(&task, false).unwrap().is_none());
     }
 
     #[test]
     fn completion_policy_pr_mode_no_url_errors() {
-        let policy = super::CompletionPolicy::new(CompletionMode::PrThenComplete, true);
+        let policy = super::CompletionPolicy::new(MergeVia::Pr, true);
         let task = make_task(TaskStatus::InProgress);
         assert!(policy.required_pr_url(&task, false).is_err());
     }
 
     #[test]
     fn completion_policy_pr_mode_with_url() {
-        let policy = super::CompletionPolicy::new(CompletionMode::PrThenComplete, true);
+        let policy = super::CompletionPolicy::new(MergeVia::Pr, true);
         let mut task = make_task(TaskStatus::InProgress);
         task.pr_url = Some("https://github.com/org/repo/pull/1".to_string());
         let result = policy.required_pr_url(&task, false).unwrap();
@@ -1356,7 +1358,7 @@ mod tests {
 
     #[test]
     fn completion_policy_skip_pr_check() {
-        let policy = super::CompletionPolicy::new(CompletionMode::PrThenComplete, true);
+        let policy = super::CompletionPolicy::new(MergeVia::Pr, true);
         let task = make_task(TaskStatus::InProgress);
         assert!(policy.required_pr_url(&task, true).unwrap().is_none());
     }

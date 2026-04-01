@@ -8,9 +8,9 @@ trap cleanup_test_env EXIT
 
 echo "--- Test: Environment Variable Overrides ---"
 
-echo "[1] SENKO_COMPLETION_MODE overrides default"
-JSON_OUT="$(SENKO_COMPLETION_MODE=pr_then_complete run_lf config)"
-assert_json_field "$JSON_OUT" '.workflow.completion_mode' "pr_then_complete" "env overrides completion_mode"
+echo "[1] SENKO_MERGE_VIA overrides default"
+JSON_OUT="$(SENKO_MERGE_VIA=pr run_lf config)"
+assert_json_field "$JSON_OUT" '.workflow.merge_via' "pr" "env overrides merge_via"
 
 echo "[2] SENKO_AUTO_MERGE overrides default"
 JSON_OUT="$(SENKO_AUTO_MERGE=false run_lf config)"
@@ -28,14 +28,14 @@ echo "[5] Env vars override config.toml values"
 mkdir -p "$TEST_PROJECT_ROOT/.senko"
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
 [workflow]
-completion_mode = "merge_then_complete"
+merge_via = "direct"
 auto_merge = true
 
 [backend]
 hook_mode = "server"
 EOF
-JSON_OUT="$(SENKO_COMPLETION_MODE=pr_then_complete SENKO_AUTO_MERGE=false SENKO_HOOK_MODE=both run_lf config)"
-assert_json_field "$JSON_OUT" '.workflow.completion_mode' "pr_then_complete" "env overrides toml completion_mode"
+JSON_OUT="$(SENKO_MERGE_VIA=pr SENKO_AUTO_MERGE=false SENKO_HOOK_MODE=both run_lf config)"
+assert_json_field "$JSON_OUT" '.workflow.merge_via' "pr" "env overrides toml merge_via"
 assert_json_field "$JSON_OUT" '.workflow.auto_merge' "false" "env overrides toml auto_merge"
 assert_json_field "$JSON_OUT" '.backend.hook_mode' "both" "env overrides toml hook_mode"
 
@@ -107,8 +107,8 @@ wait $SERVER_PID2 2>/dev/null || true
 
 echo "[12] Config works with no config.toml (env-only)"
 NO_TOML_PROJECT="$(mktemp -d)"
-JSON_OUT="$(SENKO_COMPLETION_MODE=pr_then_complete SENKO_AUTO_MERGE=false "$SENKO" --project-root "$NO_TOML_PROJECT" config)"
-assert_json_field "$JSON_OUT" '.workflow.completion_mode' "pr_then_complete" "no toml + env completion_mode"
+JSON_OUT="$(SENKO_MERGE_VIA=pr SENKO_AUTO_MERGE=false "$SENKO" --project-root "$NO_TOML_PROJECT" config)"
+assert_json_field "$JSON_OUT" '.workflow.merge_via' "pr" "no toml + env merge_via"
 assert_json_field "$JSON_OUT" '.workflow.auto_merge' "false" "no toml + env auto_merge"
 rm -rf "$NO_TOML_PROJECT"
 
@@ -127,5 +127,18 @@ echo "  PASS: CLI --port overrides SENKO_PORT"
 PASS_COUNT=$((PASS_COUNT + 1))
 kill $SERVER_PID3 2>/dev/null || true
 wait $SERVER_PID3 2>/dev/null || true
+
+echo "[14] backward compat: SENKO_COMPLETION_MODE still works (deprecated)"
+rm -f "$TEST_PROJECT_ROOT/.senko/config.toml"
+JSON_OUT="$(SENKO_COMPLETION_MODE=pr_then_complete run_lf config 2>/dev/null)"
+assert_json_field "$JSON_OUT" '.workflow.merge_via' "pr" "deprecated SENKO_COMPLETION_MODE still works"
+
+echo "[15] backward compat: old values in SENKO_MERGE_VIA still work"
+JSON_OUT="$(SENKO_MERGE_VIA=merge_then_complete run_lf config 2>/dev/null)"
+assert_json_field "$JSON_OUT" '.workflow.merge_via' "direct" "old value merge_then_complete via SENKO_MERGE_VIA"
+
+echo "[16] SENKO_MERGE_VIA takes priority over SENKO_COMPLETION_MODE"
+JSON_OUT="$(SENKO_MERGE_VIA=direct SENKO_COMPLETION_MODE=pr_then_complete run_lf config 2>/dev/null)"
+assert_json_field "$JSON_OUT" '.workflow.merge_via' "direct" "SENKO_MERGE_VIA wins over SENKO_COMPLETION_MODE"
 
 test_summary

@@ -5,7 +5,7 @@ TASK_ID="${1:?Usage: generate-plan-sections.sh <task-id>}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 CONFIG_JSON=$(senko config)
-COMPLETION_MODE=$(echo "$CONFIG_JSON" | jq -r '.workflow.completion_mode')
+MERGE_VIA=$(echo "$CONFIG_JSON" | jq -r '.workflow.merge_via')
 AUTO_MERGE=$(echo "$CONFIG_JSON" | jq -r '.workflow.auto_merge')
 BRANCH_MODE=$(echo "$CONFIG_JSON" | jq -r '.workflow.branch_mode')
 MERGE_STRATEGY=$(echo "$CONFIG_JSON" | jq -r '.workflow.merge_strategy')
@@ -60,7 +60,7 @@ HEADER
 emit_events "pre_merge"
 
 # --- Merge/PR step ---
-if [ "$COMPLETION_MODE" = "merge_then_complete" ]; then
+if [ "$MERGE_VIA" = "direct" ]; then
   if [ "$MERGE_STRATEGY" = "squash" ]; then
     echo "- Squash merge the branch into main (all DoD items must be checked before this step):"
     echo "  \`bash \${CLAUDE_SKILL_DIR}/scripts/squash-merge.sh <branch-name>\`"
@@ -68,7 +68,7 @@ if [ "$COMPLETION_MODE" = "merge_then_complete" ]; then
     echo "- Rebase merge the branch into main using the rebase-merge script (all DoD items must be checked before this step):"
     echo "  \`bash \${CLAUDE_SKILL_DIR}/scripts/rebase-merge.sh <branch-name>\`"
   fi
-elif [ "$COMPLETION_MODE" = "pr_then_complete" ]; then
+elif [ "$MERGE_VIA" = "pr" ]; then
   if [ "$AUTO_MERGE" = "true" ]; then
     echo "- Create PR and merge (all DoD items must be checked before this step)"
   else

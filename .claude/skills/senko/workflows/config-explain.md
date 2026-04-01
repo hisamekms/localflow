@@ -21,8 +21,8 @@ For each section, explain every item's **current value**, whether it's the **def
 **workflow**
 | Key | Default | Options | Description |
 |---|---|---|---|
-| `completion_mode` | `merge_then_complete` | `merge_then_complete`, `pr_then_complete` | Controls whether the branch is merged before or after task completion. `pr_then_complete` requires a PR URL and merge status check. |
-| `auto_merge` | `true` | `true`, `false` | When `false` with `pr_then_complete`, the PR must also be approved before completion. |
+| `merge_via` | `direct` | `direct`, `pr` | Controls whether the branch is merged directly or via PR. `pr` requires a PR URL and merge status check. |
+| `auto_merge` | `true` | `true`, `false` | When `false` with `merge_via = "pr"`, the PR must also be approved before completion. |
 | `branch_mode` | `worktree` | `worktree`, `branch` | How task branches are created. `worktree` uses git worktrees (parallel work), `branch` uses regular branches. |
 | `merge_strategy` | `rebase` | `rebase`, `squash` | Git merge strategy when merging task branches back to main. |
 | `events` | `[]` | list of event directives | Workflow event hooks (type: `command` or `prompt`) triggered at specific points (e.g., `pre_merge`, `post_pr`). |
@@ -77,7 +77,7 @@ Each hook entry has: `command` (shell command), `enabled` (bool, default true), 
 
 Explain how configuration is resolved (highest priority first):
 1. **CLI flags** (`--config <path>`)
-2. **Environment variables** (`SENKO_*` — e.g., `SENKO_COMPLETION_MODE`, `SENKO_API_URL`)
+2. **Environment variables** (`SENKO_*` — e.g., `SENKO_MERGE_VIA`, `SENKO_API_URL`)
 3. **Project config** (`.senko/config.toml` in the project root)
 4. **User config** (`~/.config/senko/config.toml`)
 
@@ -87,5 +87,5 @@ Higher-priority sources override lower ones. The `senko config` output shows the
 
 Format the explanation clearly, highlighting:
 - Values that differ from defaults
-- Any potentially important settings (e.g., `completion_mode`, `hook_mode`)
+- Any potentially important settings (e.g., `merge_via`, `hook_mode`)
 - Hooks that are currently configured

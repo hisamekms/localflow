@@ -123,13 +123,13 @@ on_task_started = "jq -r '\"\\(.task.title): \\(.from_status) → \\(.task.statu
 
 ```toml
 [workflow]
-completion_mode = "pr_then_complete"  # または "merge_then_complete"（デフォルト）
-auto_merge = false                    # デフォルト: true
+merge_via = "pr"        # または "direct"（デフォルト）
+auto_merge = false      # デフォルト: true
 ```
 
 | 設定 | 値 | 説明 |
 |------|------|------|
-| `completion_mode` | `merge_then_complete`（デフォルト）, `pr_then_complete` | `pr_then_complete`の場合、`complete`コマンドが`gh`でPRのマージ状況を検証 |
+| `merge_via` | `direct`（デフォルト）, `pr` | `pr`の場合、`complete`コマンドが`gh`でPRのマージ状況を検証 |
 | `auto_merge` | `true`（デフォルト）, `false` | `false`の場合、PRの承認も検証 |
 
 `senko config`で現在の設定を表示、`senko config --init`でテンプレートを生成できます。

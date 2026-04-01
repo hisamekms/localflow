@@ -16,7 +16,7 @@ impl PrVerifier for GhCliPrVerifier {
             .args(&args)
             .output()
             .context(
-                "failed to run 'gh' CLI. gh is required for pr_then_complete mode. \
+                "failed to run 'gh' CLI. gh is required when merge_via = \"pr\". \
                  Install it from https://cli.github.com/",
             )?;
 

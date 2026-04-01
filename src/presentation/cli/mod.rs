@@ -500,7 +500,7 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 # command = "echo 'task completed'"
 
 [workflow]
-# completion_mode = "merge_then_complete"  # or "pr_then_complete"
+# merge_via = "direct"  # or "pr"
 # auto_merge = true
 # branch_mode = "worktree"  # or "branch"
 # merge_strategy = "rebase"  # or "squash"

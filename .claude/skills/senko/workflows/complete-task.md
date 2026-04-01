@@ -15,12 +15,12 @@ senko get <id>
      - **NOT_ACHIEVED**: Inform the user that the item is not yet achieved
    - All DoD items must be checked before proceeding to complete
 3. Check the workflow configuration (`senko config`):
-   - If `completion_mode = "pr_then_complete"`:
+   - If `merge_via = "pr"`:
      - Ensure `pr_url` is set on the task (`senko edit <id> --pr-url <url>`)
      - The PR must be merged before `senko complete <id>` will succeed
      - If `auto_merge = false`, the PR must also have approval
      - Use `--skip-pr-check` to bypass these checks if needed
-   - If `completion_mode = "merge_then_complete"` (default): no PR checks are performed
+   - If `merge_via = "direct"` (default): no PR checks are performed
 
 ```bash
 senko complete <id>

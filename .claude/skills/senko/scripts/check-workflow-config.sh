@@ -15,11 +15,11 @@ warn() {
   echo "WARNING: $1" >&2
 }
 
-# Validate completion_mode
-COMPLETION_MODE=$(echo "$CONFIG_JSON" | jq -r '.workflow.completion_mode')
-case "$COMPLETION_MODE" in
-  merge_then_complete|pr_then_complete) ;;
-  *) error "invalid completion_mode: $COMPLETION_MODE (expected: merge_then_complete, pr_then_complete)" ;;
+# Validate merge_via
+MERGE_VIA=$(echo "$CONFIG_JSON" | jq -r '.workflow.merge_via')
+case "$MERGE_VIA" in
+  direct|pr) ;;
+  *) error "invalid merge_via: $MERGE_VIA (expected: direct, pr)" ;;
 esac
 
 # Validate branch_mode
@@ -83,7 +83,7 @@ for i in $(seq 0 $((EVENT_COUNT - 1))); do
 done
 
 # Validate referenced merge scripts exist
-if [ "$COMPLETION_MODE" = "merge_then_complete" ]; then
+if [ "$MERGE_VIA" = "direct" ]; then
   if [ "$MERGE_STRATEGY" = "rebase" ] && [ ! -f "$SCRIPT_DIR/rebase-merge.sh" ]; then
     error "rebase-merge.sh not found in $SCRIPT_DIR"
   fi

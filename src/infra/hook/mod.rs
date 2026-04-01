@@ -678,7 +678,7 @@ mod tests {
     use super::*;
     use crate::bootstrap::load_config;
     use crate::infra::config::{
-        CompletionMode, HookMode, HooksConfig, RawLogConfig, RawWorkflowConfig,
+        MergeVia, HookMode, HooksConfig, RawLogConfig, RawWorkflowConfig,
     };
     use crate::infra::sqlite::SqliteBackend;
     use crate::application::port::TaskQueryPort;
@@ -1642,17 +1642,17 @@ on_task_added = "echo added"
     }
 
     #[test]
-    fn env_override_completion_mode() {
+    fn env_override_merge_via() {
         let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
-            let orig = std::env::var("SENKO_COMPLETION_MODE").ok();
-            std::env::set_var("SENKO_COMPLETION_MODE", "pr_then_complete");
+            let orig = std::env::var("SENKO_MERGE_VIA").ok();
+            std::env::set_var("SENKO_MERGE_VIA", "pr");
             let mut config = Config::default();
             config.apply_env();
-            assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
+            assert_eq!(config.workflow.merge_via, MergeVia::Pr);
             match orig {
-                Some(v) => std::env::set_var("SENKO_COMPLETION_MODE", v),
-                None => std::env::remove_var("SENKO_COMPLETION_MODE"),
+                Some(v) => std::env::set_var("SENKO_MERGE_VIA", v),
+                None => std::env::remove_var("SENKO_MERGE_VIA"),
             }
         }
     }
@@ -1768,7 +1768,7 @@ on_task_added = "echo added"
                 std::env::set_var("SENKO_COMPLETION_MODE", "pr_then_complete");
                 let tmp = tempfile::tempdir().unwrap();
                 let config = load_config(tmp.path(), None).unwrap();
-                assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
+                assert_eq!(config.workflow.merge_via, MergeVia::Pr);
                 match orig {
                     Some(v) => std::env::set_var("SENKO_COMPLETION_MODE", v),
                     None => std::env::remove_var("SENKO_COMPLETION_MODE"),
@@ -1791,7 +1791,7 @@ auto_merge = false
         )
         .unwrap();
         let config = load_config(tmp.path(), Some(&config_file)).unwrap();
-        assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
+        assert_eq!(config.workflow.merge_via, MergeVia::Pr);
         assert!(!config.workflow.auto_merge);
     }
 
@@ -1962,7 +1962,7 @@ dir = "/var/log/senko"
     fn raw_config_merge_overlay_wins() {
         let base = RawConfig {
             workflow: RawWorkflowConfig {
-                completion_mode: Some(CompletionMode::MergeThenComplete),
+                merge_via: Some(MergeVia::Direct),
                 auto_merge: Some(true),
                 ..Default::default()
             },
@@ -1974,14 +1974,14 @@ dir = "/var/log/senko"
         };
         let overlay = RawConfig {
             workflow: RawWorkflowConfig {
-                completion_mode: Some(CompletionMode::PrThenComplete),
+                merge_via: Some(MergeVia::Pr),
                 auto_merge: None,
                 ..Default::default()
             },
             ..Default::default()
         };
         let merged = base.merge(overlay).resolve();
-        assert_eq!(merged.workflow.completion_mode, CompletionMode::PrThenComplete);
+        assert_eq!(merged.workflow.merge_via, MergeVia::Pr);
         assert!(merged.workflow.auto_merge); // from base
         assert_eq!(merged.log.level, "debug"); // from base
     }
@@ -2125,8 +2125,8 @@ command = "project-cmd"
             let config = load_config(project_dir.as_path(), None).unwrap();
             // auto_merge overridden by project
             assert!(config.workflow.auto_merge);
-            // completion_mode falls back to user config
-            assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
+            // merge_via falls back to user config
+            assert_eq!(config.workflow.merge_via, MergeVia::Pr);
             // Both hooks present
             assert_eq!(config.hooks.on_task_added.len(), 2);
             match orig_xdg {

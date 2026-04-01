@@ -103,9 +103,9 @@ senko config --init                    # generate template config.toml
 - New tasks start in `draft` status. Status transitions: draft → todo → in_progress → completed. Any active status → canceled.
 - Priority levels: `p0` (highest) through `p3` (lowest). Default is `p2`.
 - **Workflow configuration** (`[workflow]` in `.senko/config.toml`):
-  - `completion_mode`: `merge_then_complete` (default) or `pr_then_complete`
+  - `merge_via`: `direct` (default) or `pr`
   - `auto_merge`: `true` (default) / `false`
-  - When `completion_mode = "pr_then_complete"`, `complete` requires `pr_url` to be set and the PR to be merged (checked via `gh`). Use `--skip-pr-check` to bypass.
+  - When `merge_via = "pr"`, `complete` requires `pr_url` to be set and the PR to be merged (checked via `gh`). Use `--skip-pr-check` to bypass.
   - When `auto_merge = false`, the PR must also be approved.
 
 ---
@@ -312,9 +312,9 @@ Generate a branch name from the task title. Use the `/wth` skill to create a wor
 
 Use `EnterPlanMode` to create an implementation plan. Investigate the codebase based on the task's description.
 
-Before creating the plan, run `senko config` to check the workflow configuration. Include a Pre-start section and a Post-completion section in the plan. Based on the `completion_mode` and `auto_merge` settings, use the appropriate post-completion template:
+Before creating the plan, run `senko config` to check the workflow configuration. Include a Pre-start section and a Post-completion section in the plan. Based on the `merge_via` and `auto_merge` settings, use the appropriate post-completion template:
 
-**When `completion_mode = "merge_then_complete"` (default):**
+**When `merge_via = "direct"` (default):**
 
 ```
 # Pre-start
@@ -337,7 +337,7 @@ Before creating the plan, run `senko config` to check the workflow configuration
 - Delete the worktree (using `/wth` skill)
 ```
 
-**When `completion_mode = "pr_then_complete"` and `auto_merge = true`:**
+**When `merge_via = "pr"` and `auto_merge = true`:**
 
 ```
 # Pre-start
@@ -361,7 +361,7 @@ Before creating the plan, run `senko config` to check the workflow configuration
 - Delete the worktree (using `/wth` skill)
 ```
 
-**When `completion_mode = "pr_then_complete"` and `auto_merge = false`:**
+**When `merge_via = "pr"` and `auto_merge = false`:**
 
 ```
 # Pre-start
@@ -407,12 +407,12 @@ senko get <id>
      - **NOT_ACHIEVED**: Inform the user that the item is not yet achieved
    - All DoD items must be checked before proceeding to complete
 3. Check the workflow configuration (`senko config`):
-   - If `completion_mode = "pr_then_complete"`:
+   - If `merge_via = "pr"`:
      - Ensure `pr_url` is set on the task (`senko edit <id> --pr-url <url>`)
      - The PR must be merged before `senko complete <id>` will succeed
      - If `auto_merge = false`, the PR must also have approval
      - Use `--skip-pr-check` to bypass these checks if needed
-   - If `completion_mode = "merge_then_complete"` (default): no PR checks are performed
+   - If `merge_via = "direct"` (default): no PR checks are performed
 
 ```bash
 senko complete <id>

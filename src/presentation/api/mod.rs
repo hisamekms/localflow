@@ -293,7 +293,7 @@ pub async fn serve(
     let backend_info = bootstrap::resolve_backend_info(config, &project_root);
     let hook_executor = bootstrap::create_api_hook_executor(config.clone(), backend_info, backend.clone());
     let pr_verifier = bootstrap::create_pr_verifier();
-    let completion_policy = CompletionPolicy::new(config.workflow.completion_mode, config.workflow.auto_merge);
+    let completion_policy = CompletionPolicy::new(config.workflow.merge_via, config.workflow.auto_merge);
     let task_service = Arc::new(LocalTaskOperations::new(
         backend.clone(),
         hook_executor,

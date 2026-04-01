@@ -113,7 +113,7 @@ assert_json_field "$NEXT" '.title' "Next Candidate" "next: picks correct task"
 
 echo "[16] Config via HTTP backend"
 CONFIG=$(run_http config)
-assert_json_field "$CONFIG" '.workflow.completion_mode' "merge_then_complete" "config: completion_mode"
+assert_json_field "$CONFIG" '.workflow.merge_via' "direct" "config: merge_via"
 
 echo "[17] List with filters via HTTP backend"
 LIST_COMPLETED=$(run_http list --status completed)

@@ -88,7 +88,7 @@ senko complete 1 --skip-pr-check    # PR検証をスキップ
 
 未チェックのDoD項目がある場合は失敗します。先に `dod check` でマークしてください。
 
-`completion_mode = "pr_then_complete"` 設定時は、PRがマージ済みであることも検証します（`auto_merge = false` の場合は承認も確認）。`--skip-pr-check` で検証をスキップできます。
+`merge_via = "pr"` 設定時は、PRがマージ済みであることも検証します（`auto_merge = false` の場合は承認も確認）。`--skip-pr-check` で検証をスキップできます。
 
 ## `cancel <id>` – タスクキャンセル
 
@@ -401,7 +401,7 @@ on_task_completed = ["notify-send '完了'", "curl https://example.com/done"]
 
 | 変数 | 説明 | デフォルト |
 |------|------|----------|
-| `SENKO_COMPLETION_MODE` | `merge_then_complete` または `pr_then_complete` | `merge_then_complete` |
+| `SENKO_MERGE_VIA` | `direct` または `pr` | `direct` |
 | `SENKO_AUTO_MERGE` | `true` または `false` | `true` |
 
 ### バックエンド

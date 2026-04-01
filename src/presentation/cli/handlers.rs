@@ -480,8 +480,8 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
             println!("Configuration (.senko/config.toml):");
             println!("  [workflow]");
             println!(
-                "    completion_mode: {}",
-                config.workflow.completion_mode
+                "    merge_via: {}",
+                config.workflow.merge_via
             );
             println!("    auto_merge: {}", config.workflow.auto_merge);
             println!("    branch_mode: {}", config.workflow.branch_mode);

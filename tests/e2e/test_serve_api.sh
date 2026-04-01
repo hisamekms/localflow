@@ -39,7 +39,7 @@ assert_eq "0" "$(echo "$STATS" | jq 'length')" "stats is empty initially"
 echo ""
 echo "=== Config endpoint ==="
 CONFIG=$(api_get "$BASE/config")
-assert_json_field "$CONFIG" '.workflow.completion_mode' "merge_then_complete" "default completion_mode"
+assert_json_field "$CONFIG" '.workflow.merge_via' "direct" "default merge_via"
 assert_json_field "$CONFIG" '.workflow.auto_merge' "true" "default auto_merge"
 
 echo ""

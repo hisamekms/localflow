@@ -117,13 +117,13 @@ Control task completion behavior via `[workflow]` in `.senko/config.toml`:
 
 ```toml
 [workflow]
-completion_mode = "pr_then_complete"  # or "merge_then_complete" (default)
-auto_merge = false                    # default: true
+merge_via = "pr"        # or "direct" (default)
+auto_merge = false      # default: true
 ```
 
 | Setting | Values | Description |
 |---------|--------|-------------|
-| `completion_mode` | `merge_then_complete` (default), `pr_then_complete` | When `pr_then_complete`, `complete` verifies the PR is merged via `gh` |
+| `merge_via` | `direct` (default), `pr` | When `pr`, `complete` verifies the PR is merged via `gh` |
 | `auto_merge` | `true` (default), `false` | When `false`, `complete` also verifies PR approval |
 
 Use `senko config` to view current settings, or `senko config --init` to generate a template.
@@ -135,7 +135,7 @@ senko --config /path/to/config.toml list
 SENKO_CONFIG=/path/to/config.toml senko list
 ```
 
-When `completion_mode = "pr_then_complete"`:
+When `merge_via = "pr"`:
 1. Set the PR URL on the task: `senko edit <id> --pr-url <url>`
 2. The PR must be merged before `senko complete <id>` succeeds
 3. Use `--skip-pr-check` to bypass verification when needed

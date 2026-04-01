@@ -61,10 +61,10 @@ senko config --init                    # generate template config.toml
 - New tasks start in `draft` status. Status transitions: draft → todo → in_progress → completed. Any active status → canceled.
 - Priority levels: `p0` (highest) through `p3` (lowest). Default is `p2`.
 - **Workflow configuration** (`[workflow]` in `.senko/config.toml`):
-  - `completion_mode`: `merge_then_complete` (default) or `pr_then_complete`
+  - `merge_via`: `direct` (default) or `pr`
   - `auto_merge`: `true` (default) / `false`
   - `branch_mode`: `worktree` (default) or `branch`
   - `merge_strategy`: `rebase` (default) or `squash`
   - `events`: list of workflow event directives (`type: command` or `type: prompt`) at specific points
-  - When `completion_mode = "pr_then_complete"`, `complete` requires `pr_url` to be set and the PR to be merged (checked via `gh`). Use `--skip-pr-check` to bypass.
+  - When `merge_via = "pr"`, `complete` requires `pr_url` to be set and the PR to be merged (checked via `gh`). Use `--skip-pr-check` to bypass.
   - When `auto_merge = false`, the PR must also be approved.

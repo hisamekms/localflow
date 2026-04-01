@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::domain::task::{BranchMode, CompletionMode, MergeStrategy};
+pub use crate::domain::task::{BranchMode, MergeStrategy, MergeVia};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -127,7 +127,7 @@ pub struct WorkflowEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowConfig {
     #[serde(default)]
-    pub completion_mode: CompletionMode,
+    pub merge_via: MergeVia,
     #[serde(default = "default_true")]
     pub auto_merge: bool,
     #[serde(default)]
@@ -145,7 +145,7 @@ fn default_true() -> bool {
 impl Default for WorkflowConfig {
     fn default() -> Self {
         Self {
-            completion_mode: CompletionMode::default(),
+            merge_via: MergeVia::default(),
             auto_merge: true,
             branch_mode: BranchMode::default(),
             merge_strategy: MergeStrategy::default(),
@@ -243,7 +243,8 @@ pub struct RawConfig {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawWorkflowConfig {
-    pub completion_mode: Option<CompletionMode>,
+    #[serde(alias = "completion_mode")]
+    pub merge_via: Option<MergeVia>,
     pub auto_merge: Option<bool>,
     pub branch_mode: Option<BranchMode>,
     pub merge_strategy: Option<MergeStrategy>,
@@ -285,7 +286,7 @@ impl RawConfig {
         RawConfig {
             hooks: merge_hooks(self.hooks, overlay.hooks),
             workflow: RawWorkflowConfig {
-                completion_mode: overlay.workflow.completion_mode.or(self.workflow.completion_mode),
+                merge_via: overlay.workflow.merge_via.or(self.workflow.merge_via),
                 auto_merge: overlay.workflow.auto_merge.or(self.workflow.auto_merge),
                 branch_mode: overlay.workflow.branch_mode.or(self.workflow.branch_mode),
                 merge_strategy: overlay.workflow.merge_strategy.or(self.workflow.merge_strategy),
@@ -329,7 +330,7 @@ impl RawConfig {
         Config {
             hooks: self.hooks,
             workflow: WorkflowConfig {
-                completion_mode: self.workflow.completion_mode.unwrap_or_default(),
+                merge_via: self.workflow.merge_via.unwrap_or_default(),
                 auto_merge: self.workflow.auto_merge.unwrap_or(true),
                 branch_mode: self.workflow.branch_mode.unwrap_or_default(),
                 merge_strategy: self.workflow.merge_strategy.unwrap_or_default(),
@@ -403,15 +404,28 @@ impl Config {
     /// Priority: env > config.toml defaults.
     pub fn apply_env(&mut self) {
         // Workflow settings
-        if let Ok(val) = std::env::var("SENKO_COMPLETION_MODE") {
+        // Check SENKO_MERGE_VIA first, then fallback to deprecated SENKO_COMPLETION_MODE
+        let merge_via_env = std::env::var("SENKO_MERGE_VIA")
+            .ok()
+            .or_else(|| {
+                std::env::var("SENKO_COMPLETION_MODE").ok().map(|val| {
+                    eprintln!("warning: SENKO_COMPLETION_MODE is deprecated, use SENKO_MERGE_VIA");
+                    val
+                })
+            });
+        if let Some(val) = merge_via_env {
             match val.as_str() {
+                "direct" => self.workflow.merge_via = MergeVia::Direct,
+                "pr" => self.workflow.merge_via = MergeVia::Pr,
                 "merge_then_complete" => {
-                    self.workflow.completion_mode = CompletionMode::MergeThenComplete
+                    eprintln!("warning: merge_via value \"merge_then_complete\" is deprecated, use \"direct\"");
+                    self.workflow.merge_via = MergeVia::Direct;
                 }
                 "pr_then_complete" => {
-                    self.workflow.completion_mode = CompletionMode::PrThenComplete
+                    eprintln!("warning: merge_via value \"pr_then_complete\" is deprecated, use \"pr\"");
+                    self.workflow.merge_via = MergeVia::Pr;
                 }
-                other => eprintln!("warning: unknown SENKO_COMPLETION_MODE={other}, ignoring"),
+                other => eprintln!("warning: unknown SENKO_MERGE_VIA={other}, ignoring"),
             }
         }
         if let Ok(val) = std::env::var("SENKO_AUTO_MERGE") {

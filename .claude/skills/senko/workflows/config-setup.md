@@ -24,7 +24,7 @@ Walk through sections in this order:
    - **Option A: config.local.toml** — Ask the user for their name, then write `[user]` section with `name` to `.senko/config.local.toml` (create if it doesn't exist, merge if it does).
    - **Option B: Environment variable `SENKO_USER`** — Do nothing in config-setup. Inform the user they can set `export SENKO_USER="Name"` in their shell profile.
 3. **workflow** — How tasks are completed and branches managed:
-   - `completion_mode`: merge first then complete, or PR-based completion?
+   - `merge_via`: direct merge or PR-based completion?
    - `auto_merge`: require PR approval before completion?
    - `branch_mode`: use git worktrees or regular branches?
    - `merge_strategy`: rebase or squash merge?
@@ -47,7 +47,7 @@ After all sections are covered, generate the TOML and write it to `.senko/config
 
 1. Show the user their current config (read and display the file).
 2. Use `AskUserQuestion` to ask which section(s) they want to modify. Present the sections as options:
-   - `workflow` — Completion mode, merge strategy, branch mode
+   - `workflow` — Merge via, merge strategy, branch mode
    - `backend` — Remote API settings
    - `storage` — Database path
    - `log` — Logging configuration
@@ -63,5 +63,5 @@ After all sections are covered, generate the TOML and write it to `.senko/config
 - **Scope**: Only project-level config (`.senko/config.toml` and `.senko/config.local.toml`). Do not modify user-level config (`~/.config/senko/config.toml`).
 - **User name**: Always write to `.senko/config.local.toml` (git-ignored), never to `.senko/config.toml`. Alternatively, advise using the `SENKO_USER` environment variable.
 - **Defaults**: Only write sections/keys where the user wants non-default values. Comment out defaults for reference.
-- **Validation**: Ensure values are valid (e.g., `completion_mode` must be `merge_then_complete` or `pr_then_complete`).
+- **Validation**: Ensure values are valid (e.g., `merge_via` must be `direct` or `pr`).
 - **Hooks**: Each hook entry needs a unique name under the event key (e.g., `[hooks.on_task_ready.my-hook]`).

@@ -9,7 +9,7 @@
 name = "senko"
 
 # [workflow]
-# completion_mode = "merge_then_complete"
+# merge_via = "direct"
 # auto_merge = true
 # branch_mode = "worktree"
 # merge_strategy = "rebase"

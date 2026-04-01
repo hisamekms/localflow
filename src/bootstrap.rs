@@ -154,7 +154,7 @@ pub fn create_local_task_operations(
     let backend_info = resolve_backend_info(config, project_root);
     let hooks = create_hook_executor(config.clone(), RuntimeMode::Cli, backend_info, backend.clone());
     let pr_verifier: Arc<dyn PrVerifier> = Arc::new(GhCliPrVerifier);
-    let completion_policy = CompletionPolicy::new(config.workflow.completion_mode, config.workflow.auto_merge);
+    let completion_policy = CompletionPolicy::new(config.workflow.merge_via, config.workflow.auto_merge);
     LocalTaskOperations::new(backend, hooks, pr_verifier, completion_policy)
 }
 
