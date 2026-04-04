@@ -540,6 +540,26 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 
 [web]
 # host = "127.0.0.1"  # bind address for `senko web` / `senko serve` (default: 127.0.0.1, env: SENKO_HOST)
+
+# [skill.start]
+# Metadata fields to set on tasks when started via skill workflows.
+# source types: "env" (from environment variable), "fixed" (constant value), "prompt" (ask user)
+#
+# [[skill.start.metadata_fields]]
+# key = "assigned_by"
+# source = "env"
+# env_var = "USER"
+# default = "unknown"
+#
+# [[skill.start.metadata_fields]]
+# key = "team"
+# source = "fixed"
+# value = "backend"
+#
+# [[skill.start.metadata_fields]]
+# key = "estimate"
+# source = "prompt"
+# prompt = "Estimated time for this task?"
 "#;
 
 pub fn print_dry_run(output: &OutputFormat, ops: &DryRunOperation) -> Result<()> {

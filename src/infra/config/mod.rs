@@ -24,6 +24,45 @@ pub struct Config {
     pub storage: StorageConfig,
     #[serde(default)]
     pub web: WebConfig,
+    #[serde(default)]
+    pub skill: SkillConfig,
+}
+
+// --- Skill config ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "source")]
+pub enum MetadataFieldSource {
+    Env {
+        env_var: String,
+        #[serde(default)]
+        default: Option<String>,
+    },
+    Fixed {
+        value: serde_json::Value,
+    },
+    Prompt {
+        prompt: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataField {
+    pub key: String,
+    #[serde(flatten)]
+    pub source: MetadataFieldSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SkillStartConfig {
+    #[serde(default)]
+    pub metadata_fields: Vec<MetadataField>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SkillConfig {
+    #[serde(default)]
+    pub start: SkillStartConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -239,6 +278,8 @@ pub struct RawConfig {
     pub storage: StorageConfig,
     #[serde(default)]
     pub web: RawWebConfig,
+    #[serde(default)]
+    pub skill: Option<SkillConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -322,6 +363,7 @@ impl RawConfig {
                 host: overlay.web.host.or(self.web.host),
                 port: overlay.web.port.or(self.web.port),
             },
+            skill: overlay.skill.or(self.skill),
         }
     }
 
@@ -360,6 +402,7 @@ impl RawConfig {
                 host: self.web.host,
                 port: self.web.port,
             },
+            skill: self.skill.unwrap_or_default(),
         }
     }
 }

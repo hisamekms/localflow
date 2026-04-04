@@ -11,11 +11,26 @@ senko get <id>
 - Verify `status` is `todo`. If not, inform the user and stop.
 - Check `dependencies` for incomplete tasks. If any, inform the user and stop.
 
+### Build metadata
+
+Run the metadata builder script to read `[skill.start].metadata_fields` from config:
+
+```bash
+bash ${CLAUDE_SKILL_DIR}/scripts/build-start-metadata.sh
+```
+
+Parse the JSON output (`{"resolved": {...}, "prompts": [...]}`):
+
+- If `prompts` array is non-empty, ask the user each prompt question using `AskUserQuestion`. Merge user answers into `resolved`.
+- If `resolved` is empty (no keys) after merging, do NOT pass `--metadata`.
+
 Then transition:
 
 ```bash
-senko start <id>
+senko start <id> --metadata '<final-metadata-json>'
 ```
+
+Omit `--metadata` entirely if there are no metadata fields to pass.
 
 ## Execution Steps
 

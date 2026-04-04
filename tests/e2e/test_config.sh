@@ -72,4 +72,43 @@ EOF
 COMPAT_OUT2="$(run_lf config)"
 assert_json_field "$COMPAT_OUT2" '.workflow.merge_via' "direct" "old value merge_then_complete maps to direct"
 
+echo "[10] skill.start.metadata_fields parsed correctly"
+cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
+[[skill.start.metadata_fields]]
+key = "assigned_by"
+source = "env"
+env_var = "USER"
+default = "unknown"
+
+[[skill.start.metadata_fields]]
+key = "team"
+source = "fixed"
+value = "backend"
+
+[[skill.start.metadata_fields]]
+key = "estimate"
+source = "prompt"
+prompt = "Estimated time?"
+EOF
+SKILL_OUT="$(run_lf config)"
+assert_json_field "$SKILL_OUT" '.skill.start.metadata_fields | length' "3" "metadata_fields count"
+assert_json_field "$SKILL_OUT" '.skill.start.metadata_fields[0].key' "assigned_by" "field 0 key"
+assert_json_field "$SKILL_OUT" '.skill.start.metadata_fields[0].source' "env" "field 0 source"
+assert_json_field "$SKILL_OUT" '.skill.start.metadata_fields[0].env_var' "USER" "field 0 env_var"
+assert_json_field "$SKILL_OUT" '.skill.start.metadata_fields[0].default' "unknown" "field 0 default"
+assert_json_field "$SKILL_OUT" '.skill.start.metadata_fields[1].key' "team" "field 1 key"
+assert_json_field "$SKILL_OUT" '.skill.start.metadata_fields[1].source' "fixed" "field 1 source"
+assert_json_field "$SKILL_OUT" '.skill.start.metadata_fields[1].value' "backend" "field 1 value"
+assert_json_field "$SKILL_OUT" '.skill.start.metadata_fields[2].key' "estimate" "field 2 key"
+assert_json_field "$SKILL_OUT" '.skill.start.metadata_fields[2].source' "prompt" "field 2 source"
+assert_json_field "$SKILL_OUT" '.skill.start.metadata_fields[2].prompt' "Estimated time?" "field 2 prompt"
+
+echo "[11] skill.start defaults to empty metadata_fields"
+cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
+[project]
+name = "test"
+EOF
+EMPTY_SKILL="$(run_lf config)"
+assert_json_field "$EMPTY_SKILL" '.skill.start.metadata_fields | length' "0" "default empty metadata_fields"
+
 test_summary
