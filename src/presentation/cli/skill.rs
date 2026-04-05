@@ -6,7 +6,7 @@ use anyhow::{bail, Context, Result};
 use super::{Cli, DryRunOperation, print_dry_run};
 use crate::bootstrap::resolve_project_root;
 
-pub const SKILL_MD_CONTENT: &str = include_str!("../../skill_md.txt");
+pub const SKILL_MD_CONTENT: &str = include_str!("../../../.claude/skills/senko/SKILL.md");
 pub const DOD_VERIFIER_AGENT_CONTENT: &str = include_str!("../../dod_verifier_agent.md");
 
 const CLI_REFERENCE_CONTENT: &str =
@@ -605,8 +605,8 @@ mod tests {
         ];
         for cmd in commands {
             assert!(
-                SKILL_MD_CONTENT.contains(cmd),
-                "SKILL.md does not mention: {cmd}"
+                CLI_REFERENCE_CONTENT.contains(cmd),
+                "cli-reference.md does not mention: {cmd}"
             );
         }
     }
