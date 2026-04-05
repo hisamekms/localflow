@@ -6,46 +6,6 @@ use anyhow::{bail, Context, Result};
 use super::{Cli, DryRunOperation, print_dry_run};
 use crate::bootstrap::resolve_project_root;
 
-pub const SKILL_MD_CONTENT: &str = include_str!("../../../.claude/skills/senko/SKILL.md");
-pub const DOD_VERIFIER_AGENT_CONTENT: &str = include_str!("../../dod_verifier_agent.md");
-
-const CLI_REFERENCE_CONTENT: &str =
-    include_str!("../../../.claude/skills/senko/cli-reference.md");
-
-const WF_ADD_TASK: &str =
-    include_str!("../../../.claude/skills/senko/workflows/add-task.md");
-const WF_AUTO_SELECT: &str =
-    include_str!("../../../.claude/skills/senko/workflows/auto-select.md");
-const WF_CANCEL_TASK: &str =
-    include_str!("../../../.claude/skills/senko/workflows/cancel-task.md");
-const WF_COMPLETE_TASK: &str =
-    include_str!("../../../.claude/skills/senko/workflows/complete-task.md");
-const WF_CONFIG_EXPLAIN: &str =
-    include_str!("../../../.claude/skills/senko/workflows/config-explain.md");
-const WF_CONFIG_SETUP: &str =
-    include_str!("../../../.claude/skills/senko/workflows/config-setup.md");
-const WF_DEPENDENCY_GRAPH: &str =
-    include_str!("../../../.claude/skills/senko/workflows/dependency-graph.md");
-const WF_DOD_CHECK: &str =
-    include_str!("../../../.claude/skills/senko/workflows/dod-check.md");
-const WF_EXECUTE_TASK: &str =
-    include_str!("../../../.claude/skills/senko/workflows/execute-task.md");
-const WF_LIST_TASKS: &str =
-    include_str!("../../../.claude/skills/senko/workflows/list-tasks.md");
-const WF_MANAGE_DEPS: &str =
-    include_str!("../../../.claude/skills/senko/workflows/manage-dependencies.md");
-
-const SCRIPT_CHECK_WORKFLOW_CONFIG: &str =
-    include_str!("../../../.claude/skills/senko/scripts/check-workflow-config.sh");
-const SCRIPT_GENERATE_PLAN_SECTIONS: &str =
-    include_str!("../../../.claude/skills/senko/scripts/generate-plan-sections.sh");
-const SCRIPT_REBASE_MERGE: &str =
-    include_str!("../../../.claude/skills/senko/scripts/rebase-merge.sh");
-const SCRIPT_SQUASH_MERGE: &str =
-    include_str!("../../../.claude/skills/senko/scripts/squash-merge.sh");
-const SCRIPT_BUILD_START_METADATA: &str =
-    include_str!("../../../.claude/skills/senko/scripts/build-start-metadata.sh");
-
 /// File to install with its relative path under `.claude/` and content.
 pub struct InstallableFile {
     /// Path segments under `.claude/` (e.g. `["skills", "senko", "SKILL.md"]`)
@@ -53,89 +13,7 @@ pub struct InstallableFile {
     pub content: &'static str,
 }
 
-pub const INSTALLABLE_FILES: &[InstallableFile] = &[
-    // Main skill definition
-    InstallableFile {
-        segments: &["skills", "senko", "SKILL.md"],
-        content: SKILL_MD_CONTENT,
-    },
-    // CLI reference
-    InstallableFile {
-        segments: &["skills", "senko", "cli-reference.md"],
-        content: CLI_REFERENCE_CONTENT,
-    },
-    // Workflows
-    InstallableFile {
-        segments: &["skills", "senko", "workflows", "add-task.md"],
-        content: WF_ADD_TASK,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "workflows", "auto-select.md"],
-        content: WF_AUTO_SELECT,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "workflows", "cancel-task.md"],
-        content: WF_CANCEL_TASK,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "workflows", "complete-task.md"],
-        content: WF_COMPLETE_TASK,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "workflows", "config-explain.md"],
-        content: WF_CONFIG_EXPLAIN,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "workflows", "config-setup.md"],
-        content: WF_CONFIG_SETUP,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "workflows", "dependency-graph.md"],
-        content: WF_DEPENDENCY_GRAPH,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "workflows", "dod-check.md"],
-        content: WF_DOD_CHECK,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "workflows", "execute-task.md"],
-        content: WF_EXECUTE_TASK,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "workflows", "list-tasks.md"],
-        content: WF_LIST_TASKS,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "workflows", "manage-dependencies.md"],
-        content: WF_MANAGE_DEPS,
-    },
-    // Scripts
-    InstallableFile {
-        segments: &["skills", "senko", "scripts", "check-workflow-config.sh"],
-        content: SCRIPT_CHECK_WORKFLOW_CONFIG,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "scripts", "generate-plan-sections.sh"],
-        content: SCRIPT_GENERATE_PLAN_SECTIONS,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "scripts", "rebase-merge.sh"],
-        content: SCRIPT_REBASE_MERGE,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "scripts", "squash-merge.sh"],
-        content: SCRIPT_SQUASH_MERGE,
-    },
-    InstallableFile {
-        segments: &["skills", "senko", "scripts", "build-start-metadata.sh"],
-        content: SCRIPT_BUILD_START_METADATA,
-    },
-    // Agent
-    InstallableFile {
-        segments: &["agents", "dod-verifier.md"],
-        content: DOD_VERIFIER_AGENT_CONTENT,
-    },
-];
+include!(concat!(env!("OUT_DIR"), "/installable_files.rs"));
 
 /// Directories under `.claude/` owned by senko. Deleted entirely during clean install.
 const CLEAN_INSTALL_DIRS: &[&[&str]] = &[&["skills", "senko"]];
@@ -605,7 +483,7 @@ mod tests {
         ];
         for cmd in commands {
             assert!(
-                CLI_REFERENCE_CONTENT.contains(cmd),
+                SKILLS_SENKO_CLI_REFERENCE_MD.contains(cmd),
                 "cli-reference.md does not mention: {cmd}"
             );
         }
