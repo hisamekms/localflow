@@ -2,11 +2,11 @@
 set -euo pipefail
 
 BRANCH="${1:?Usage: squash-merge.sh <branch-name>}"
-LOCKFILE="/tmp/senko-squash-merge.lock"
+LOCKFILE="/tmp/senko-merge.lock"
 
 exec 200>"$LOCKFILE"
 if ! flock -n 200; then
-  echo "error: another squash-merge is already running" >&2
+  echo "error: another merge operation is already running" >&2
   exit 1
 fi
 

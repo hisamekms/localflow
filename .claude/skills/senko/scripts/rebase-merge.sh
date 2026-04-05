@@ -2,11 +2,11 @@
 set -euo pipefail
 
 BRANCH="${1:?Usage: rebase-merge.sh <branch-name>}"
-LOCKFILE="/tmp/senko-rebase-merge.lock"
+LOCKFILE="/tmp/senko-merge.lock"
 
 exec 200>"$LOCKFILE"
 if ! flock -n 200; then
-  echo "error: another rebase-merge is already running" >&2
+  echo "error: another merge operation is already running" >&2
   exit 1
 fi
 
