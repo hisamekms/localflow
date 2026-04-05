@@ -35,8 +35,48 @@ fi
 trap cleanup EXIT
 echo $$ > "$LOCKDIR/pid"
 
-git checkout main
-git pull --ff-only origin main 2>/dev/null || true
-git rebase main "$BRANCH"
-git checkout main
-git merge --ff-only "$BRANCH"
+# Detect worktree vs primary
+GIT_DIR_PATH="$(git rev-parse --path-format=absolute --git-dir)"
+GIT_COMMON_DIR_PATH="$(git rev-parse --path-format=absolute --git-common-dir)"
+
+if [ "$GIT_DIR_PATH" != "$GIT_COMMON_DIR_PATH" ]; then
+  # --- Worktree flow ---
+  PROJECT_ROOT="$(dirname "$GIT_COMMON_DIR_PATH")"
+
+  # Check primary worktree is clean (unstaged, staged, untracked)
+  if ! git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null; then
+    echo "error: primary worktree has unstaged changes" >&2
+    exit 10
+  fi
+  if ! git -C "$PROJECT_ROOT" diff --cached --quiet 2>/dev/null; then
+    echo "error: primary worktree has staged changes" >&2
+    exit 10
+  fi
+  if [ -n "$(git -C "$PROJECT_ROOT" ls-files --others --exclude-standard 2>/dev/null)" ]; then
+    echo "error: primary worktree has untracked files" >&2
+    exit 10
+  fi
+
+  # Fetch latest main
+  if ! git fetch origin main; then
+    echo "error: failed to fetch origin main" >&2
+    exit 1
+  fi
+
+  # Rebase current branch onto origin/main
+  if ! git rebase origin/main; then
+    echo "error: rebase conflict — resolve manually and retry" >&2
+    git rebase --abort 2>/dev/null || true
+    exit 11
+  fi
+
+  # Fast-forward merge on primary
+  git -C "$PROJECT_ROOT" merge --ff-only "$BRANCH"
+else
+  # --- Primary flow (legacy) ---
+  git checkout main
+  git pull --ff-only origin main 2>/dev/null || true
+  git rebase main "$BRANCH"
+  git checkout main
+  git merge --ff-only "$BRANCH"
+fi

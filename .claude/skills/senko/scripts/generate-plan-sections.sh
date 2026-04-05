@@ -68,6 +68,8 @@ if [ "$MERGE_VIA" = "direct" ]; then
     echo "- Rebase merge the branch into main using the rebase-merge script (all DoD items must be checked before this step):"
     echo "  \`bash \${CLAUDE_SKILL_DIR}/scripts/rebase-merge.sh <branch-name>\`"
   fi
+  echo "- If the merge script exits with code 10 (primary worktree has uncommitted changes), use \`AskUserQuestion\` to inform the user and ask them to clean up the primary worktree before retrying"
+  echo "- If the merge script exits with code 11 (rebase conflict), use \`AskUserQuestion\` to inform the user about the conflict and ask how to proceed (manual resolution or abort)"
 elif [ "$MERGE_VIA" = "pr" ]; then
   if [ "$AUTO_MERGE" = "true" ]; then
     echo "- Create PR and merge (all DoD items must be checked before this step)"
