@@ -269,49 +269,46 @@ pub fn init_tracing(config: &LogConfig) {
 }
 
 pub fn load_config(project_root: &Path, explicit_config: Option<&Path>) -> Result<Config> {
-    // 1. Load user config (lowest priority layer)
-    let user_raw = load_user_config()?;
+    // 1. Load user config + user local overlay
+    let (user_raw, user_local) = load_user_config()?;
 
-    // 2. Determine and load the project/explicit config
-    let project_raw = if let Some(path) = explicit_config {
-        // Explicit --config flag: must exist
-        Some(load_config_file(path, true)?)
+    // 2. Load project/explicit config + its local overlay
+    let (project_raw, project_local) = if let Some(path) = explicit_config {
+        let raw = load_config_file(path, true)?;
+        let local = load_local_overlay(path)?;
+        (Some(raw), local)
     } else if let Some(env_path) = env_config_path() {
-        // SENKO_CONFIG env var: must exist
-        Some(load_config_file(&env_path, true)?)
+        let raw = load_config_file(&env_path, true)?;
+        let local = load_local_overlay(&env_path)?;
+        (Some(raw), local)
     } else {
         let default_path = project_root.join(".senko").join("config.toml");
         if default_path.exists() {
-            Some(load_config_file(&default_path, false)?)
+            let raw = load_config_file(&default_path, false)?;
+            let local = load_local_overlay(&default_path)?;
+            (Some(raw), local)
         } else {
-            None
+            (None, None)
         }
     };
 
-    // 3. Load local config overlay (.senko/config.local.toml)
-    let local_raw = {
-        let local_path = project_root.join(".senko").join("config.local.toml");
-        if local_path.exists() {
-            Some(load_config_file(&local_path, false)?)
-        } else {
-            None
-        }
+    // 3. Merge: user → user local → project → project local
+    let mut merged = match user_raw {
+        Some(r) => r,
+        None => RawConfig::default(),
     };
+    if let Some(local) = user_local {
+        merged = merged.merge(local);
+    }
+    if let Some(project) = project_raw {
+        merged = merged.merge(project);
+    }
+    if let Some(local) = project_local {
+        merged = merged.merge(local);
+    }
 
-    // 4. Merge: user config → project config → local config
-    let merged_raw = match (user_raw, project_raw) {
-        (Some(base), Some(overlay)) => base.merge(overlay),
-        (None, Some(overlay)) => overlay,
-        (Some(base), None) => base,
-        (None, None) => RawConfig::default(),
-    };
-    let merged_raw = match local_raw {
-        Some(local) => merged_raw.merge(local),
-        None => merged_raw,
-    };
-
-    // 5. Resolve to final Config and apply env overrides
-    let mut config = merged_raw.resolve();
+    // 4. Resolve to final Config and apply env overrides
+    let mut config = merged.resolve();
     config.apply_env();
     Ok(config)
 }
@@ -331,14 +328,25 @@ fn user_config_path() -> Option<PathBuf> {
     Some(config_dir.join("senko").join("config.toml"))
 }
 
-/// Load user-level config if it exists.
-fn load_user_config() -> Result<Option<RawConfig>> {
+/// Load user-level config and its local overlay if they exist.
+fn load_user_config() -> Result<(Option<RawConfig>, Option<RawConfig>)> {
     let path = match user_config_path() {
         Some(p) if p.exists() => p,
-        _ => return Ok(None),
+        _ => return Ok((None, None)),
     };
     let raw = load_config_file(&path, false)?;
-    Ok(Some(raw))
+    let local = load_local_overlay(&path)?;
+    Ok((Some(raw), local))
+}
+
+/// Load config.local.toml from the same directory as the given config file.
+fn load_local_overlay(config_path: &Path) -> Result<Option<RawConfig>> {
+    let local_path = config_path.with_file_name("config.local.toml");
+    if local_path.exists() {
+        Ok(Some(load_config_file(&local_path, false)?))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Return the config path from the SENKO_CONFIG env var, if set.
@@ -396,9 +404,8 @@ mod tests {
 
     /// Run `load_config` in an isolated environment where no real user config
     /// or env-var config can leak in.
-    fn load_config_isolated(project_root: &Path) -> Result<Config> {
-        // Point XDG_CONFIG_HOME to a non-existent dir so `load_user_config`
-        // returns None, and clear SENKO_* env vars that could override values.
+    /// Isolate env vars so no real user config or env-var config can leak in.
+    fn isolate_env(project_root: &Path) {
         let empty = project_root.join("__no_user_config__");
         // SAFETY: tests run with --test-threads=1 to avoid env var races.
         unsafe {
@@ -407,6 +414,12 @@ mod tests {
             std::env::remove_var("SENKO_USER");
             std::env::remove_var("SENKO_PROJECT");
         }
+    }
+
+    /// Run `load_config` in an isolated environment where no real user config
+    /// or env-var config can leak in.
+    fn load_config_isolated(project_root: &Path) -> Result<Config> {
+        isolate_env(project_root);
         load_config(project_root, None)
     }
 
@@ -459,5 +472,175 @@ name = "project-user"
 
         let config = load_config_isolated(dir.path()).unwrap();
         assert_eq!(config.user.name.as_deref(), Some("project-user"));
+    }
+
+    #[test]
+    fn load_config_explicit_config_uses_sibling_local() {
+        let dir = tempfile::tempdir().unwrap();
+        let custom_dir = dir.path().join("custom");
+        fs::create_dir_all(&custom_dir).unwrap();
+
+        fs::write(
+            custom_dir.join("config.toml"),
+            r#"
+[user]
+name = "custom-user"
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            custom_dir.join("config.local.toml"),
+            r#"
+[user]
+name = "custom-local-user"
+"#,
+        )
+        .unwrap();
+
+        isolate_env(dir.path());
+        let config = load_config(dir.path(), Some(&custom_dir.join("config.toml"))).unwrap();
+        assert_eq!(config.user.name.as_deref(), Some("custom-local-user"));
+    }
+
+    #[test]
+    fn load_config_explicit_config_ignores_project_local() {
+        let dir = tempfile::tempdir().unwrap();
+        let senko_dir = dir.path().join(".senko");
+        let custom_dir = dir.path().join("custom");
+        fs::create_dir_all(&senko_dir).unwrap();
+        fs::create_dir_all(&custom_dir).unwrap();
+
+        // Project local overlay should NOT be loaded when --config is used
+        fs::write(
+            senko_dir.join("config.local.toml"),
+            r#"
+[user]
+name = "project-local-user"
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            custom_dir.join("config.toml"),
+            r#"
+[user]
+name = "custom-user"
+"#,
+        )
+        .unwrap();
+
+        isolate_env(dir.path());
+        let config = load_config(dir.path(), Some(&custom_dir.join("config.toml"))).unwrap();
+        // Should be "custom-user", NOT "project-local-user"
+        assert_eq!(config.user.name.as_deref(), Some("custom-user"));
+    }
+
+    #[test]
+    fn load_config_user_local_overlay() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_config_dir = dir.path().join("user_config").join("senko");
+        fs::create_dir_all(&user_config_dir).unwrap();
+
+        fs::write(
+            user_config_dir.join("config.toml"),
+            r#"
+[user]
+name = "base-user"
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            user_config_dir.join("config.local.toml"),
+            r#"
+[user]
+name = "user-local-override"
+"#,
+        )
+        .unwrap();
+
+        // Point XDG_CONFIG_HOME to our test dir
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", dir.path().join("user_config"));
+            std::env::remove_var("SENKO_CONFIG");
+            std::env::remove_var("SENKO_USER");
+            std::env::remove_var("SENKO_PROJECT");
+        }
+
+        let project_dir = dir.path().join("project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let config = load_config(&project_dir, None).unwrap();
+        assert_eq!(config.user.name.as_deref(), Some("user-local-override"));
+    }
+
+    #[test]
+    fn load_config_merge_order() {
+        // Verify: user → user local → project → project local
+        let dir = tempfile::tempdir().unwrap();
+        let user_config_dir = dir.path().join("user_config").join("senko");
+        let senko_dir = dir.path().join("project").join(".senko");
+        fs::create_dir_all(&user_config_dir).unwrap();
+        fs::create_dir_all(&senko_dir).unwrap();
+
+        // User config sets user.name and project.name
+        fs::write(
+            user_config_dir.join("config.toml"),
+            r#"
+[user]
+name = "user-base"
+
+[project]
+name = "user-project"
+"#,
+        )
+        .unwrap();
+
+        // User local overrides user.name only
+        fs::write(
+            user_config_dir.join("config.local.toml"),
+            r#"
+[user]
+name = "user-local"
+"#,
+        )
+        .unwrap();
+
+        // Project config overrides project.name, sets a new field
+        fs::write(
+            senko_dir.join("config.toml"),
+            r#"
+[project]
+name = "project-base"
+"#,
+        )
+        .unwrap();
+
+        // Project local overrides project.name
+        fs::write(
+            senko_dir.join("config.local.toml"),
+            r#"
+[project]
+name = "project-local"
+"#,
+        )
+        .unwrap();
+
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", dir.path().join("user_config"));
+            std::env::remove_var("SENKO_CONFIG");
+            std::env::remove_var("SENKO_USER");
+            std::env::remove_var("SENKO_PROJECT");
+        }
+
+        let project_dir = dir.path().join("project");
+        let config = load_config(&project_dir, None).unwrap();
+
+        // user.name: user-base → user-local (user local wins over user base)
+        // project config and project local don't set user.name, so user-local stays
+        assert_eq!(config.user.name.as_deref(), Some("user-local"));
+
+        // project.name: user-project → (user local doesn't set it) → project-base → project-local
+        assert_eq!(config.project.name.as_deref(), Some("project-local"));
     }
 }
