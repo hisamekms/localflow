@@ -409,7 +409,6 @@ on_task_completed = ["notify-send '完了'", "curl https://example.com/done"]
 | 変数 | 説明 | デフォルト |
 |------|------|----------|
 | `SENKO_API_URL` | APIサーバーURL（設定するとSQLiteの代わりにHTTPバックエンドを使用） | _（未設定 = SQLite）_ |
-| `SENKO_HOOK_MODE` | `server`、`client`、または `both` | `server` |
 
 ### ログ
 
@@ -418,6 +417,10 @@ on_task_completed = ["notify-send '完了'", "curl https://example.com/done"]
 | `SENKO_LOG_DIR` | フックログの出力ディレクトリ | `$XDG_STATE_HOME/senko` |
 
 ### フック
+
+| 変数 | 説明 | デフォルト |
+|------|------|----------|
+| `SENKO_HOOKS_ENABLED` | このプロセスでのフック実行を有効/無効にする | `true` |
 
 | 変数 | 説明 |
 |------|------|

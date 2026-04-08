@@ -16,9 +16,9 @@ echo "[2] SENKO_AUTO_MERGE overrides default"
 JSON_OUT="$(SENKO_AUTO_MERGE=false run_lf config)"
 assert_json_field "$JSON_OUT" '.workflow.auto_merge' "false" "env overrides auto_merge"
 
-echo "[3] SENKO_HOOK_MODE overrides default"
-JSON_OUT="$(SENKO_HOOK_MODE=client run_lf config)"
-assert_json_field "$JSON_OUT" '.backend.hook_mode' "client" "env overrides hook_mode"
+echo "[3] SENKO_HOOKS_ENABLED overrides default"
+JSON_OUT="$(SENKO_HOOKS_ENABLED=false run_lf config)"
+assert_json_field "$JSON_OUT" '.hooks.enabled' "false" "env overrides hooks.enabled"
 
 echo "[4] SENKO_API_URL overrides default"
 JSON_OUT="$(SENKO_API_URL=http://remote:9999 run_lf config)"
@@ -31,13 +31,13 @@ cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
 merge_via = "direct"
 auto_merge = true
 
-[backend]
-hook_mode = "server"
+[hooks]
+enabled = true
 EOF
-JSON_OUT="$(SENKO_MERGE_VIA=pr SENKO_AUTO_MERGE=false SENKO_HOOK_MODE=both run_lf config)"
+JSON_OUT="$(SENKO_MERGE_VIA=pr SENKO_AUTO_MERGE=false SENKO_HOOKS_ENABLED=false run_lf config)"
 assert_json_field "$JSON_OUT" '.workflow.merge_via' "pr" "env overrides toml merge_via"
 assert_json_field "$JSON_OUT" '.workflow.auto_merge' "false" "env overrides toml auto_merge"
-assert_json_field "$JSON_OUT" '.backend.hook_mode' "both" "env overrides toml hook_mode"
+assert_json_field "$JSON_OUT" '.hooks.enabled' "false" "env overrides toml hooks.enabled"
 
 echo "[6] SENKO_HOOK_ON_TASK_ADDED inserts env hook"
 JSON_OUT="$(SENKO_HOOK_ON_TASK_ADDED="echo env-hook" run_lf config)"

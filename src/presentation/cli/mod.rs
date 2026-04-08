@@ -492,6 +492,8 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 #   4. Project config (.senko/config.toml)
 #   5. User config (~/.config/senko/config.toml)
 
+# enabled = true  # set to false to disable all hook execution (default: true)
+#
 # Named hooks: [hooks.<event>.<name>]
 # Each hook has a `command` and optional `enabled` (default: true).
 # Set `enabled = false` to disable a hook inherited from user config.
@@ -524,7 +526,6 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 
 [backend]
 # api_url = "http://127.0.0.1:3142"  # uncomment to use HTTP backend
-# hook_mode = "server"  # "server" (default), "client", or "both"
 
 [storage]
 # db_path = "/custom/path/to/data.db"  # override SQLite database path (default: $XDG_DATA_HOME/senko/projects/<hash>/data.db)

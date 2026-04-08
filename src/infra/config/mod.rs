@@ -130,23 +130,12 @@ pub struct StorageConfig {
 pub struct BackendConfig {
     pub api_url: Option<String>,
     pub api_key: Option<String>,
-    #[serde(default)]
-    pub hook_mode: HookMode,
     #[cfg(feature = "dynamodb")]
     #[serde(default)]
     pub dynamodb: Option<DynamoDbConfig>,
     #[cfg(feature = "postgres")]
     #[serde(default)]
     pub postgres: Option<PostgresConfig>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum HookMode {
-    #[default]
-    Server,
-    Client,
-    Both,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,8 +193,10 @@ pub struct HookEntry {
     pub requires_env: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HooksConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     #[serde(default)]
     pub on_task_added: BTreeMap<String, HookEntry>,
     #[serde(default)]
@@ -218,6 +209,20 @@ pub struct HooksConfig {
     pub on_task_canceled: BTreeMap<String, HookEntry>,
     #[serde(default)]
     pub on_no_eligible_task: BTreeMap<String, HookEntry>,
+}
+
+impl Default for HooksConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            on_task_added: BTreeMap::new(),
+            on_task_ready: BTreeMap::new(),
+            on_task_started: BTreeMap::new(),
+            on_task_completed: BTreeMap::new(),
+            on_task_canceled: BTreeMap::new(),
+            on_no_eligible_task: BTreeMap::new(),
+        }
+    }
 }
 
 impl HooksConfig {
@@ -296,7 +301,6 @@ pub struct RawWorkflowConfig {
 pub struct RawBackendConfig {
     pub api_url: Option<String>,
     pub api_key: Option<String>,
-    pub hook_mode: Option<HookMode>,
     #[cfg(feature = "dynamodb")]
     pub dynamodb: Option<DynamoDbConfig>,
     #[cfg(feature = "postgres")]
@@ -336,7 +340,6 @@ impl RawConfig {
             backend: RawBackendConfig {
                 api_url: overlay.backend.api_url.or(self.backend.api_url),
                 api_key: overlay.backend.api_key.or(self.backend.api_key),
-                hook_mode: overlay.backend.hook_mode.or(self.backend.hook_mode),
                 #[cfg(feature = "dynamodb")]
                 dynamodb: overlay.backend.dynamodb.or(self.backend.dynamodb),
                 #[cfg(feature = "postgres")]
@@ -381,7 +384,6 @@ impl RawConfig {
             backend: BackendConfig {
                 api_url: self.backend.api_url,
                 api_key: self.backend.api_key,
-                hook_mode: self.backend.hook_mode.unwrap_or_default(),
                 #[cfg(feature = "dynamodb")]
                 dynamodb: self.backend.dynamodb,
                 #[cfg(feature = "postgres")]
@@ -420,6 +422,7 @@ fn merge_hooks(base: HooksConfig, overlay: HooksConfig) -> HooksConfig {
         base
     }
     HooksConfig {
+        enabled: overlay.enabled,
         on_task_added: merge_map(base.on_task_added, overlay.on_task_added),
         on_task_ready: merge_map(base.on_task_ready, overlay.on_task_ready),
         on_task_started: merge_map(base.on_task_started, overlay.on_task_started),
@@ -504,12 +507,11 @@ impl Config {
                 self.backend.api_key = Some(val);
             }
         }
-        if let Ok(val) = std::env::var("SENKO_HOOK_MODE") {
+        if let Ok(val) = std::env::var("SENKO_HOOKS_ENABLED") {
             match val.to_lowercase().as_str() {
-                "server" => self.backend.hook_mode = HookMode::Server,
-                "client" => self.backend.hook_mode = HookMode::Client,
-                "both" => self.backend.hook_mode = HookMode::Both,
-                other => eprintln!("warning: unknown SENKO_HOOK_MODE={other}, ignoring"),
+                "true" | "1" => self.hooks.enabled = true,
+                "false" | "0" => self.hooks.enabled = false,
+                other => eprintln!("warning: unknown SENKO_HOOKS_ENABLED={other}, ignoring"),
             }
         }
 

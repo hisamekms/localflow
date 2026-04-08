@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# E2E tests for hook firing in HttpBackend mode with different HookMode settings.
-# Verifies that hooks fire on the correct side (cli/api) for each HookMode
-# across all state transitions (ready/start/complete/cancel).
+# E2E tests for hook firing in HttpBackend mode with hooks.enabled setting.
+# Verifies that hooks fire on the correct side (cli/api) based on hooks.enabled.
 
 source "$(dirname "$0")/helpers.sh"
 
@@ -13,11 +12,11 @@ SERVER_PID=""
 # --- Helper functions ---
 
 write_config() {
-  local hook_mode="$1"
+  local hooks_enabled="$1"
   mkdir -p "$TEST_PROJECT_ROOT/.senko"
   cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
-[backend]
-hook_mode = "$hook_mode"
+[hooks]
+enabled = $hooks_enabled
 
 [hooks.on_task_ready.test_hook]
 command = "true"
@@ -116,107 +115,80 @@ assert_gte() {
 }
 
 # ========================================
-# Section 1: HookMode = server (default)
+# Section 1: hooks.enabled = false
 # CLI should NOT fire hooks, API should fire hooks
 # ========================================
-echo "--- Section 1: HookMode = server ---"
+echo "--- Section 1: hooks.enabled = false ---"
 
-write_config "server"
+write_config "false"
 start_server
 clear_hook_log
 
 run_transitions
 sleep 1
 
-echo "[1.1] Server mode: API fires task_ready"
-assert_gte "$(count_log_entries api task_ready)" 1 "server: api fires task_ready"
+echo "[1.1] Disabled: API fires task_ready"
+assert_gte "$(count_log_entries api task_ready)" 1 "disabled: api fires task_ready"
 
-echo "[1.2] Server mode: API fires task_started"
-assert_gte "$(count_log_entries api task_started)" 1 "server: api fires task_started"
+echo "[1.2] Disabled: API fires task_started"
+assert_gte "$(count_log_entries api task_started)" 1 "disabled: api fires task_started"
 
-echo "[1.3] Server mode: API fires task_completed"
-assert_gte "$(count_log_entries api task_completed)" 1 "server: api fires task_completed"
+echo "[1.3] Disabled: API fires task_completed"
+assert_gte "$(count_log_entries api task_completed)" 1 "disabled: api fires task_completed"
 
-echo "[1.4] Server mode: API fires task_canceled"
-assert_gte "$(count_log_entries api task_canceled)" 1 "server: api fires task_canceled"
+echo "[1.4] Disabled: API fires task_canceled"
+assert_gte "$(count_log_entries api task_canceled)" 1 "disabled: api fires task_canceled"
 
-echo "[1.5] Server mode: CLI does NOT fire task_ready"
-assert_eq "0" "$(count_log_entries cli task_ready)" "server: cli no task_ready"
+echo "[1.5] Disabled: CLI does NOT fire task_ready"
+assert_eq "0" "$(count_log_entries cli task_ready)" "disabled: cli no task_ready"
 
-echo "[1.6] Server mode: CLI does NOT fire task_started"
-assert_eq "0" "$(count_log_entries cli task_started)" "server: cli no task_started"
+echo "[1.6] Disabled: CLI does NOT fire task_started"
+assert_eq "0" "$(count_log_entries cli task_started)" "disabled: cli no task_started"
 
-echo "[1.7] Server mode: CLI does NOT fire task_completed"
-assert_eq "0" "$(count_log_entries cli task_completed)" "server: cli no task_completed"
+echo "[1.7] Disabled: CLI does NOT fire task_completed"
+assert_eq "0" "$(count_log_entries cli task_completed)" "disabled: cli no task_completed"
 
-echo "[1.8] Server mode: CLI does NOT fire task_canceled"
-assert_eq "0" "$(count_log_entries cli task_canceled)" "server: cli no task_canceled"
-
-stop_server
-
-# ========================================
-# Section 2: HookMode = client
-# CLI should fire hooks (API also fires)
-# ========================================
-echo "--- Section 2: HookMode = client ---"
-
-write_config "client"
-start_server
-clear_hook_log
-
-run_transitions
-sleep 1
-
-echo "[2.1] Client mode: CLI fires task_ready"
-assert_gte "$(count_log_entries cli task_ready)" 1 "client: cli fires task_ready"
-
-echo "[2.2] Client mode: CLI fires task_started"
-assert_gte "$(count_log_entries cli task_started)" 1 "client: cli fires task_started"
-
-echo "[2.3] Client mode: CLI fires task_completed"
-assert_gte "$(count_log_entries cli task_completed)" 1 "client: cli fires task_completed"
-
-echo "[2.4] Client mode: CLI fires task_canceled"
-assert_gte "$(count_log_entries cli task_canceled)" 1 "client: cli fires task_canceled"
+echo "[1.8] Disabled: CLI does NOT fire task_canceled"
+assert_eq "0" "$(count_log_entries cli task_canceled)" "disabled: cli no task_canceled"
 
 stop_server
 
 # ========================================
-# Section 3: HookMode = both
+# Section 2: hooks.enabled = true (default)
 # Both CLI and API should fire hooks
 # ========================================
-echo "--- Section 3: HookMode = both ---"
+echo "--- Section 2: hooks.enabled = true ---"
 
-write_config "both"
+write_config "true"
 start_server
 clear_hook_log
 
 run_transitions
 sleep 1
 
-echo "[3.1] Both mode: CLI fires task_ready"
-assert_gte "$(count_log_entries cli task_ready)" 1 "both: cli fires task_ready"
+echo "[2.1] Enabled: CLI fires task_ready"
+assert_gte "$(count_log_entries cli task_ready)" 1 "enabled: cli fires task_ready"
 
-echo "[3.2] Both mode: CLI fires task_started"
-assert_gte "$(count_log_entries cli task_started)" 1 "both: cli fires task_started"
+echo "[2.2] Enabled: CLI fires task_started"
+assert_gte "$(count_log_entries cli task_started)" 1 "enabled: cli fires task_started"
 
-echo "[3.3] Both mode: CLI fires task_completed"
-assert_gte "$(count_log_entries cli task_completed)" 1 "both: cli fires task_completed"
+echo "[2.3] Enabled: CLI fires task_completed"
+assert_gte "$(count_log_entries cli task_completed)" 1 "enabled: cli fires task_completed"
 
-echo "[3.4] Both mode: CLI fires task_canceled"
-assert_gte "$(count_log_entries cli task_canceled)" 1 "both: cli fires task_canceled"
+echo "[2.4] Enabled: CLI fires task_canceled"
+assert_gte "$(count_log_entries cli task_canceled)" 1 "enabled: cli fires task_canceled"
 
-echo "[3.5] Both mode: API fires task_ready"
-assert_gte "$(count_log_entries api task_ready)" 1 "both: api fires task_ready"
+echo "[2.5] Enabled: API fires task_ready"
+assert_gte "$(count_log_entries api task_ready)" 1 "enabled: api fires task_ready"
 
-echo "[3.6] Both mode: API fires task_started"
-assert_gte "$(count_log_entries api task_started)" 1 "both: api fires task_started"
+echo "[2.6] Enabled: API fires task_started"
+assert_gte "$(count_log_entries api task_started)" 1 "enabled: api fires task_started"
 
-echo "[3.7] Both mode: API fires task_completed"
-assert_gte "$(count_log_entries api task_completed)" 1 "both: api fires task_completed"
+echo "[2.7] Enabled: API fires task_completed"
+assert_gte "$(count_log_entries api task_completed)" 1 "enabled: api fires task_completed"
 
-echo "[3.8] Both mode: API fires task_canceled"
-assert_gte "$(count_log_entries api task_canceled)" 1 "both: api fires task_canceled"
+echo "[2.8] Enabled: API fires task_canceled"
+assert_gte "$(count_log_entries api task_canceled)" 1 "enabled: api fires task_canceled"
 
 stop_server
 

@@ -16,7 +16,6 @@ name = "senko"
 
 # [backend]
 # api_url = "http://127.0.0.1:3142"
-# hook_mode = "server"
 
 # [storage]
 # db_path = "/custom/path/to/data.db"

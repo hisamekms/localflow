@@ -413,7 +413,6 @@ All settings follow the precedence: **CLI flag > environment variable > config.t
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SENKO_API_URL` | API server URL (enables HTTP backend instead of SQLite) | _(unset = SQLite)_ |
-| `SENKO_HOOK_MODE` | `server`, `client`, or `both` | `server` |
 
 ### Log
 
@@ -422,6 +421,10 @@ All settings follow the precedence: **CLI flag > environment variable > config.t
 | `SENKO_LOG_DIR` | Directory for hook log output | `$XDG_STATE_HOME/senko` |
 
 ### Hooks
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SENKO_HOOKS_ENABLED` | Enable or disable hook execution on this process | `true` |
 
 | Variable | Description |
 |----------|-------------|

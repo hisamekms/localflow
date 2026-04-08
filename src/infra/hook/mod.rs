@@ -678,7 +678,7 @@ mod tests {
     use super::*;
     use crate::bootstrap::load_config;
     use crate::infra::config::{
-        MergeVia, HookMode, HooksConfig, RawLogConfig, RawWorkflowConfig,
+        MergeVia, HooksConfig, RawLogConfig, RawWorkflowConfig,
     };
     use crate::infra::sqlite::SqliteBackend;
     use crate::application::port::TaskQueryPort;
@@ -1678,21 +1678,21 @@ on_task_added = "echo added"
     }
 
     #[test]
-    fn env_override_hook_mode() {
+    fn env_override_hooks_enabled() {
         let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
-            let orig = std::env::var("SENKO_HOOK_MODE").ok();
-            std::env::set_var("SENKO_HOOK_MODE", "client");
+            let orig = std::env::var("SENKO_HOOKS_ENABLED").ok();
+            std::env::set_var("SENKO_HOOKS_ENABLED", "false");
             let mut config = Config::default();
             config.apply_env();
-            assert_eq!(config.backend.hook_mode, HookMode::Client);
-            std::env::set_var("SENKO_HOOK_MODE", "both");
+            assert!(!config.hooks.enabled);
+            std::env::set_var("SENKO_HOOKS_ENABLED", "true");
             let mut config = Config::default();
             config.apply_env();
-            assert_eq!(config.backend.hook_mode, HookMode::Both);
+            assert!(config.hooks.enabled);
             match orig {
-                Some(v) => std::env::set_var("SENKO_HOOK_MODE", v),
-                None => std::env::remove_var("SENKO_HOOK_MODE"),
+                Some(v) => std::env::set_var("SENKO_HOOKS_ENABLED", v),
+                None => std::env::remove_var("SENKO_HOOKS_ENABLED"),
             }
         }
     }

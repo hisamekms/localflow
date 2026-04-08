@@ -32,7 +32,6 @@ For each section, explain every item's **current value**, whether it's the **def
 |---|---|---|---|
 | `api_url` | `null` | URL string | HTTP backend API URL. When set, senko operates in remote mode. |
 | `api_key` | `null` | string | API key for authenticating with the remote backend. |
-| `hook_mode` | `server` | `server`, `client`, `both` | Where hooks execute: `server` (remote), `client` (local), or `both`. |
 
 **storage**
 | Key | Default | Options | Description |
@@ -62,6 +61,10 @@ For each section, explain every item's **current value**, whether it's the **def
 | `host` | `127.0.0.1` | IP address | Host address for the web server. |
 
 **hooks**
+| Key | Default | Options | Description |
+|---|---|---|---|
+| `enabled` | `true` | `true`, `false` | Whether hooks fire on this process (CLI). API server always fires hooks regardless. |
+
 | Event | Description |
 |---|---|
 | `on_task_added` | Triggered when a new task is created. |
@@ -87,5 +90,5 @@ Higher-priority sources override lower ones. The `senko config` output shows the
 
 Format the explanation clearly, highlighting:
 - Values that differ from defaults
-- Any potentially important settings (e.g., `merge_via`, `hook_mode`)
+- Any potentially important settings (e.g., `merge_via`, `hooks.enabled`)
 - Hooks that are currently configured

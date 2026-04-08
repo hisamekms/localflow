@@ -30,7 +30,6 @@ Walk through sections in this order:
    - `merge_strategy`: rebase or squash merge?
 4. **backend** — Remote backend settings (skip if local-only use):
    - `api_url`: remote API URL
-   - `hook_mode`: where hooks run (server/client/both)
 5. **storage** — Custom database path (skip if default is fine)
 6. **log** — Logging preferences:
    - `level`: trace/debug/info/warn/error

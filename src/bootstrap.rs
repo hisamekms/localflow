@@ -9,7 +9,7 @@ use crate::application::port::{HookExecutor, PrVerifier};
 use crate::application::{HookTestService, LocalTaskOperations, ProjectService, TaskOperations, UserService};
 use crate::domain::task::CompletionPolicy;
 use crate::application::port::TaskBackend;
-use crate::infra::config::{Config, HookMode, LogConfig, LogFormat, RawConfig};
+use crate::infra::config::{Config, LogConfig, LogFormat, RawConfig};
 use crate::infra::http::HttpBackend;
 use crate::infra::http::remote_task_ops::RemoteTaskOperations;
 use crate::infra::hook::executor::ShellHookExecutor;
@@ -76,11 +76,7 @@ pub fn create_backend(
 }
 
 pub fn should_fire_client_hooks(config: &Config) -> bool {
-    let using_http = config.backend.api_url.is_some();
-    match config.backend.hook_mode {
-        HookMode::Server => !using_http,
-        HookMode::Client | HookMode::Both => true,
-    }
+    config.hooks.enabled
 }
 
 /// Resolve the backend info from config for hook envelope metadata.

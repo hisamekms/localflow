@@ -540,7 +540,8 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                 Some(ref url) => println!("    api_url: {url}"),
                 None => println!("    api_url: (none, using SQLite)"),
             }
-            println!("    hook_mode: {:?}", config.backend.hook_mode);
+            println!("  [hooks]");
+            println!("    enabled: {}", config.hooks.enabled);
             println!("  [project]");
             match config.project.name {
                 Some(ref name) => println!("    name: {name}"),

@@ -256,18 +256,18 @@ assert_eq "0" "$UNBLOCKED_COUNT2" "api complete: 0 unblocked for standalone task
 stop_server
 
 # ========================================
-# Section 4: HookMode verification
-# Server/Client/Both modes fire hooks correctly
+# Section 4: hooks.enabled verification
+# enabled=true/false fire hooks correctly
 # ========================================
 echo ""
-echo "=== Section 4: HookMode Verification ==="
+echo "=== Section 4: hooks.enabled Verification ==="
 
 write_hook_config() {
-  local hook_mode="$1"
+  local hooks_enabled="$1"
   mkdir -p "$TEST_PROJECT_ROOT/.senko"
   cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
-[backend]
-hook_mode = "$hook_mode"
+[hooks]
+enabled = $hooks_enabled
 
 [hooks.on_task_ready.test_hook]
 command = "true"
@@ -289,9 +289,9 @@ run_hook_transitions() {
   run_http complete "$t1_id" >/dev/null 2>&1
 }
 
-echo "[4.1] HookMode = server: API fires, CLI does not"
+echo "[4.1] hooks.enabled = false: API fires, CLI does not"
 setup_test_env
-write_hook_config "server"
+write_hook_config "false"
 start_server
 clear_hook_log
 
@@ -313,40 +313,26 @@ assert_gte() {
   fi
 }
 
-assert_gte "$(count_log_entries api task_ready)" 1 "server mode: api fires task_ready"
-assert_gte "$(count_log_entries api task_completed)" 1 "server mode: api fires task_completed"
-assert_eq "0" "$(count_log_entries cli task_ready)" "server mode: cli no task_ready"
-assert_eq "0" "$(count_log_entries cli task_completed)" "server mode: cli no task_completed"
+assert_gte "$(count_log_entries api task_ready)" 1 "disabled: api fires task_ready"
+assert_gte "$(count_log_entries api task_completed)" 1 "disabled: api fires task_completed"
+assert_eq "0" "$(count_log_entries cli task_ready)" "disabled: cli no task_ready"
+assert_eq "0" "$(count_log_entries cli task_completed)" "disabled: cli no task_completed"
 
 stop_server
 
-echo "[4.2] HookMode = client: CLI fires"
+echo "[4.2] hooks.enabled = true: CLI and API both fire"
 setup_test_env
-write_hook_config "client"
+write_hook_config "true"
 start_server
 clear_hook_log
 
 run_hook_transitions
 sleep 1
 
-assert_gte "$(count_log_entries cli task_ready)" 1 "client mode: cli fires task_ready"
-assert_gte "$(count_log_entries cli task_completed)" 1 "client mode: cli fires task_completed"
-
-stop_server
-
-echo "[4.3] HookMode = both: CLI and API both fire"
-setup_test_env
-write_hook_config "both"
-start_server
-clear_hook_log
-
-run_hook_transitions
-sleep 1
-
-assert_gte "$(count_log_entries cli task_ready)" 1 "both mode: cli fires task_ready"
-assert_gte "$(count_log_entries cli task_completed)" 1 "both mode: cli fires task_completed"
-assert_gte "$(count_log_entries api task_ready)" 1 "both mode: api fires task_ready"
-assert_gte "$(count_log_entries api task_completed)" 1 "both mode: api fires task_completed"
+assert_gte "$(count_log_entries cli task_ready)" 1 "enabled: cli fires task_ready"
+assert_gte "$(count_log_entries cli task_completed)" 1 "enabled: cli fires task_completed"
+assert_gte "$(count_log_entries api task_ready)" 1 "enabled: api fires task_ready"
+assert_gte "$(count_log_entries api task_completed)" 1 "enabled: api fires task_completed"
 
 stop_server
 
