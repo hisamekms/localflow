@@ -3,52 +3,84 @@
 ## Normal vs Simple Mode
 
 - **Normal** (`add <description>`): Phase 1 → 2 → 3 → 4 (full workflow)
-- **Simple** (`add --simple <description>`): Phase 1 → 3 → 4 (skip planning)
+- **Simple** (`add --simple <description>`): Create draft → set description → `ready` (no planning)
 
 ## Procedure
 
-### Phase 1: Create Task (draft)
-
-```bash
-senko add --title "<description>"
-```
-
-Capture the `id` from JSON output for subsequent phases.
-
-### Phase 2: Planning (clarification loop)
+### Phase 1: Planning & Split Decision
 
 > **Skip this phase in simple mode.**
 
-Plan the task through conversation (do not enter plan mode). Repeat until no open questions remain:
+Investigate the task through codebase exploration and conversation. Repeat until no open questions remain:
 
 1. Based on the task description and codebase investigation, list **unclear points and decisions needed**
-2. If the list is empty, proceed to Phase 3
+2. If the list is empty, proceed to split decision
 3. For each item, ask the user via `AskUserQuestion`:
    - Present options for each question
    - Mark at least one option with "(Recommended)" when possible
 4. After all questions are resolved, return to step 1 — previous answers may raise new questions
 
-Continue until **no open questions remain**.
+Once all questions are resolved, **decide whether to split the task**. Consider these heuristics:
 
-### Phase 3: Dependency Discovery
+- **Split** when:
+  - The task contains independently workable parts (can be done in parallel by separate sessions)
+  - Changes span multiple modules or layers with no code-level coupling
+  - The task mixes distinct concerns (e.g., auto-fixable lints vs. manual refactoring)
+  - Subtasks have different risk levels or review requirements
+- **Keep as one** when:
+  - All changes are tightly coupled and must be committed together
+  - The task is small enough that splitting adds overhead without benefit
+  - Splitting would create tasks that are trivial on their own
 
-Check existing active tasks for potential dependencies:
+If splitting, define the sub-tasks with their titles and relationships. Ask the user via `AskUserQuestion` to confirm the proposed split.
+
+### Phase 2: Draft Creation
+
+Create one or multiple draft tasks based on Phase 1 results.
+
+**Single task:**
+
+```bash
+senko add --title "<title>"
+```
+
+**Multiple tasks (split):**
+
+```bash
+senko add --title "<sub-task 1 title>"
+senko add --title "<sub-task 2 title>"
+# ...
+```
+
+Capture the `id` from each JSON output for subsequent phases.
+
+### Phase 3: Dependency Setup
+
+Set up dependencies between tasks:
+
+1. Check existing active tasks for potential dependencies:
 
 ```bash
 senko list --status todo
 senko list --status in_progress
 ```
 
-Review the list to identify tasks the new task should depend on.
+2. For **split tasks**: set dependencies between the new tasks where one must complete before another can start (sequential relationships). Tasks that can run in parallel should have no dependency between them.
 
-### Phase 4: Finalize Task
+3. For **all new tasks**: check if any depend on existing active tasks.
 
-**Normal mode:**
+```bash
+senko deps add <task_id> --on <dep_id>
+```
 
-1. Update the task with planning results
+### Phase 4: Finalize Tasks
+
+For each created task:
+
+1. Update with planning results
 2. Use `AskUserQuestion` to confirm:
    - Title and content are appropriate
-   - Dependencies to add
+   - Dependencies are correct
    - Tags to set
    - Priority (default p2) adjustment
 3. Apply confirmed settings:
@@ -64,19 +96,14 @@ senko edit <id> \
 
 # Transition to todo
 senko ready <id>
-
-# If dependencies exist
-senko deps add <id> --on <dep_id>
 ```
 
-**Simple mode:**
+Display the finalized task details (or task graph if multiple) to the user.
 
-1. Set the user's description as the description
-2. Transition to todo:
+---
 
-```bash
-senko edit <id> --description "<description>"
-senko ready <id>
-```
+**Simple mode procedure:**
 
-Display the finalized task details to the user.
+1. Create draft: `senko add --title "<description>"`
+2. Set description: `senko edit <id> --description "<description>"`
+3. Transition: `senko ready <id>`
