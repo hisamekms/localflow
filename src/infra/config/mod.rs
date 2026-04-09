@@ -454,9 +454,8 @@ impl Config {
         let merge_via_env = std::env::var("SENKO_MERGE_VIA")
             .ok()
             .or_else(|| {
-                std::env::var("SENKO_COMPLETION_MODE").ok().map(|val| {
+                std::env::var("SENKO_COMPLETION_MODE").ok().inspect(|_| {
                     eprintln!("warning: SENKO_COMPLETION_MODE is deprecated, use SENKO_MERGE_VIA");
-                    val
                 })
             });
         if let Some(val) = merge_via_env {
@@ -497,16 +496,14 @@ impl Config {
         }
 
         // Backend settings
-        if let Ok(val) = std::env::var("SENKO_API_URL") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_API_URL")
+            && !val.is_empty() {
                 self.backend.api_url = Some(val);
             }
-        }
-        if let Ok(val) = std::env::var("SENKO_API_KEY") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_API_KEY")
+            && !val.is_empty() {
                 self.backend.api_key = Some(val);
             }
-        }
         if let Ok(val) = std::env::var("SENKO_HOOKS_ENABLED") {
             match val.to_lowercase().as_str() {
                 "true" | "1" => self.hooks.enabled = true,
@@ -560,69 +557,58 @@ impl Config {
                 },
             );
         }
-        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_ADDED") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_ADDED")
+            && !val.is_empty() {
                 insert_env_hook(&mut self.hooks.on_task_added, val);
             }
-        }
-        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_READY") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_READY")
+            && !val.is_empty() {
                 insert_env_hook(&mut self.hooks.on_task_ready, val);
             }
-        }
-        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_STARTED") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_STARTED")
+            && !val.is_empty() {
                 insert_env_hook(&mut self.hooks.on_task_started, val);
             }
-        }
-        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_COMPLETED") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_COMPLETED")
+            && !val.is_empty() {
                 insert_env_hook(&mut self.hooks.on_task_completed, val);
             }
-        }
-        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_CANCELED") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_CANCELED")
+            && !val.is_empty() {
                 insert_env_hook(&mut self.hooks.on_task_canceled, val);
             }
-        }
-        if let Ok(val) = std::env::var("SENKO_HOOK_ON_NO_ELIGIBLE_TASK") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_HOOK_ON_NO_ELIGIBLE_TASK")
+            && !val.is_empty() {
                 insert_env_hook(&mut self.hooks.on_no_eligible_task, val);
             }
-        }
 
         // User settings
-        if let Ok(val) = std::env::var("SENKO_USER") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_USER")
+            && !val.is_empty() {
                 self.user.name = Some(val);
             }
-        }
 
         // Project settings
-        if let Ok(val) = std::env::var("SENKO_PROJECT") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_PROJECT")
+            && !val.is_empty() {
                 self.project.name = Some(val);
             }
-        }
 
         // Storage settings
-        if let Ok(val) = std::env::var("SENKO_DB_PATH") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_DB_PATH")
+            && !val.is_empty() {
                 self.storage.db_path = Some(val);
             }
-        }
 
         // Log settings
-        if let Ok(val) = std::env::var("SENKO_LOG_DIR") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_LOG_DIR")
+            && !val.is_empty() {
                 self.log.dir = Some(val);
             }
-        }
-        if let Ok(val) = std::env::var("SENKO_LOG_LEVEL") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_LOG_LEVEL")
+            && !val.is_empty() {
                 self.log.level = val;
             }
-        }
         if let Ok(val) = std::env::var("SENKO_LOG_FORMAT") {
             match val.to_lowercase().as_str() {
                 "json" => self.log.format = LogFormat::Json,
@@ -632,16 +618,14 @@ impl Config {
         }
 
         // Web settings
-        if let Ok(val) = std::env::var("SENKO_PORT") {
-            if let Ok(port) = val.parse::<u16>() {
+        if let Ok(val) = std::env::var("SENKO_PORT")
+            && let Ok(port) = val.parse::<u16>() {
                 self.web.port = Some(port);
             }
-        }
-        if let Ok(val) = std::env::var("SENKO_HOST") {
-            if !val.is_empty() {
+        if let Ok(val) = std::env::var("SENKO_HOST")
+            && !val.is_empty() {
                 self.web.host = Some(val);
             }
-        }
     }
 
     /// Apply CLI argument overrides. Call after `apply_env()`.

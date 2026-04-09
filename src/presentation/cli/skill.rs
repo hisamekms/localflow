@@ -145,12 +145,9 @@ pub fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool, force: b
 
     if let Some(dir) = output_dir {
         // Clean install for --output-dir mode
-        if force && any_install_target_exists_flat(&dir) {
+        if any_install_target_exists_flat(&dir)
+            && (force || confirm("Existing files found. Clean install? [y/N] ")?) {
             clean_install_targets_flat(&dir)?;
-        } else if !force && any_install_target_exists_flat(&dir) {
-            if confirm("Existing files found. Clean install? [y/N] ")? {
-                clean_install_targets_flat(&dir)?;
-            }
         }
         for file in INSTALLABLE_FILES {
             let filename = file.segments.last().unwrap();
@@ -167,22 +164,18 @@ pub fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool, force: b
     let claude_dir = project_root.join(".claude");
     let created_claude_dir = !claude_dir.exists();
 
-    if created_claude_dir && !yes && !force {
-        if !confirm(&format!(
+    if created_claude_dir && !yes && !force
+        && !confirm(&format!(
             ".claude/ directory does not exist. Create it at {}? [y/N] ",
             claude_dir.display()
         ))? {
             bail!("aborted");
         }
-    }
 
     // Clean install when targets already exist
-    if !created_claude_dir && any_install_target_exists(&claude_dir) {
-        if force {
-            clean_install_targets(&claude_dir)?;
-        } else if confirm("Existing files found. Clean install? [y/N] ")? {
-            clean_install_targets(&claude_dir)?;
-        }
+    if !created_claude_dir && any_install_target_exists(&claude_dir)
+        && (force || confirm("Existing files found. Clean install? [y/N] ")?) {
+        clean_install_targets(&claude_dir)?;
     }
 
     for file in INSTALLABLE_FILES {

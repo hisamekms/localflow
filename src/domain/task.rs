@@ -10,18 +10,15 @@ use super::error::DomainError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum MergeVia {
     #[serde(alias = "merge_then_complete")]
+    #[default]
     Direct,
     #[serde(alias = "pr_then_complete")]
     Pr,
 }
 
-impl Default for MergeVia {
-    fn default() -> Self {
-        MergeVia::Direct
-    }
-}
 
 impl fmt::Display for MergeVia {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -34,16 +31,13 @@ impl fmt::Display for MergeVia {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum BranchMode {
+    #[default]
     Worktree,
     Branch,
 }
 
-impl Default for BranchMode {
-    fn default() -> Self {
-        BranchMode::Worktree
-    }
-}
 
 impl fmt::Display for BranchMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -56,16 +50,13 @@ impl fmt::Display for BranchMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum MergeStrategy {
+    #[default]
     Rebase,
     Squash,
 }
 
-impl Default for MergeStrategy {
-    fn default() -> Self {
-        MergeStrategy::Rebase
-    }
-}
 
 impl fmt::Display for MergeStrategy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -472,7 +463,7 @@ impl Task {
             && self.dependencies.iter().all(|dep_id| {
                 dep_statuses
                     .get(dep_id)
-                    .map_or(true, |s| *s == TaskStatus::Completed)
+                    .is_none_or(|s| *s == TaskStatus::Completed)
             })
     }
 
@@ -828,6 +819,7 @@ pub struct UpdateTaskParams {
 }
 
 #[derive(Clone)]
+#[derive(Default)]
 pub struct ListTasksFilter {
     pub statuses: Vec<TaskStatus>,
     pub tags: Vec<String>,
@@ -851,16 +843,6 @@ pub struct UpdateTaskArrayParams {
     pub remove_out_of_scope: Vec<String>,
 }
 
-impl Default for ListTasksFilter {
-    fn default() -> Self {
-        Self {
-            statuses: vec![],
-            tags: vec![],
-            depends_on: None,
-            ready: false,
-        }
-    }
-}
 
 // --- Domain functions ---
 

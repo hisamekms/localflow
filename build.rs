@@ -94,9 +94,7 @@ fn scan_dir(base: &Path, dir: &Path, entries: &mut Vec<SkillEntry>) {
             let const_name = format!(
                 "SKILLS_SENKO_{}",
                 relative_str
-                    .replace('/', "_")
-                    .replace('-', "_")
-                    .replace('.', "_")
+                    .replace(['/', '-', '.'], "_")
                     .to_uppercase()
             );
 

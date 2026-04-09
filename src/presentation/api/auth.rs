@@ -28,31 +28,29 @@ where
 {
     type Rejection = AuthError;
 
-    fn from_request_parts(
+    async fn from_request_parts(
         parts: &mut Parts,
         state: &S,
-    ) -> impl std::future::Future<Output = std::result::Result<Self, Self::Rejection>> + Send {
-        async move {
-            let provider = match state.auth_provider() {
-                Some(p) => p,
-                None => {
-                    return Err(AuthError::MissingToken);
-                }
-            };
+    ) -> std::result::Result<Self, Self::Rejection> {
+        let provider = match state.auth_provider() {
+            Some(p) => p,
+            None => {
+                return Err(AuthError::MissingToken);
+            }
+        };
 
-            let auth_header = parts
-                .headers
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .ok_or(AuthError::MissingToken)?;
+        let auth_header = parts
+            .headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .ok_or(AuthError::MissingToken)?;
 
-            let token = auth_header
-                .strip_prefix("Bearer ")
-                .ok_or(AuthError::InvalidToken)?;
+        let token = auth_header
+            .strip_prefix("Bearer ")
+            .ok_or(AuthError::InvalidToken)?;
 
-            let user = provider.authenticate(token).await?;
-            Ok(AuthUser { user })
-        }
+        let user = provider.authenticate(token).await?;
+        Ok(AuthUser { user })
     }
 }
 
@@ -67,15 +65,13 @@ where
 {
     type Rejection = std::convert::Infallible;
 
-    fn from_request_parts(
+    async fn from_request_parts(
         parts: &mut Parts,
         state: &S,
-    ) -> impl std::future::Future<Output = std::result::Result<Self, Self::Rejection>> + Send {
-        async move {
-            match AuthUser::from_request_parts(parts, state).await {
-                Ok(user) => Ok(OptionalAuthUser(Some(user))),
-                Err(_) => Ok(OptionalAuthUser(None)),
-            }
+    ) -> std::result::Result<Self, Self::Rejection> {
+        match AuthUser::from_request_parts(parts, state).await {
+            Ok(user) => Ok(OptionalAuthUser(Some(user))),
+            Err(_) => Ok(OptionalAuthUser(None)),
         }
     }
 }

@@ -104,6 +104,7 @@ pub struct DryRunOperation {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     /// Add a new task
     Add {
