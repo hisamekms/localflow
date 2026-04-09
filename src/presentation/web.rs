@@ -491,7 +491,7 @@ fn render_task_list(tasks: &[TaskViewModel], query: &ListQuery, all_tags: &[Stri
             let title = escape_html(&t.title);
             let status = status_badge(&t.status);
             let priority = priority_badge(&t.priority);
-            let created = escape_html(&t.created_at.split('T').next().unwrap_or(&t.created_at));
+            let created = escape_html(t.created_at.split('T').next().unwrap_or(&t.created_at));
             let tags_html = if t.tags.is_empty() {
                 String::new()
             } else {

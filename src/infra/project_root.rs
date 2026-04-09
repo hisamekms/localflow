@@ -9,11 +9,10 @@ pub fn resolve_project_root(explicit: Option<&Path>) -> Result<PathBuf> {
     }
 
     // 2. SENKO_PROJECT_ROOT env var
-    if let Ok(val) = std::env::var("SENKO_PROJECT_ROOT") {
-        if !val.is_empty() {
+    if let Ok(val) = std::env::var("SENKO_PROJECT_ROOT")
+        && !val.is_empty() {
             return Ok(PathBuf::from(val));
         }
-    }
 
     // 3. Search upward from current directory
     let start_dir = std::env::current_dir()?;
@@ -46,14 +45,13 @@ fn search_upward(start: &Path, marker: &str) -> Option<PathBuf> {
         let candidate = dir.join(marker);
         if candidate.exists() {
             // Reject symlinks to prevent symlink attacks
-            if let Ok(meta) = std::fs::symlink_metadata(&candidate) {
-                if meta.file_type().is_symlink() {
+            if let Ok(meta) = std::fs::symlink_metadata(&candidate)
+                && meta.file_type().is_symlink() {
                     if !dir.pop() {
                         return None;
                     }
                     continue;
                 }
-            }
             // Canonicalize to resolve any path traversal
             return dir.canonicalize().ok();
         }

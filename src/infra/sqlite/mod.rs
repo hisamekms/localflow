@@ -358,8 +358,8 @@ fn resolve_db_path(
     }
 
     // 4. Migrate from hash-based XDG path → dir-name-based XDG path
-    if let Some(hash_path) = xdg_project_db_path_legacy_hash(project_root) {
-        if hash_path.exists() {
+    if let Some(hash_path) = xdg_project_db_path_legacy_hash(project_root)
+        && hash_path.exists() {
             copy_db_files(&hash_path, &xdg_path)?;
             eprintln!(
                 "warning: migrated database from {} to {}. \
@@ -369,7 +369,6 @@ fn resolve_db_path(
             );
             return Ok(xdg_path);
         }
-    }
 
     // 5. Migrate from legacy project-local path
     let legacy_path = project_root.join(".senko").join("data.db");
@@ -385,8 +384,8 @@ fn resolve_db_path(
     }
 
     // 6. Migrate from old global XDG path (pre-per-project layout)
-    if let Some(global_path) = xdg_global_db_path() {
-        if global_path.exists() {
+    if let Some(global_path) = xdg_global_db_path()
+        && global_path.exists() {
             copy_db_files(&global_path, &xdg_path)?;
             eprintln!(
                 "warning: migrated database from {} to {}. \
@@ -402,7 +401,6 @@ fn resolve_db_path(
             let _ = std::fs::remove_file(global_path.with_extension("db-shm"));
             return Ok(xdg_path);
         }
-    }
 
     // 7. New installation: per-project XDG default
     Ok(xdg_path)
@@ -780,7 +778,7 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
     let metadata_str = params
         .metadata
         .as_ref()
-        .map(|v| serde_json::to_string(v))
+        .map(serde_json::to_string)
         .transpose()?;
 
     // Assign next task_number for this project
@@ -797,15 +795,14 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
     )?;
     let task_id = conn.last_insert_rowid();
 
-    if let Some(ref branch) = params.branch {
-        if branch.contains("${task_id}") {
+    if let Some(ref branch) = params.branch
+        && branch.contains("${task_id}") {
             let expanded = task::expand_branch_template(branch, task_number);
             conn.execute(
                 "UPDATE tasks SET branch = ?1 WHERE id = ?2",
                 params![expanded, task_id],
             )?;
         }
-    }
 
     for item in &params.definition_of_done {
         conn.execute(
@@ -842,10 +839,14 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
     get_task(conn, task_id)
 }
 
+type TaskRow = (
+    i64, i64, String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>,
+    String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
+    Option<String>, Option<String>, Option<i64>,
+);
+
 fn get_task(conn: &Connection, id: i64) -> Result<Task> {
-    let (project_id, task_number, title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata_str, assignee_user_id): (
-        i64, i64, String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>,
-    ) = conn
+    let (project_id, task_number, title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata_str, assignee_user_id): TaskRow = conn
         .query_row(
             "SELECT project_id, task_number, title, background, description, plan, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata, assignee_user_id FROM tasks WHERE id = ?1",
             params![id],
@@ -977,7 +978,7 @@ fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<
         columns.push(TaskColumn::Metadata);
         let metadata_str: Option<String> = metadata
             .as_ref()
-            .map(|v| serde_json::to_string(v))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| anyhow::anyhow!("failed to serialize metadata: {e}"))?;
         values.push(Box::new(metadata_str));
@@ -1052,7 +1053,7 @@ fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayParams
 fn save_task(conn: &Connection, task: &Task) -> Result<()> {
     let metadata_str: Option<String> = task
         .metadata()
-        .map(|v| serde_json::to_string(v))
+        .map(serde_json::to_string)
         .transpose()
         .map_err(|e| anyhow::anyhow!("failed to serialize metadata: {e}"))?;
 

@@ -591,11 +591,10 @@ fn expand_tilde(path: &str) -> String {
         if let Ok(home) = std::env::var("HOME") {
             return format!("{home}/{rest}");
         }
-    } else if path == "~" {
-        if let Ok(home) = std::env::var("HOME") {
+    } else if path == "~"
+        && let Ok(home) = std::env::var("HOME") {
             return home;
         }
-    }
     path.to_string()
 }
 
@@ -816,7 +815,7 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             dry_run,
         } => {
             // Validate event name (input validation stays in presentation layer)
-            if HookTrigger::from_event_name(&event_name).is_none() {
+            if HookTrigger::from_event_name(event_name).is_none() {
                 bail!(
                     "unknown event: {event_name}. Valid events: {}",
                     HookTrigger::valid_event_names().join(", ")
@@ -906,6 +905,7 @@ fn hooks_log_follow(log_path: &std::path::Path) -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn cmd_edit(
     cli: &Cli,
     id: i64,
@@ -1028,7 +1028,7 @@ pub async fn cmd_edit(
         } else {
             effective_plan.map(Some)
         },
-        priority: priority.clone(),
+        priority: *priority,
         assignee_session_id: None,
         assignee_user_id: None,
         started_at: None,

@@ -295,8 +295,8 @@ fn execute_hook(
             return;
         }
     };
-    if let Some(mut stdin) = child.stdin.take() {
-        if let Err(e) = stdin.write_all(json.as_bytes()) {
+    if let Some(mut stdin) = child.stdin.take()
+        && let Err(e) = stdin.write_all(json.as_bytes()) {
             let msg = format!("hook stdin error ({}): {}: {:#}", event_name, command, e);
             eprintln!("{msg}");
             if let Some(p) = log_path {
@@ -311,7 +311,6 @@ fn execute_hook(
             }
             return;
         }
-    }
 
     // Spawn a thread to wait for exit and log the result.
     // The CLI returns immediately; the thread outlives the main function
@@ -427,6 +426,7 @@ pub async fn resolve_envelope_context(
 /// Fire hooks for the given event, spawning each hook command as a
 /// fire-and-forget child process. Returns immediately.
 /// Results are logged to `$XDG_STATE_HOME/senko/hooks.log`.
+#[allow(clippy::too_many_arguments)]
 pub async fn fire_hooks(
     config: &Config,
     event_name: &str,

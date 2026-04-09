@@ -289,10 +289,7 @@ pub fn load_config(project_root: &Path, explicit_config: Option<&Path>) -> Resul
     };
 
     // 3. Merge: user → user local → project → project local
-    let mut merged = match user_raw {
-        Some(r) => r,
-        None => RawConfig::default(),
-    };
+    let mut merged = user_raw.unwrap_or_default();
     if let Some(local) = user_local {
         merged = merged.merge(local);
     }
