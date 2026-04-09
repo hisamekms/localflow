@@ -47,7 +47,24 @@ fn now_utc() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
-const MIGRATION_SQL: &str = include_str!("migrations/20260328000000_initial_schema.sql");
+struct Migration {
+    version: i64,
+    description: &'static str,
+    sql: &'static str,
+}
+
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        description: "initial_schema",
+        sql: include_str!("migrations/20260328000000_initial_schema.sql"),
+    },
+    Migration {
+        version: 2,
+        description: "add_task_number",
+        sql: include_str!("migrations/20260409000000_add_task_number.sql"),
+    },
+];
 
 async fn run_migrations(pool: &PgPool) -> Result<()> {
     // Create migration tracking table
@@ -62,28 +79,38 @@ async fn run_migrations(pool: &PgPool) -> Result<()> {
     .await
     .context("failed to create migrations table")?;
 
-    // Check if initial migration was already applied
-    let applied: bool = sqlx::query("SELECT 1 FROM _sqlx_migrations WHERE version = 1")
-        .fetch_optional(pool)
-        .await?
-        .is_some();
+    let current_version: i64 =
+        sqlx::query("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
+            .fetch_one(pool)
+            .await?
+            .get(0);
 
-    if !applied {
-        // Split on semicolons and execute each statement
-        for statement in MIGRATION_SQL.split(';') {
-            let trimmed = statement.trim();
-            if !trimmed.is_empty() {
-                sqlx::query(trimmed)
-                    .execute(pool)
-                    .await
-                    .with_context(|| format!("migration statement failed: {}", &trimmed[..trimmed.len().min(80)]))?;
+    for m in MIGRATIONS {
+        if m.version > current_version {
+            for statement in m.sql.split(';') {
+                let trimmed = statement.trim();
+                if !trimmed.is_empty() {
+                    sqlx::query(trimmed)
+                        .execute(pool)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "migration v{} ({}) failed: {}",
+                                m.version,
+                                m.description,
+                                &trimmed[..trimmed.len().min(80)]
+                            )
+                        })?;
+                }
             }
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations (version, description) VALUES ($1, $2)",
+            )
+            .bind(m.version)
+            .bind(m.description)
+            .execute(pool)
+            .await?;
         }
-        sqlx::query(
-            "INSERT INTO _sqlx_migrations (version, description) VALUES (1, 'initial_schema')",
-        )
-        .execute(pool)
-        .await?;
     }
 
     Ok(())
