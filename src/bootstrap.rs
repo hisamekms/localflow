@@ -396,6 +396,7 @@ fn detect_legacy_hook_format(content: &str, path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::fs;
 
     /// Run `load_config` in an isolated environment where no real user config
@@ -403,7 +404,7 @@ mod tests {
     /// Isolate env vars so no real user config or env-var config can leak in.
     fn isolate_env(project_root: &Path) {
         let empty = project_root.join("__no_user_config__");
-        // SAFETY: tests run with --test-threads=1 to avoid env var races.
+        // SAFETY: all callers are marked #[serial] to avoid env var races.
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", &empty);
             std::env::remove_var("SENKO_CONFIG");
@@ -420,6 +421,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn load_config_with_local_overlay() {
         let dir = tempfile::tempdir().unwrap();
         let senko_dir = dir.path().join(".senko");
@@ -452,6 +454,7 @@ name = "local-user"
     }
 
     #[test]
+    #[serial]
     fn load_config_without_local_file() {
         let dir = tempfile::tempdir().unwrap();
         let senko_dir = dir.path().join(".senko");
@@ -471,6 +474,7 @@ name = "project-user"
     }
 
     #[test]
+    #[serial]
     fn load_config_explicit_config_uses_sibling_local() {
         let dir = tempfile::tempdir().unwrap();
         let custom_dir = dir.path().join("custom");
@@ -500,6 +504,7 @@ name = "custom-local-user"
     }
 
     #[test]
+    #[serial]
     fn load_config_explicit_config_ignores_project_local() {
         let dir = tempfile::tempdir().unwrap();
         let senko_dir = dir.path().join(".senko");
@@ -533,6 +538,7 @@ name = "custom-user"
     }
 
     #[test]
+    #[serial]
     fn load_config_user_local_overlay() {
         let dir = tempfile::tempdir().unwrap();
         let user_config_dir = dir.path().join("user_config").join("senko");
@@ -571,6 +577,7 @@ name = "user-local-override"
     }
 
     #[test]
+    #[serial]
     fn load_config_merge_order() {
         // Verify: user → user local → project → project local
         let dir = tempfile::tempdir().unwrap();
