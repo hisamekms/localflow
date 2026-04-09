@@ -147,7 +147,7 @@ pub async fn cmd_add(
             println!("{}", serde_json::to_string_pretty(&task)?);
         }
         OutputFormat::Text => {
-            println!("Created task #{}: \"{}\"", task.id(), task.title());
+            println!("Created task #{}: \"{}\"", task.task_number(), task.title());
         }
     }
 
@@ -189,7 +189,7 @@ pub async fn cmd_list(
             for task in &tasks {
                 println!(
                     "[{}] #{} {} ({})",
-                    task.status(), task.id(), task.title(), task.priority()
+                    task.status(), task.task_number(), task.title(), task.priority()
                 );
             }
         }
@@ -209,7 +209,7 @@ pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&task)?);
         }
         OutputFormat::Text => {
-            println!("ID:       {}", task.id());
+            println!("ID:       {}", task.task_number());
             println!("Title:    {}", task.title());
             println!("Status:   {}", task.status());
             println!("Priority: {}", task.priority());
@@ -303,7 +303,7 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         OutputFormat::Text => {
-            println!("Ready task #{}: {}", updated.id(), updated.title());
+            println!("Ready task #{}: {}", updated.task_number(), updated.title());
         }
     }
 
@@ -348,7 +348,7 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
             println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         OutputFormat::Text => {
-            println!("Started task #{}: {}", updated.id(), updated.title());
+            println!("Started task #{}: {}", updated.task_number(), updated.title());
         }
     }
 
@@ -391,7 +391,7 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
             println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         OutputFormat::Text => {
-            println!("Started task #{}: {}", updated.id(), updated.title());
+            println!("Started task #{}: {}", updated.task_number(), updated.title());
         }
     }
 
@@ -419,7 +419,7 @@ pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()>
             println!("{}", serde_json::to_string_pretty(&result.task)?);
         }
         OutputFormat::Text => {
-            println!("Completed task #{}: {}", result.task.id(), result.task.title());
+            println!("Completed task #{}: {}", result.task.task_number(), result.task.title());
         }
     }
 
@@ -450,7 +450,7 @@ pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()
             println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         OutputFormat::Text => {
-            println!("Canceled task #{}: {}", updated.id(), updated.title());
+            println!("Canceled task #{}: {}", updated.task_number(), updated.title());
             if let Some(r) = updated.cancel_reason() {
                 println!("  reason: {r}");
             }
@@ -1079,7 +1079,7 @@ pub async fn cmd_edit(
             println!("{}", serde_json::to_string_pretty(&task)?);
         }
         OutputFormat::Text => {
-            println!("Updated task {}", task.id());
+            println!("Updated task {}", task.task_number());
             println!("  title: {}", task.title());
             println!("  status: {}", task.status());
             println!("  priority: {}", task.priority());
@@ -1229,7 +1229,7 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&deps)?),
                 OutputFormat::Text => {
                     for task in &deps {
-                        println!("[{}] #{} {} ({})", task.status(), task.id(), task.title(), task.priority());
+                        println!("[{}] #{} {} ({})", task.status(), task.task_number(), task.title(), task.priority());
                     }
                 }
             }

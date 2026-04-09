@@ -93,7 +93,7 @@ async fn run_migrations(pool: &PgPool) -> Result<()> {
 
 async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
     let row = sqlx::query(
-        "SELECT project_id, title, background, description, plan, status, priority,
+        "SELECT project_id, task_number, title, background, description, plan, status, priority,
                 assignee_session_id, created_at, updated_at, started_at, completed_at,
                 canceled_at, cancel_reason, branch, pr_url, metadata, assignee_user_id
          FROM tasks WHERE id = $1",
@@ -151,18 +151,20 @@ async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
             .map(|r| r.get("tag"))
             .collect();
 
+    // Fetch dependency task_numbers (not internal IDs)
     let dependencies: Vec<i64> = sqlx::query(
-        "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = $1 ORDER BY id",
+        "SELECT t.task_number FROM task_dependencies td JOIN tasks t ON t.id = td.depends_on_task_id WHERE td.task_id = $1 ORDER BY td.id",
     )
     .bind(id)
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|r| r.get("depends_on_task_id"))
+    .map(|r| r.get("task_number"))
     .collect();
 
     Ok(Task::new(
         id,
+        row.get("task_number"),
         row.get("project_id"),
         row.get("title"),
         row.get("background"),
@@ -189,17 +191,15 @@ async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
     ))
 }
 
-async fn verify_task_project(pool: &PgPool, project_id: i64, task_id: i64) -> Result<()> {
-    let row = sqlx::query("SELECT project_id FROM tasks WHERE id = $1")
-        .bind(task_id)
+/// Resolve a user-facing task_number to internal id, verifying project ownership.
+async fn resolve_task_number(pool: &PgPool, project_id: i64, task_number: i64) -> Result<i64> {
+    let row = sqlx::query("SELECT id FROM tasks WHERE project_id = $1 AND task_number = $2")
+        .bind(project_id)
+        .bind(task_number)
         .fetch_optional(pool)
         .await?
         .context("task not found")?;
-    let actual: i64 = row.get("project_id");
-    if actual != project_id {
-        anyhow::bail!("task not found");
-    }
-    Ok(())
+    Ok(row.get("id"))
 }
 
 // =============================================================================
@@ -601,8 +601,9 @@ impl TaskRepository for PostgresBackend {
         let mut tx = pool.begin().await?;
 
         let row = sqlx::query(
-            "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+            "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM tasks WHERE project_id = $8))
+             RETURNING id, task_number",
         )
         .bind(&params.title)
         .bind(&params.background)
@@ -615,10 +616,11 @@ impl TaskRepository for PostgresBackend {
         .fetch_one(&mut *tx)
         .await?;
         let task_id: i64 = row.get("id");
+        let task_number: i64 = row.get("task_number");
 
         if let Some(ref branch) = params.branch {
             if branch.contains("${task_id}") {
-                let expanded = task::expand_branch_template(branch, task_id);
+                let expanded = task::expand_branch_template(branch, task_number);
                 sqlx::query("UPDATE tasks SET branch = $1 WHERE id = $2")
                     .bind(&expanded)
                     .bind(task_id)
@@ -657,12 +659,13 @@ impl TaskRepository for PostgresBackend {
                 .execute(&mut *tx)
                 .await?;
         }
-        for dep_id in &params.dependencies {
+        for &dep_task_number in &params.dependencies {
+            let dep_internal_id = resolve_task_number(&pool, project_id, dep_task_number).await?;
             sqlx::query(
                 "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2)",
             )
             .bind(task_id)
-            .bind(dep_id)
+            .bind(dep_internal_id)
             .execute(&mut *tx)
             .await?;
         }
@@ -673,8 +676,8 @@ impl TaskRepository for PostgresBackend {
 
     async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
         let pool = self.pool().await?;
-        verify_task_project(pool, project_id, id).await?;
-        get_task_by_id(pool, id).await
+        let internal_id = resolve_task_number(pool, project_id, id).await?;
+        get_task_by_id(pool, internal_id).await
     }
 
     async fn update_task(
@@ -684,7 +687,7 @@ impl TaskRepository for PostgresBackend {
         params: &UpdateTaskParams,
     ) -> Result<Task> {
         let pool = self.pool().await?;
-        verify_task_project(pool, project_id, id).await?;
+        let id = resolve_task_number(pool, project_id, id).await?;
 
         let mut tx = pool.begin().await?;
 
@@ -819,7 +822,7 @@ impl TaskRepository for PostgresBackend {
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
         let pool = self.pool().await?;
-        verify_task_project(pool, project_id, id).await?;
+        let id = resolve_task_number(pool, project_id, id).await?;
 
         let mut tx = pool.begin().await?;
 
@@ -913,7 +916,7 @@ impl TaskRepository for PostgresBackend {
 
     async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
         let pool = self.pool().await?;
-        verify_task_project(pool, project_id, id).await?;
+        let id = resolve_task_number(pool, project_id, id).await?;
         let result = sqlx::query("DELETE FROM tasks WHERE id = $1")
             .bind(id)
             .execute(pool)
@@ -926,15 +929,15 @@ impl TaskRepository for PostgresBackend {
 
     async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
         let pool = self.pool().await?;
-        verify_task_project(pool, project_id, task_id).await?;
-        get_task_by_id(pool, task_id)
+        let internal_id = resolve_task_number(pool, project_id, task_id).await?;
+        get_task_by_id(pool, internal_id)
             .await
             .context("task not found")?;
 
         let rows = sqlx::query(
             "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = $1",
         )
-        .bind(task_id)
+        .bind(internal_id)
         .fetch_all(pool)
         .await?;
 
@@ -1003,17 +1006,18 @@ impl TaskRepository for PostgresBackend {
             .await?;
         }
 
-        // Sync dependencies
+        // Sync dependencies (task.dependencies() contains task_numbers, resolve to internal IDs)
         sqlx::query("DELETE FROM task_dependencies WHERE task_id = $1")
             .bind(task.id())
             .execute(&mut *tx)
             .await?;
-        for &dep_id in task.dependencies() {
+        for &dep_task_number in task.dependencies() {
+            let dep_internal_id = resolve_task_number(pool, task.project_id(), dep_task_number).await?;
             sqlx::query(
                 "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2)",
             )
             .bind(task.id())
-            .bind(dep_id)
+            .bind(dep_internal_id)
             .execute(&mut *tx)
             .await?;
         }

@@ -66,7 +66,7 @@ impl LocalTaskOperations {
                 .all(|&dep_id| {
                     all_tasks
                         .iter()
-                        .find(|tt| tt.id() == dep_id)
+                        .find(|tt| tt.task_number() == dep_id)
                         .is_some_and(|tt| tt.status() == TaskStatus::Completed)
                 });
             if all_other_done {
@@ -168,7 +168,7 @@ impl TaskOperations for LocalTaskOperations {
         let task = if task.status() == TaskStatus::InProgress {
             task
         } else {
-            self.backend.start_task(project_id, task.id(), session_id, user_id, metadata).await?
+            self.backend.start_task(project_id, task.task_number(), session_id, user_id, metadata).await?
         };
 
         self.hooks
@@ -341,7 +341,7 @@ impl TaskOperations for LocalTaskOperations {
         };
 
         for t in &unblocked_tasks {
-            operations.push(format!("Unblock task #{}: \"{}\"", t.id(), t.title()));
+            operations.push(format!("Unblock task #{}: \"{}\"", t.task_number(), t.title()));
         }
 
         Ok(PreviewResult {
@@ -363,7 +363,7 @@ impl TaskOperations for LocalTaskOperations {
         let operations = vec![
             format!(
                 "Start next eligible task #{}: \"{}\"",
-                task.id(),
+                task.task_number(),
                 task.title()
             ),
             format!("Change status: {} → in_progress", task.status()),
@@ -480,7 +480,7 @@ impl TaskOperations for LocalTaskOperations {
                 backend
                     .list_dependencies(project_id, id)
                     .await
-                    .map(|tasks| tasks.iter().map(|t| t.id()).collect())
+                    .map(|tasks| tasks.iter().map(|t| t.task_number()).collect())
                     .unwrap_or_default()
             }
         })
@@ -530,7 +530,7 @@ impl TaskOperations for LocalTaskOperations {
                     backend
                         .list_dependencies(project_id, id)
                         .await
-                        .map(|tasks| tasks.iter().map(|t| t.id()).collect())
+                        .map(|tasks| tasks.iter().map(|t| t.task_number()).collect())
                         .unwrap_or_default()
                 }
             })

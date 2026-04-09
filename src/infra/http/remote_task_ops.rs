@@ -100,7 +100,7 @@ fn parse_unblocked(items: Vec<UnblockedApiInfo>) -> Vec<UnblockedTask> {
         .into_iter()
         .map(|u| {
             let priority = u.priority.parse::<Priority>().unwrap_or(Priority::P2);
-            UnblockedTask::new(u.id, u.title, priority, None)
+            UnblockedTask::new(0, u.id, u.title, priority, None)
         })
         .collect()
 }
@@ -334,6 +334,7 @@ impl TaskOperations for RemoteTaskOperations {
                 let priority = u.priority.parse::<Priority>().ok()?;
                 let status = u.status.parse::<TaskStatus>().ok()?;
                 Some(Task::new(
+                    0,
                     u.id,
                     project_id,
                     u.title,

@@ -162,6 +162,15 @@ const MIGRATIONS: &[Migration] = &[
             VALUES (1, 1, 'owner');
         ",
     },
+    Migration {
+        version: 6,
+        name: "add_task_number",
+        sql: "
+            ALTER TABLE tasks ADD COLUMN task_number INTEGER;
+            UPDATE tasks SET task_number = id;
+            CREATE UNIQUE INDEX idx_tasks_project_task_number ON tasks(project_id, task_number);
+        ",
+    },
 ];
 
 fn run_migrations(conn: &Connection) -> Result<()> {
@@ -751,19 +760,15 @@ fn update_member_role(
 }
 
 /// Verify that a task belongs to the given project.
-fn verify_task_project(conn: &Connection, project_id: i64, task_id: i64) -> Result<()> {
-    let actual_project_id: i64 = conn
-        .query_row(
-            "SELECT project_id FROM tasks WHERE id = ?1",
-            params![task_id],
-            |row| row.get(0),
-        )
-        .optional()?
-        .ok_or(DomainError::TaskNotFound)?;
-    if actual_project_id != project_id {
-        return Err(DomainError::TaskNotFound.into());
-    }
-    Ok(())
+/// Resolve a user-facing task_number to internal id, verifying project ownership.
+fn resolve_task_number(conn: &Connection, project_id: i64, task_number: i64) -> Result<i64> {
+    conn.query_row(
+        "SELECT id FROM tasks WHERE project_id = ?1 AND task_number = ?2",
+        params![project_id, task_number],
+        |row| row.get(0),
+    )
+    .optional()?
+    .ok_or_else(|| DomainError::TaskNotFound.into())
 }
 
 // --- Task functions ---
@@ -777,15 +782,24 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
         .as_ref()
         .map(|v| serde_json::to_string(v))
         .transpose()?;
+
+    // Assign next task_number for this project
+    let task_number: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(task_number), 0) + 1 FROM tasks WHERE project_id = ?1",
+            params![project_id],
+            |row| row.get(0),
+        )?;
+
     conn.execute(
-        "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        rusqlite::params![params.title, params.background, params.description, priority, params.branch, params.pr_url, metadata_str, project_id],
+        "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![params.title, params.background, params.description, priority, params.branch, params.pr_url, metadata_str, project_id, task_number],
     )?;
     let task_id = conn.last_insert_rowid();
 
     if let Some(ref branch) = params.branch {
         if branch.contains("${task_id}") {
-            let expanded = task::expand_branch_template(branch, task_id);
+            let expanded = task::expand_branch_template(branch, task_number);
             conn.execute(
                 "UPDATE tasks SET branch = ?1 WHERE id = ?2",
                 params![expanded, task_id],
@@ -817,10 +831,11 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
             params![task_id, tag],
         )?;
     }
-    for dep_id in &params.dependencies {
+    for &dep_task_number in &params.dependencies {
+        let dep_internal_id = resolve_task_number(conn, project_id, dep_task_number)?;
         conn.execute(
             "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
-            params![task_id, dep_id],
+            params![task_id, dep_internal_id],
         )?;
     }
 
@@ -828,11 +843,11 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
 }
 
 fn get_task(conn: &Connection, id: i64) -> Result<Task> {
-    let (project_id, title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata_str, assignee_user_id): (
-        i64, String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>,
+    let (project_id, task_number, title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata_str, assignee_user_id): (
+        i64, i64, String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>,
     ) = conn
         .query_row(
-            "SELECT project_id, title, background, description, plan, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata, assignee_user_id FROM tasks WHERE id = ?1",
+            "SELECT project_id, task_number, title, background, description, plan, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata, assignee_user_id FROM tasks WHERE id = ?1",
             params![id],
             |row| {
                 Ok((
@@ -840,7 +855,7 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
                     row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
                     row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?,
                     row.get(12)?, row.get(13)?, row.get(14)?, row.get(15)?,
-                    row.get(16)?, row.get(17)?,
+                    row.get(16)?, row.get(17)?, row.get(18)?,
                 ))
             },
         )
@@ -866,14 +881,16 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
         id,
     )?;
     let tags = query_string_list(conn, "SELECT tag FROM task_tags WHERE task_id = ?1", id)?;
+    // Fetch dependency task_numbers (not internal IDs)
     let dependencies = query_i64_list(
         conn,
-        "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?1",
+        "SELECT t.task_number FROM task_dependencies td JOIN tasks t ON t.id = td.depends_on_task_id WHERE td.task_id = ?1",
         id,
     )?;
 
     Ok(Task::new(
         id,
+        task_number,
         project_id,
         title,
         background,
@@ -1082,15 +1099,16 @@ fn save_task(conn: &Connection, task: &Task) -> Result<()> {
         )?;
     }
 
-    // Sync dependencies
+    // Sync dependencies (task.dependencies() contains task_numbers, resolve to internal IDs)
     conn.execute(
         "DELETE FROM task_dependencies WHERE task_id = ?1",
         params![task.id()],
     )?;
-    for &dep_id in task.dependencies() {
+    for &dep_task_number in task.dependencies() {
+        let dep_internal_id = resolve_task_number(conn, task.project_id(), dep_task_number)?;
         conn.execute(
             "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
-            params![task.id(), dep_id],
+            params![task.id(), dep_internal_id],
         )?;
     }
 
@@ -1564,38 +1582,38 @@ impl TaskRepository for SqliteBackend {
 
     async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
         blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, id)?;
-            get_task(conn, id)
+            let internal_id = resolve_task_number(conn, project_id, id)?;
+            get_task(conn, internal_id)
         })
     }
 
     async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, id)?;
-            update_task(conn, id, &params)
+            let internal_id = resolve_task_number(conn, project_id, id)?;
+            update_task(conn, internal_id, &params)
         })
     }
 
     async fn update_task_arrays(&self, project_id: i64, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, id)?;
-            update_task_arrays(conn, id, &params)
+            let internal_id = resolve_task_number(conn, project_id, id)?;
+            update_task_arrays(conn, internal_id, &params)
         })
     }
 
     async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
         blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, id)?;
-            delete_task(conn, id)
+            let internal_id = resolve_task_number(conn, project_id, id)?;
+            delete_task(conn, internal_id)
         })
     }
 
     async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
         blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, task_id)?;
-            list_dependencies(conn, task_id)
+            let internal_id = resolve_task_number(conn, project_id, task_id)?;
+            list_dependencies(conn, internal_id)
         })
     }
 
@@ -2577,7 +2595,7 @@ mod tests {
     fn fresh_db_records_migration_version() {
         let (_tmp, conn) = setup();
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
     }
 
     #[test]
@@ -2672,7 +2690,7 @@ mod tests {
 
         // Version should include all migrations
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
 
         // Legacy columns should have been migrated
         let has_description: bool = conn.prepare("SELECT description FROM tasks LIMIT 0").is_ok();
@@ -2716,7 +2734,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 5);
+        assert_eq!(count, 6);
     }
 
     #[test]

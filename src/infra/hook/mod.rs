@@ -458,7 +458,7 @@ pub async fn fire_hooks(
                 let entry = HookLogEntry::new("ERROR", "hook_error")
                     .with_event_id(&envelope.event.event_id)
                     .with_event(event_name)
-                    .with_task_id(Some(task.id()))
+                    .with_task_id(Some(task.task_number()))
                     .with_runtime(runtime_mode.as_str())
                     .with_backend(backend_info)
                     .with_message(&msg);
@@ -473,7 +473,7 @@ pub async fn fire_hooks(
         let entry = HookLogEntry::new("INFO", "event_fired")
             .with_event_id(&envelope.event.event_id)
             .with_event(event_name)
-            .with_task_id(Some(task.id()))
+            .with_task_id(Some(task.task_number()))
             .with_runtime(runtime_mode.as_str())
             .with_backend(backend_info);
         log_to_file(p, &entry);
@@ -497,7 +497,7 @@ pub async fn fire_hooks(
                     .with_event(event_name)
                     .with_hook(name)
                     .with_command(&hook_entry.command)
-                    .with_task_id(Some(task.id()))
+                    .with_task_id(Some(task.task_number()))
                     .with_runtime(runtime_mode.as_str())
                     .with_backend(backend_info)
                     .with_message(&msg);
@@ -772,7 +772,7 @@ command = "echo completed"
     async fn hook_event_serialization() {
         let (_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, "Test".into(), None, None, None,
+            1, 1, 1, "Test".into(), None, None, None,
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
@@ -795,7 +795,7 @@ command = "echo completed"
     async fn event_has_valid_uuid_and_timestamp() {
         let (_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, "Test".into(), None, None, None,
+            1, 1, 1, "Test".into(), None, None, None,
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
@@ -960,7 +960,7 @@ command = "echo completed"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, "Test".into(), None, None, None,
+            1, 1, 1, "Test".into(), None, None, None,
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
@@ -989,7 +989,7 @@ command = "echo completed"
             ..Default::default()
         };
         let task = Task::new(
-            1, 1, "Test".into(), None, None, None,
+            1, 1, 1, "Test".into(), None, None, None,
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
@@ -1069,7 +1069,7 @@ command = "echo completed"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, "Test".into(), None, None, None,
+            1, 1, 1, "Test".into(), None, None, None,
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
@@ -1122,7 +1122,7 @@ command = "echo completed"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, "Test".into(), None, None, None,
+            1, 1, 1, "Test".into(), None, None, None,
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
@@ -1149,7 +1149,7 @@ command = "echo completed"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, "Test".into(), None, None, None,
+            1, 1, 1, "Test".into(), None, None, None,
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
@@ -1184,7 +1184,7 @@ command = "echo completed"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, "Test".into(), None, None, None,
+            1, 1, 1, "Test".into(), None, None, None,
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
@@ -1236,7 +1236,7 @@ command = "echo completed"
     async fn envelope_serialization() {
         let (_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, "Test".into(), None, None, None,
+            1, 1, 1, "Test".into(), None, None, None,
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
@@ -1619,7 +1619,7 @@ on_task_added = "echo added"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            42, 1, "Hook stdin test".into(), None, None, None,
+            42, 42, 1, "Hook stdin test".into(), None, None, None,
             crate::domain::task::Priority::P1, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),

@@ -28,6 +28,7 @@ SELECT setval('users_id_seq', GREATEST((SELECT MAX(id) FROM users), 1));
 CREATE TABLE IF NOT EXISTS tasks (
     id BIGSERIAL PRIMARY KEY,
     project_id BIGINT NOT NULL DEFAULT 1 REFERENCES projects(id),
+    task_number BIGINT NOT NULL,
     title TEXT NOT NULL,
     background TEXT,
     description TEXT,
@@ -48,6 +49,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_project_task_number ON tasks(project_id, task_number);
 
 CREATE TABLE IF NOT EXISTS task_definition_of_done (
     id BIGSERIAL PRIMARY KEY,

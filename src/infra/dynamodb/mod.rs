@@ -390,6 +390,7 @@ fn task_to_item(task: &Task) -> HashMap<String, AttributeValue> {
     item.insert("PK".into(), AttributeValue::S(pk.clone()));
     item.insert("SK".into(), AttributeValue::S(pk));
     item.insert("id".into(), AttributeValue::N(task.id().to_string()));
+    item.insert("task_number".into(), AttributeValue::N(task.task_number().to_string()));
     item.insert("project_id".into(), AttributeValue::N(task.project_id().to_string()));
     item.insert("title".into(), AttributeValue::S(task.title().to_string()));
     item.insert("status".into(), AttributeValue::S(task.status().to_string()));
@@ -484,6 +485,11 @@ fn item_to_task(item: &HashMap<String, AttributeValue>) -> Result<Task> {
         .get("id")
         .and_then(|v| get_n(v).ok())
         .context("missing id")?;
+    // Legacy items without task_number fall back to id
+    let task_number = item
+        .get("task_number")
+        .and_then(|v| get_n(v).ok())
+        .unwrap_or(id);
     let project_id = item
         .get("project_id")
         .and_then(|v| get_n(v).ok())
@@ -507,6 +513,7 @@ fn item_to_task(item: &HashMap<String, AttributeValue>) -> Result<Task> {
 
     Ok(Task::new(
         id,
+        task_number,
         project_id,
         title,
         opt_s(item, "background"),
@@ -836,12 +843,13 @@ impl UserQueryPort for DynamoDbBackend {
 impl TaskRepository for DynamoDbBackend {
     async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
         let id = self.next_id("TASK").await?;
+        let task_number = self.next_id(&format!("TASK_NUMBER#{project_id}")).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let priority = params.priority.unwrap_or(Priority::P2);
 
         let branch = params.branch.as_ref().map(|b| {
             if b.contains("${task_id}") {
-                task::expand_branch_template(b, id)
+                task::expand_branch_template(b, task_number)
             } else {
                 b.clone()
             }
@@ -849,6 +857,7 @@ impl TaskRepository for DynamoDbBackend {
 
         let task = Task::new(
             id,
+            task_number,
             project_id,
             params.title.clone(),
             params.background.clone(),
@@ -883,11 +892,12 @@ impl TaskRepository for DynamoDbBackend {
     }
 
     async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
-        let task = self.get_task_internal(id).await?;
-        if task.project_id() != project_id {
-            bail!("task {id} does not belong to project {project_id}");
-        }
-        Ok(task)
+        // id is task_number here; resolve by scanning
+        let tasks = self.scan_all_tasks().await?;
+        tasks
+            .into_iter()
+            .find(|t| t.project_id() == project_id && t.task_number() == id)
+            .context("task not found")
     }
 
     async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
@@ -907,14 +917,15 @@ impl TaskRepository for DynamoDbBackend {
     }
 
     async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
-        // Verify project ownership first
-        let _ = self.get_task(project_id, id).await?;
+        // id is task_number; resolve to internal id
+        let task = self.get_task(project_id, id).await?;
+        let internal_id = task.id();
         let client = self.client().await?;
         client
             .delete_item()
             .table_name(&self.table_name)
-            .key("PK", AttributeValue::S(format!("TASK#{id}")))
-            .key("SK", AttributeValue::S(format!("TASK#{id}")))
+            .key("PK", AttributeValue::S(format!("TASK#{internal_id}")))
+            .key("SK", AttributeValue::S(format!("TASK#{internal_id}")))
             .send()
             .await
             .context("failed to delete task")?;
@@ -923,7 +934,12 @@ impl TaskRepository for DynamoDbBackend {
 
     async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
         let task = self.get_task(project_id, task_id).await?;
-        self.batch_get_tasks(task.dependencies()).await
+        // task.dependencies() contains task_numbers; resolve to internal ids for batch get
+        let all_tasks = self.scan_all_tasks().await?;
+        let dep_tasks: Vec<Task> = task.dependencies().iter().filter_map(|&dep_tn| {
+            all_tasks.iter().find(|t| t.project_id() == project_id && t.task_number() == dep_tn).cloned()
+        }).collect();
+        Ok(dep_tasks)
     }
 
     async fn save(&self, task: &Task) -> Result<()> {
