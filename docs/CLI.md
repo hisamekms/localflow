@@ -92,7 +92,7 @@ senko complete 1 --skip-pr-check    # Bypass PR merge/review checks
 
 Fails if any DoD items are unchecked. Use `dod check` to mark items before completing.
 
-When `merge_via = "pr"` in config, also verifies the PR is merged (and approved if `auto_merge = false`). Use `--skip-pr-check` to bypass.
+When `merge_via = "pr"` in config, also verifies the PR is merged. Use `--skip-pr-check` to bypass.
 
 ## `cancel <id>` – Cancel a task
 

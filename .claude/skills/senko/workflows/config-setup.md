@@ -25,7 +25,7 @@ Walk through sections in this order:
    - **Option B: Environment variable `SENKO_USER`** — Do nothing in config-setup. Inform the user they can set `export SENKO_USER="Name"` in their shell profile.
 3. **workflow** — How tasks are completed and branches managed:
    - `merge_via`: direct merge or PR-based completion?
-   - `auto_merge`: require PR approval before completion?
+   - `auto_merge`: when merge_via=direct, auto-merge branch without user confirmation?
    - `branch_mode`: use git worktrees or regular branches?
    - `merge_strategy`: rebase or squash merge?
 4. **backend** — Remote backend settings (skip if local-only use):

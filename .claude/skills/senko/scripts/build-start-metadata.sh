@@ -7,7 +7,8 @@ set -euo pipefail
 # Output (JSON):
 #   { "resolved": { "key": "value", ... }, "prompts": [ { "key": "...", "prompt": "..." } ] }
 
-CONFIG_JSON=$(senko config)
+SENKO_BIN="${SENKO_BIN:-senko}"
+CONFIG_JSON=$("$SENKO_BIN" config)
 FIELDS=$(echo "$CONFIG_JSON" | jq -c '.skill.start.metadata_fields // []')
 FIELD_COUNT=$(echo "$FIELDS" | jq 'length')
 

@@ -198,7 +198,7 @@ impl TaskOperations for LocalTaskOperations {
                 reason: e.to_string(),
             })? {
             self.pr_verifier
-                .verify_pr_status(pr_url, self.completion_policy.auto_merge())
+                .verify_pr_status(pr_url)
                 .map_err(|e| DomainError::CannotCompleteTask {
                     task_id: id,
                     reason: e.to_string(),

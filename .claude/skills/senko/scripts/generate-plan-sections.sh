@@ -3,8 +3,9 @@ set -euo pipefail
 
 TASK_ID="${1:?Usage: generate-plan-sections.sh <task-id>}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SENKO_BIN="${SENKO_BIN:-senko}"
 
-CONFIG_JSON=$(senko config)
+CONFIG_JSON=$("$SENKO_BIN" config)
 MERGE_VIA=$(echo "$CONFIG_JSON" | jq -r '.workflow.merge_via')
 AUTO_MERGE=$(echo "$CONFIG_JSON" | jq -r '.workflow.auto_merge')
 BRANCH_MODE=$(echo "$CONFIG_JSON" | jq -r '.workflow.branch_mode')
@@ -71,15 +72,18 @@ if [ "$MERGE_VIA" = "direct" ]; then
   echo "- If the merge script exits with code 10 (primary worktree has uncommitted changes), use \`AskUserQuestion\` to inform the user and ask them to clean up the primary worktree before retrying"
   echo "- If the merge script exits with code 11 (rebase conflict), use \`AskUserQuestion\` to inform the user about the conflict and ask how to proceed (manual resolution or abort)"
 elif [ "$MERGE_VIA" = "pr" ]; then
-  if [ "$AUTO_MERGE" = "true" ]; then
-    echo "- Create PR and merge (all DoD items must be checked before this step)"
-  else
-    echo "- Create PR (all DoD items must be checked before this step)"
-  fi
-  echo "- After creating the PR, save the PR URL: \`senko edit ${TASK_ID} --pr-url <pr_url>\`"
-  if [ "$AUTO_MERGE" = "false" ]; then
-    echo "- Request review and wait for approval before merging"
-  fi
+  cat <<PREOF
+- Create PR (all DoD items must be checked before this step)
+- After creating the PR, save the PR URL: \`senko edit ${TASK_ID} --pr-url <pr_url>\`
+- Begin PR polling loop:
+  1. Run \`gh pr view <pr_url> --json state,reviews,comments\`
+  2. If there are new review comments or requested changes:
+     - Address each review comment (fix code, respond to feedback)
+     - Push the changes and continue polling
+  3. If the PR state is MERGED:
+     - Exit the polling loop and proceed to completion
+  4. Otherwise, wait 1 minute and repeat from step 1
+PREOF
 fi
 
 emit_events "post_merge"

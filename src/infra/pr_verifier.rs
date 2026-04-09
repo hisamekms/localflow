@@ -6,14 +6,9 @@ use crate::application::port::PrVerifier;
 pub struct GhCliPrVerifier;
 
 impl PrVerifier for GhCliPrVerifier {
-    fn verify_pr_status(&self, pr_url: &str, auto_merge: bool) -> Result<()> {
-        let mut args = vec!["pr", "view", pr_url, "--json", "state"];
-        if !auto_merge {
-            args[4] = "state,reviewDecision";
-        }
-
+    fn verify_pr_status(&self, pr_url: &str) -> Result<()> {
         let output = std::process::Command::new("gh")
-            .args(&args)
+            .args(["pr", "view", pr_url, "--json", "state"])
             .output()
             .context(
                 "failed to run 'gh' CLI. gh is required when merge_via = \"pr\". \
@@ -35,21 +30,6 @@ impl PrVerifier for GhCliPrVerifier {
                  Merge the PR first, then run complete again.",
                 state
             );
-        }
-
-        if !auto_merge {
-            let decision = json["reviewDecision"].as_str().unwrap_or("");
-            if decision != "APPROVED" {
-                bail!(
-                    "cannot complete task: PR has not been approved (reviewDecision: {}). \
-                     Get the PR reviewed and approved, then run complete again.",
-                    if decision.is_empty() {
-                        "none"
-                    } else {
-                        decision
-                    }
-                );
-            }
         }
 
         Ok(())

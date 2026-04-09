@@ -124,7 +124,7 @@ auto_merge = false      # default: true
 | Setting | Values | Description |
 |---------|--------|-------------|
 | `merge_via` | `direct` (default), `pr` | When `pr`, `complete` verifies the PR is merged via `gh` |
-| `auto_merge` | `true` (default), `false` | When `false`, `complete` also verifies PR approval |
+| `auto_merge` | `true` (default), `false` | Applies to `merge_via = "direct"` only. Controls automatic branch merge. |
 
 Use `senko config` to view current settings, or `senko config --init` to generate a template.
 

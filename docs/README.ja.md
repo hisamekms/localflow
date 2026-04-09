@@ -130,7 +130,7 @@ auto_merge = false      # デフォルト: true
 | 設定 | 値 | 説明 |
 |------|------|------|
 | `merge_via` | `direct`（デフォルト）, `pr` | `pr`の場合、`complete`コマンドが`gh`でPRのマージ状況を検証 |
-| `auto_merge` | `true`（デフォルト）, `false` | `false`の場合、PRの承認も検証 |
+| `auto_merge` | `true`（デフォルト）, `false` | `merge_via = "direct"` でのみ有効。ブランチの自動マージを制御 |
 
 `senko config`で現在の設定を表示、`senko config --init`でテンプレートを生成できます。
 

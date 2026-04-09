@@ -22,7 +22,7 @@ For each section, explain every item's **current value**, whether it's the **def
 | Key | Default | Options | Description |
 |---|---|---|---|
 | `merge_via` | `direct` | `direct`, `pr` | Controls whether the branch is merged directly or via PR. `pr` requires a PR URL and merge status check. |
-| `auto_merge` | `true` | `true`, `false` | When `false` with `merge_via = "pr"`, the PR must also be approved before completion. |
+| `auto_merge` | `true` | `true`, `false` | Applies only to `merge_via = "direct"`. Controls whether the branch is merged automatically or requires user confirmation. Has no effect when `merge_via = "pr"`. |
 | `branch_mode` | `worktree` | `worktree`, `branch` | How task branches are created. `worktree` uses git worktrees (parallel work), `branch` uses regular branches. |
 | `merge_strategy` | `rebase` | `rebase`, `squash` | Git merge strategy when merging task branches back to main. |
 | `events` | `[]` | list of event directives | Workflow event hooks (type: `command` or `prompt`) triggered at specific points (e.g., `pre_merge`, `post_pr`). |

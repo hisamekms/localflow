@@ -871,19 +871,11 @@ pub fn compute_unblocked(
 /// Domain policy for task completion workflow.
 pub struct CompletionPolicy {
     merge_via: MergeVia,
-    auto_merge: bool,
 }
 
 impl CompletionPolicy {
-    pub fn new(merge_via: MergeVia, auto_merge: bool) -> Self {
-        Self {
-            merge_via,
-            auto_merge,
-        }
-    }
-
-    pub fn auto_merge(&self) -> bool {
-        self.auto_merge
+    pub fn new(merge_via: MergeVia) -> Self {
+        Self { merge_via }
     }
 
     /// Returns the PR URL that must be verified, or `None` if no PR check is needed.
@@ -1360,21 +1352,21 @@ mod tests {
 
     #[test]
     fn completion_policy_merge_mode_returns_none() {
-        let policy = super::CompletionPolicy::new(MergeVia::Direct, true);
+        let policy = super::CompletionPolicy::new(MergeVia::Direct);
         let task = make_task(TaskStatus::InProgress);
         assert!(policy.required_pr_url(&task, false).unwrap().is_none());
     }
 
     #[test]
     fn completion_policy_pr_mode_no_url_errors() {
-        let policy = super::CompletionPolicy::new(MergeVia::Pr, true);
+        let policy = super::CompletionPolicy::new(MergeVia::Pr);
         let task = make_task(TaskStatus::InProgress);
         assert!(policy.required_pr_url(&task, false).is_err());
     }
 
     #[test]
     fn completion_policy_pr_mode_with_url() {
-        let policy = super::CompletionPolicy::new(MergeVia::Pr, true);
+        let policy = super::CompletionPolicy::new(MergeVia::Pr);
         let mut task = make_task(TaskStatus::InProgress);
         task.pr_url = Some("https://github.com/org/repo/pull/1".to_string());
         let result = policy.required_pr_url(&task, false).unwrap();
@@ -1383,7 +1375,7 @@ mod tests {
 
     #[test]
     fn completion_policy_skip_pr_check() {
-        let policy = super::CompletionPolicy::new(MergeVia::Pr, true);
+        let policy = super::CompletionPolicy::new(MergeVia::Pr);
         let task = make_task(TaskStatus::InProgress);
         assert!(policy.required_pr_url(&task, true).unwrap().is_none());
     }

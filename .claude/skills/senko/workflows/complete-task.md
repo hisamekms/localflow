@@ -17,9 +17,15 @@ senko get <id>
 3. Check the workflow configuration (`senko config`):
    - If `merge_via = "pr"`:
      - Ensure `pr_url` is set on the task (`senko edit <id> --pr-url <url>`)
-     - The PR must be merged before `senko complete <id>` will succeed
-     - If `auto_merge = false`, the PR must also have approval
-     - Use `--skip-pr-check` to bypass these checks if needed
+     - Begin PR polling loop:
+       1. Run `gh pr view <pr_url> --json state,reviews,comments`
+       2. If there are new review comments or requested changes:
+          - Address each review comment (fix code, respond to feedback)
+          - Push the changes and continue polling
+       3. If the PR state is MERGED:
+          - Exit the polling loop and proceed to `senko complete <id>`
+       4. Otherwise, wait 1 minute and repeat from step 1
+     - Use `--skip-pr-check` to bypass the merged check if needed
    - If `merge_via = "direct"` (default): no PR checks are performed
 
 ```bash

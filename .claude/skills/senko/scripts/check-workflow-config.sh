@@ -2,9 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SENKO_BIN="${SENKO_BIN:-senko}"
 ERRORS=0
 
-CONFIG_JSON=$(senko config)
+CONFIG_JSON=$("$SENKO_BIN" config)
 
 error() {
   echo "ERROR: $1" >&2
