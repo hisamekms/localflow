@@ -40,11 +40,11 @@ jobs:
 
       - name: Build (native)
         if: matrix.build_method != 'cross'
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --features postgres,aws-secrets --target ${{ matrix.target }}
 
       - name: Build (cross)
         if: matrix.build_method == 'cross'
-        run: cross build --release --target ${{ matrix.target }}
+        run: cross build --release --features postgres,aws-secrets --target ${{ matrix.target }}
 
       - name: Create archive
         run: |
