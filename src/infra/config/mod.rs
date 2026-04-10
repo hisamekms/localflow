@@ -523,6 +523,13 @@ impl Config {
         }
 
         // Auth settings
+        if let Ok(val) = std::env::var("SENKO_AUTH_ENABLED") {
+            match val.to_lowercase().as_str() {
+                "true" | "1" | "yes" => self.auth.enabled = true,
+                "false" | "0" | "no" => self.auth.enabled = false,
+                other => eprintln!("warning: unknown SENKO_AUTH_ENABLED={other}, ignoring"),
+            }
+        }
         if let Ok(val) = std::env::var("SENKO_MASTER_API_KEY")
             && !val.is_empty() {
                 self.auth.master_api_key = Some(val);
