@@ -694,6 +694,8 @@ pub async fn run(cli: Cli) -> Result<()> {
                 port, host,
                 ..Default::default()
             });
+            #[cfg(feature = "aws-secrets")]
+            config.resolve_secrets().await?;
             let (task_ops, backend) = crate::bootstrap::create_task_operations(&root, &config)?;
             let project_id = crate::bootstrap::resolve_project_id(&*backend, &config).await?;
             let port_is_explicit = config.web_port_is_explicit();
@@ -710,6 +712,8 @@ pub async fn run(cli: Cli) -> Result<()> {
                 port, host,
                 ..Default::default()
             });
+            #[cfg(feature = "aws-secrets")]
+            config.resolve_secrets().await?;
             let backend = create_backend(&root, &config)?;
             let port_is_explicit = config.web_port_is_explicit();
             let effective_port = config.web_port_or(3142);

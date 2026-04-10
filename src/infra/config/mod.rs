@@ -75,6 +75,8 @@ pub struct WebConfig {
 pub struct AuthConfig {
     #[serde(default)]
     pub enabled: bool,
+    pub master_api_key: Option<String>,
+    pub master_api_key_arn: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -119,6 +121,7 @@ pub struct DynamoDbConfig {
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct PostgresConfig {
     pub url: Option<String>,
+    pub url_arn: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -317,6 +320,8 @@ pub struct RawLogConfig {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawAuthConfig {
     pub enabled: Option<bool>,
+    pub master_api_key: Option<String>,
+    pub master_api_key_arn: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -358,6 +363,8 @@ impl RawConfig {
             },
             auth: RawAuthConfig {
                 enabled: overlay.auth.enabled.or(self.auth.enabled),
+                master_api_key: overlay.auth.master_api_key.or(self.auth.master_api_key),
+                master_api_key_arn: overlay.auth.master_api_key_arn.or(self.auth.master_api_key_arn),
             },
             storage: StorageConfig {
                 db_path: overlay.storage.db_path.or(self.storage.db_path),
@@ -398,6 +405,8 @@ impl RawConfig {
             user: self.user,
             auth: AuthConfig {
                 enabled: self.auth.enabled.unwrap_or(false),
+                master_api_key: self.auth.master_api_key,
+                master_api_key_arn: self.auth.master_api_key_arn,
             },
             storage: self.storage,
             web: WebConfig {
@@ -512,6 +521,16 @@ impl Config {
             }
         }
 
+        // Auth settings
+        if let Ok(val) = std::env::var("SENKO_MASTER_API_KEY")
+            && !val.is_empty() {
+                self.auth.master_api_key = Some(val);
+            }
+        if let Ok(val) = std::env::var("SENKO_MASTER_API_KEY_ARN")
+            && !val.is_empty() {
+                self.auth.master_api_key_arn = Some(val);
+            }
+
         // DynamoDB settings (feature-gated)
         #[cfg(feature = "dynamodb")]
         {
@@ -542,6 +561,14 @@ impl Config {
                         .postgres
                         .get_or_insert_with(PostgresConfig::default)
                         .url = Some(val);
+                }
+            }
+            if let Ok(val) = std::env::var("SENKO_POSTGRES_URL_ARN") {
+                if !val.is_empty() {
+                    self.backend
+                        .postgres
+                        .get_or_insert_with(PostgresConfig::default)
+                        .url_arn = Some(val);
                 }
             }
         }
@@ -671,5 +698,49 @@ impl Config {
             .host
             .clone()
             .unwrap_or_else(|| "127.0.0.1".to_string())
+    }
+
+    /// Resolve secrets from AWS Secrets Manager using ARN config fields.
+    /// Call after `apply_env()`. ARN-resolved values overwrite direct values.
+    #[cfg(feature = "aws-secrets")]
+    pub async fn resolve_secrets(&mut self) -> anyhow::Result<()> {
+        use crate::infra::secrets::SecretsManagerClient;
+
+        let region: Option<String> = {
+            #[cfg(feature = "dynamodb")]
+            {
+                self.backend
+                    .dynamodb
+                    .as_ref()
+                    .and_then(|d| d.region.clone())
+            }
+            #[cfg(not(feature = "dynamodb"))]
+            {
+                None
+            }
+        };
+
+        let client = SecretsManagerClient::new(region);
+
+        if let Some(ref arn) = self.auth.master_api_key_arn {
+            let secret = client.get_secret(arn).await?;
+            self.auth.master_api_key = Some(secret);
+        }
+
+        #[cfg(feature = "postgres")]
+        if let Some(ref arn) = self
+            .backend
+            .postgres
+            .as_ref()
+            .and_then(|p| p.url_arn.clone())
+        {
+            let secret = client.get_secret(arn).await?;
+            self.backend
+                .postgres
+                .get_or_insert_with(PostgresConfig::default)
+                .url = Some(secret);
+        }
+
+        Ok(())
     }
 }
