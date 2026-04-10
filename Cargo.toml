@@ -10,7 +10,7 @@ path = "src/main.rs"
 [features]
 aws-secrets = ["dep:aws-sdk-secretsmanager", "dep:aws-config"]
 dynamodb = ["dep:aws-sdk-dynamodb", "dep:aws-config"]
-postgres = ["dep:sqlx"]
+postgres = ["dep:sqlx", "dep:percent-encoding"]
 
 [dependencies]
 clap = { version = "4.5.60", features = ["derive", "env"] }
@@ -37,6 +37,7 @@ aws-sdk-dynamodb = { version = "1", optional = true }
 aws-sdk-secretsmanager = { version = "1", optional = true }
 aws-config = { version = "1", optional = true, features = ["behavior-version-latest"] }
 sqlx = { version = "0.8", optional = true, default-features = false, features = ["runtime-tokio", "postgres", "tls-rustls"] }
+percent-encoding = { version = "2", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

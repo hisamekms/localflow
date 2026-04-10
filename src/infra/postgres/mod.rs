@@ -1547,8 +1547,19 @@ mod tests {
                 task.id(),
                 &UpdateTaskParams {
                     title: Some("Updated".to_string()),
-                    description: Some("A description".to_string()),
-                    ..Default::default()
+                    description: Some(Some("A description".to_string())),
+                    background: None,
+                    plan: None,
+                    priority: None,
+                    assignee_session_id: None,
+                    assignee_user_id: None,
+                    started_at: None,
+                    completed_at: None,
+                    canceled_at: None,
+                    cancel_reason: None,
+                    branch: None,
+                    pr_url: None,
+                    metadata: None,
                 },
             )
             .await
@@ -1571,9 +1582,18 @@ mod tests {
                 1,
                 task.id(),
                 &UpdateTaskArrayParams {
+                    set_tags: None,
                     add_tags: vec!["tag1".to_string(), "tag2".to_string()],
+                    remove_tags: vec![],
+                    set_definition_of_done: None,
                     add_definition_of_done: vec!["DoD item".to_string()],
-                    ..Default::default()
+                    remove_definition_of_done: vec![],
+                    set_in_scope: None,
+                    add_in_scope: vec![],
+                    remove_in_scope: vec![],
+                    set_out_of_scope: None,
+                    add_out_of_scope: vec![],
+                    remove_out_of_scope: vec![],
                 },
             )
             .await
