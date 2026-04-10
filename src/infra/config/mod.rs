@@ -721,7 +721,15 @@ impl Config {
         };
 
         let client = SecretsManagerClient::new(region);
+        self.resolve_secrets_with(&client).await
+    }
 
+    /// Resolve secrets using the provided client. Separated for testability.
+    #[cfg(feature = "aws-secrets")]
+    pub(crate) async fn resolve_secrets_with(
+        &mut self,
+        client: &crate::infra::secrets::SecretsManagerClient,
+    ) -> anyhow::Result<()> {
         if let Some(ref arn) = self.auth.master_api_key_arn {
             let secret = client.get_secret(arn).await?;
             self.auth.master_api_key = Some(secret);
@@ -742,5 +750,94 @@ impl Config {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "aws-secrets"))]
+mod resolve_secrets_tests {
+    use super::*;
+    use crate::infra::secrets::{SecretFetcher, SecretsManagerClient};
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+
+    struct FakeSecretFetcher {
+        secrets: HashMap<String, String>,
+    }
+
+    #[async_trait]
+    impl SecretFetcher for FakeSecretFetcher {
+        async fn fetch_secret(&self, arn: &str) -> anyhow::Result<String> {
+            self.secrets
+                .get(arn)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("secret not found: {arn}"))
+        }
+    }
+
+    fn make_client(secrets: HashMap<String, String>) -> SecretsManagerClient {
+        SecretsManagerClient::with_fetcher(Box::new(FakeSecretFetcher { secrets }))
+    }
+
+    #[tokio::test]
+    async fn arn_overwrites_direct_value() {
+        let mut config = Config::default();
+        config.auth.master_api_key = Some("direct-value".to_string());
+        config.auth.master_api_key_arn = Some("arn:aws:secretsmanager:us-east-1:123:secret:key".to_string());
+
+        let client = make_client(HashMap::from([(
+            "arn:aws:secretsmanager:us-east-1:123:secret:key".to_string(),
+            "arn-resolved-value".to_string(),
+        )]));
+
+        config.resolve_secrets_with(&client).await.unwrap();
+
+        assert_eq!(
+            config.auth.master_api_key.as_deref(),
+            Some("arn-resolved-value")
+        );
+    }
+
+    #[tokio::test]
+    async fn arn_only_sets_master_key() {
+        let mut config = Config::default();
+        config.auth.master_api_key_arn = Some("arn:aws:secretsmanager:us-east-1:123:secret:key".to_string());
+
+        let client = make_client(HashMap::from([(
+            "arn:aws:secretsmanager:us-east-1:123:secret:key".to_string(),
+            "arn-resolved-value".to_string(),
+        )]));
+
+        config.resolve_secrets_with(&client).await.unwrap();
+
+        assert_eq!(
+            config.auth.master_api_key.as_deref(),
+            Some("arn-resolved-value")
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_only_unchanged() {
+        let mut config = Config::default();
+        config.auth.master_api_key = Some("direct-value".to_string());
+
+        let client = make_client(HashMap::new());
+
+        config.resolve_secrets_with(&client).await.unwrap();
+
+        assert_eq!(
+            config.auth.master_api_key.as_deref(),
+            Some("direct-value")
+        );
+    }
+
+    #[tokio::test]
+    async fn neither_set_remains_none() {
+        let mut config = Config::default();
+
+        let client = make_client(HashMap::new());
+
+        config.resolve_secrets_with(&client).await.unwrap();
+
+        assert!(config.auth.master_api_key.is_none());
     }
 }
