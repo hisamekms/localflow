@@ -122,6 +122,7 @@ pub struct DynamoDbConfig {
 pub struct PostgresConfig {
     pub url: Option<String>,
     pub url_arn: Option<String>,
+    pub max_connections: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -569,6 +570,16 @@ impl Config {
                         .postgres
                         .get_or_insert_with(PostgresConfig::default)
                         .url_arn = Some(val);
+                }
+            }
+            if let Ok(val) = std::env::var("SENKO_POSTGRES_MAX_CONNECTIONS") {
+                if !val.is_empty() {
+                    if let Ok(n) = val.parse::<u32>() {
+                        self.backend
+                            .postgres
+                            .get_or_insert_with(PostgresConfig::default)
+                            .max_connections = Some(n);
+                    }
                 }
             }
         }

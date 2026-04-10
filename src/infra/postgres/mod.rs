@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use sqlx::postgres::PgPool;
+use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
 
 use crate::domain::project::{CreateProjectParams, Project};
@@ -19,13 +19,15 @@ use crate::domain::user::{
 
 pub struct PostgresBackend {
     url: String,
+    max_connections: Option<u32>,
     pool: tokio::sync::OnceCell<PgPool>,
 }
 
 impl PostgresBackend {
-    pub fn new(url: String) -> Self {
+    pub fn new(url: String, max_connections: Option<u32>) -> Self {
         Self {
             url,
+            max_connections,
             pool: tokio::sync::OnceCell::new(),
         }
     }
@@ -33,7 +35,12 @@ impl PostgresBackend {
     async fn pool(&self) -> Result<&PgPool> {
         self.pool
             .get_or_try_init(|| async {
-                let pool = PgPool::connect(&self.url)
+                let mut opts = PgPoolOptions::new();
+                if let Some(n) = self.max_connections {
+                    opts = opts.max_connections(n);
+                }
+                let pool = opts
+                    .connect(&self.url)
                     .await
                     .context("failed to connect to PostgreSQL")?;
                 run_migrations(&pool).await?;
@@ -1290,7 +1297,7 @@ mod tests {
 
     async fn setup() -> PostgresBackend {
         let url = test_url().expect("SENKO_TEST_POSTGRES_URL must be set for postgres tests");
-        let backend = PostgresBackend::new(url);
+        let backend = PostgresBackend::new(url, None);
         let pool = backend.pool().await.unwrap();
 
         // Clean all data for test isolation (reverse FK order)

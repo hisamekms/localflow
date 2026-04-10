@@ -60,7 +60,7 @@ pub fn create_backend(
 
         if let Some(ref pg_config) = config.backend.postgres {
             if let Some(ref database_url) = pg_config.url {
-                return Ok(Arc::new(PostgresBackend::new(database_url.clone())));
+                return Ok(Arc::new(PostgresBackend::new(database_url.clone(), pg_config.max_connections)));
             }
         }
     }
