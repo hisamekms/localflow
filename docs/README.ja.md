@@ -141,6 +141,76 @@ senko --config /path/to/config.toml list
 SENKO_CONFIG=/path/to/config.toml senko list
 ```
 
+## マスターAPIキー
+
+マスターAPIキーを使うと、既存のユーザーアカウントなしでシステムをブートストラップ（ユーザー作成・APIキー発行）できます。認証が有効な場合、マスターキーが最初にチェックされ、一致しなければ通常のユーザーAPIキー照合にフォールバックします。
+
+### キーの生成
+
+```bash
+openssl rand -base64 32
+```
+
+### AWS Secrets Managerへの保存
+
+```bash
+aws secretsmanager create-secret \
+  --name senko/master-api-key \
+  --secret-string "$(openssl rand -base64 32)"
+```
+
+### 設定方法
+
+環境変数で設定:
+
+```bash
+# 直接値を設定
+export SENKO_MASTER_API_KEY="<your-key>"
+
+# または AWS Secrets Manager ARN で設定（aws-secrets feature が必要）
+export SENKO_MASTER_API_KEY_ARN="arn:aws:secretsmanager:us-east-1:123456789:secret:senko/master-api-key-AbCdEf"
+```
+
+`.senko/config.toml` で設定:
+
+```toml
+[auth]
+enabled = true
+master_api_key = "<your-key>"
+# または ARN で指定（aws-secrets feature が必要）:
+# master_api_key_arn = "arn:aws:secretsmanager:..."
+```
+
+### ブートストラップ手順
+
+マスターAPIキーを設定した後のセットアップフロー:
+
+```bash
+# 1. マスターキーを生成して設定
+export SENKO_MASTER_API_KEY="$(openssl rand -base64 32)"
+
+# 2. 認証を有効にしてサーバーを起動
+export SENKO_AUTH_ENABLED=true
+senko serve
+
+# 3. ユーザーを作成
+curl -s -X POST http://localhost:3141/api/v1/users \
+  -H "Authorization: Bearer $SENKO_MASTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "alice"}' | jq .
+
+# 4. ユーザーのAPIキーを発行（1はステップ3で返されたユーザーIDに置き換え）
+curl -s -X POST http://localhost:3141/api/v1/users/1/api-keys \
+  -H "Authorization: Bearer $SENKO_MASTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "default"}' | jq .
+
+# 5. 発行されたAPIキーを以降のリクエストに使用
+export SENKO_API_KEY="<ステップ4で取得したキー>"
+curl -s http://localhost:3141/api/v1/projects \
+  -H "Authorization: Bearer $SENKO_API_KEY" | jq .
+```
+
 ## CLIリファレンス
 
 CLIを直接使用する場合は[CLIリファレンス](CLI.ja.md)を参照してください。

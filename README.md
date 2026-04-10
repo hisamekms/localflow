@@ -140,6 +140,76 @@ When `merge_via = "pr"`:
 2. The PR must be merged before `senko complete <id>` succeeds
 3. Use `--skip-pr-check` to bypass verification when needed
 
+## Master API Key
+
+A master API key lets you bootstrap the system — create users and issue per-user API keys — without an existing user account. When authentication is enabled, the master key is checked first; if it doesn't match, senko falls back to the normal per-user key lookup.
+
+### Generating a key
+
+```bash
+openssl rand -base64 32
+```
+
+### Storing in AWS Secrets Manager
+
+```bash
+aws secretsmanager create-secret \
+  --name senko/master-api-key \
+  --secret-string "$(openssl rand -base64 32)"
+```
+
+### Configuration
+
+Set the key via environment variables:
+
+```bash
+# Direct value
+export SENKO_MASTER_API_KEY="<your-key>"
+
+# Or via AWS Secrets Manager ARN (requires aws-secrets feature)
+export SENKO_MASTER_API_KEY_ARN="arn:aws:secretsmanager:us-east-1:123456789:secret:senko/master-api-key-AbCdEf"
+```
+
+Or in `.senko/config.toml`:
+
+```toml
+[auth]
+enabled = true
+master_api_key = "<your-key>"
+# Or use an ARN (requires aws-secrets feature):
+# master_api_key_arn = "arn:aws:secretsmanager:..."
+```
+
+### Bootstrap flow
+
+Once the master API key is configured:
+
+```bash
+# 1. Generate and set the master key
+export SENKO_MASTER_API_KEY="$(openssl rand -base64 32)"
+
+# 2. Start the server with auth enabled
+export SENKO_AUTH_ENABLED=true
+senko serve
+
+# 3. Create a user
+curl -s -X POST http://localhost:3141/api/v1/users \
+  -H "Authorization: Bearer $SENKO_MASTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "alice"}' | jq .
+
+# 4. Issue an API key for the user (replace 1 with the user ID from step 3)
+curl -s -X POST http://localhost:3141/api/v1/users/1/api-keys \
+  -H "Authorization: Bearer $SENKO_MASTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "default"}' | jq .
+
+# 5. Use the returned API key for subsequent requests
+export SENKO_API_KEY="<key from step 4>"
+curl -s http://localhost:3141/api/v1/projects \
+  -H "Authorization: Bearer $SENKO_API_KEY" | jq .
+```
+
 ## CLI Reference
 
 For direct CLI usage, see [CLI Reference](docs/CLI.md).
