@@ -2502,6 +2502,7 @@ dependencies = [
  "axum-extra",
  "chrono",
  "clap",
+ "percent-encoding",
  "pulldown-cmark",
  "reqwest",
  "rusqlite",

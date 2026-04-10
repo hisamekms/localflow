@@ -122,6 +122,8 @@ pub struct DynamoDbConfig {
 pub struct PostgresConfig {
     pub url: Option<String>,
     pub url_arn: Option<String>,
+    pub rds_secrets_arn: Option<String>,
+    pub sslrootcert: Option<String>,
     pub max_connections: Option<u32>,
 }
 
@@ -572,6 +574,22 @@ impl Config {
                         .url_arn = Some(val);
                 }
             }
+            if let Ok(val) = std::env::var("SENKO_POSTGRES_RDS_SECRETS_ARN") {
+                if !val.is_empty() {
+                    self.backend
+                        .postgres
+                        .get_or_insert_with(PostgresConfig::default)
+                        .rds_secrets_arn = Some(val);
+                }
+            }
+            if let Ok(val) = std::env::var("SENKO_POSTGRES_SSLROOTCERT") {
+                if !val.is_empty() {
+                    self.backend
+                        .postgres
+                        .get_or_insert_with(PostgresConfig::default)
+                        .sslrootcert = Some(val);
+                }
+            }
             if let Ok(val) = std::env::var("SENKO_POSTGRES_MAX_CONNECTIONS") {
                 if !val.is_empty() {
                     if let Ok(n) = val.parse::<u32>() {
@@ -741,27 +759,68 @@ impl Config {
         &mut self,
         client: &crate::infra::secrets::SecretsManagerClient,
     ) -> anyhow::Result<()> {
+        use anyhow::Context;
+
         if let Some(ref arn) = self.auth.master_api_key_arn {
             let secret = client.get_secret(arn).await?;
             self.auth.master_api_key = Some(secret);
         }
 
         #[cfg(feature = "postgres")]
-        if let Some(ref arn) = self
-            .backend
-            .postgres
-            .as_ref()
-            .and_then(|p| p.url_arn.clone())
         {
-            let secret = client.get_secret(arn).await?;
-            self.backend
-                .postgres
-                .get_or_insert_with(PostgresConfig::default)
-                .url = Some(secret);
+            let pg = self.backend.postgres.as_ref();
+            let rds_arn = pg.and_then(|p| p.rds_secrets_arn.clone());
+            let url_arn = pg.and_then(|p| p.url_arn.clone());
+            let sslrootcert = pg.and_then(|p| p.sslrootcert.clone());
+
+            if let Some(ref arn) = rds_arn {
+                let secret = client.get_secret(arn).await?;
+                let url = build_rds_url(&secret, sslrootcert.as_deref())
+                    .with_context(|| format!("failed to parse RDS JSON secret from {arn}"))?;
+                self.backend
+                    .postgres
+                    .get_or_insert_with(PostgresConfig::default)
+                    .url = Some(url);
+            } else if let Some(ref arn) = url_arn {
+                let secret = client.get_secret(arn).await?;
+                self.backend
+                    .postgres
+                    .get_or_insert_with(PostgresConfig::default)
+                    .url = Some(secret);
+            }
         }
 
         Ok(())
     }
+}
+
+#[cfg(all(feature = "postgres", feature = "aws-secrets"))]
+fn build_rds_url(json_str: &str, sslrootcert: Option<&str>) -> anyhow::Result<String> {
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+
+    #[derive(serde::Deserialize)]
+    struct RdsSecret {
+        username: String,
+        password: String,
+        host: String,
+        port: Option<u16>,
+        dbname: Option<String>,
+    }
+
+    let secret: RdsSecret = serde_json::from_str(json_str)?;
+    let port = secret.port.unwrap_or(5432);
+    let dbname = secret.dbname.as_deref().unwrap_or("postgres");
+    let encoded_user = utf8_percent_encode(&secret.username, NON_ALPHANUMERIC);
+    let encoded_pass = utf8_percent_encode(&secret.password, NON_ALPHANUMERIC);
+
+    let mut url = format!("postgres://{encoded_user}:{encoded_pass}@{}:{port}/{dbname}", secret.host);
+
+    if let Some(cert_path) = sslrootcert {
+        url.push_str("?sslmode=verify-full&sslrootcert=");
+        url.push_str(cert_path);
+    }
+
+    Ok(url)
 }
 
 #[cfg(all(test, feature = "aws-secrets"))]
@@ -850,5 +909,138 @@ mod resolve_secrets_tests {
         config.resolve_secrets_with(&client).await.unwrap();
 
         assert!(config.auth.master_api_key.is_none());
+    }
+
+    #[cfg(feature = "postgres")]
+    mod postgres_secrets {
+        use super::*;
+
+        fn pg_config(config: &mut Config) -> &mut PostgresConfig {
+            config.backend.postgres.get_or_insert_with(PostgresConfig::default)
+        }
+
+        #[tokio::test]
+        async fn rds_secrets_arn_builds_url_from_json() {
+            let rds_json = r#"{"username":"admin","password":"s3cret","host":"mydb.cluster-abc.us-east-1.rds.amazonaws.com","port":5432,"dbname":"myapp"}"#;
+            let mut config = Config::default();
+            pg_config(&mut config).rds_secrets_arn = Some("arn:rds".to_string());
+
+            let client = make_client(HashMap::from([
+                ("arn:rds".to_string(), rds_json.to_string()),
+            ]));
+
+            config.resolve_secrets_with(&client).await.unwrap();
+
+            assert_eq!(
+                config.backend.postgres.as_ref().unwrap().url.as_deref(),
+                Some("postgres://admin:s3cret@mydb.cluster-abc.us-east-1.rds.amazonaws.com:5432/myapp")
+            );
+        }
+
+        #[tokio::test]
+        async fn rds_secrets_arn_defaults_port_and_dbname() {
+            let rds_json = r#"{"username":"admin","password":"pass","host":"db.example.com"}"#;
+            let mut config = Config::default();
+            pg_config(&mut config).rds_secrets_arn = Some("arn:rds".to_string());
+
+            let client = make_client(HashMap::from([
+                ("arn:rds".to_string(), rds_json.to_string()),
+            ]));
+
+            config.resolve_secrets_with(&client).await.unwrap();
+
+            assert_eq!(
+                config.backend.postgres.as_ref().unwrap().url.as_deref(),
+                Some("postgres://admin:pass@db.example.com:5432/postgres")
+            );
+        }
+
+        #[tokio::test]
+        async fn rds_secrets_arn_takes_priority_over_url_arn() {
+            let rds_json = r#"{"username":"u","password":"p","host":"rds.example.com"}"#;
+            let mut config = Config::default();
+            let pg = pg_config(&mut config);
+            pg.rds_secrets_arn = Some("arn:rds".to_string());
+            pg.url_arn = Some("arn:url".to_string());
+
+            let client = make_client(HashMap::from([
+                ("arn:rds".to_string(), rds_json.to_string()),
+                ("arn:url".to_string(), "postgres://from-url-arn/db".to_string()),
+            ]));
+
+            config.resolve_secrets_with(&client).await.unwrap();
+
+            let url = config.backend.postgres.as_ref().unwrap().url.as_deref().unwrap();
+            assert!(url.contains("rds.example.com"), "should use RDS secret, got: {url}");
+        }
+
+        #[tokio::test]
+        async fn url_arn_still_works_without_rds_arn() {
+            let mut config = Config::default();
+            pg_config(&mut config).url_arn = Some("arn:url".to_string());
+
+            let client = make_client(HashMap::from([
+                ("arn:url".to_string(), "postgres://direct-url/db".to_string()),
+            ]));
+
+            config.resolve_secrets_with(&client).await.unwrap();
+
+            assert_eq!(
+                config.backend.postgres.as_ref().unwrap().url.as_deref(),
+                Some("postgres://direct-url/db")
+            );
+        }
+
+        #[tokio::test]
+        async fn sslrootcert_appended_to_rds_url() {
+            let rds_json = r#"{"username":"u","password":"p","host":"db.example.com","port":5432,"dbname":"app"}"#;
+            let mut config = Config::default();
+            let pg = pg_config(&mut config);
+            pg.rds_secrets_arn = Some("arn:rds".to_string());
+            pg.sslrootcert = Some("/etc/ssl/rds-ca.pem".to_string());
+
+            let client = make_client(HashMap::from([
+                ("arn:rds".to_string(), rds_json.to_string()),
+            ]));
+
+            config.resolve_secrets_with(&client).await.unwrap();
+
+            assert_eq!(
+                config.backend.postgres.as_ref().unwrap().url.as_deref(),
+                Some("postgres://u:p@db.example.com:5432/app?sslmode=verify-full&sslrootcert=/etc/ssl/rds-ca.pem")
+            );
+        }
+
+        #[tokio::test]
+        async fn rds_json_parse_error_has_clear_message() {
+            let mut config = Config::default();
+            pg_config(&mut config).rds_secrets_arn = Some("arn:bad".to_string());
+
+            let client = make_client(HashMap::from([
+                ("arn:bad".to_string(), "not-valid-json".to_string()),
+            ]));
+
+            let err = config.resolve_secrets_with(&client).await.unwrap_err();
+            let msg = format!("{err:#}");
+            assert!(msg.contains("failed to parse RDS JSON secret from arn:bad"), "error: {msg}");
+        }
+
+        #[tokio::test]
+        async fn rds_password_with_special_chars_is_encoded() {
+            let rds_json = r#"{"username":"admin","password":"p@ss:w/rd?#","host":"db.example.com"}"#;
+            let mut config = Config::default();
+            pg_config(&mut config).rds_secrets_arn = Some("arn:rds".to_string());
+
+            let client = make_client(HashMap::from([
+                ("arn:rds".to_string(), rds_json.to_string()),
+            ]));
+
+            config.resolve_secrets_with(&client).await.unwrap();
+
+            let url = config.backend.postgres.as_ref().unwrap().url.as_deref().unwrap();
+            // Password should be percent-encoded
+            assert!(!url.contains("p@ss:w/rd?#"), "password should be encoded, got: {url}");
+            assert!(url.contains("p%40ss%3Aw%2Frd%3F%23"), "expected encoded password, got: {url}");
+        }
     }
 }
