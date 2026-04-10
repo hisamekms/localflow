@@ -129,7 +129,7 @@ pub fn create_auth_provider(
     if config.auth.enabled {
         if backend.supports_api_key_auth() {
             tracing::info!("authentication enabled");
-            Some(Arc::new(ApiKeyProvider::new(backend)))
+            Some(Arc::new(ApiKeyProvider::new(backend, config.auth.master_api_key.clone())))
         } else {
             tracing::warn!(
                 "authentication requested but backend does not support API key auth; disabling"
