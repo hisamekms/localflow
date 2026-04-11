@@ -29,9 +29,9 @@ pub fn create_backend(
     project_root: &Path,
     config: &Config,
 ) -> Result<Arc<dyn TaskBackend>> {
-    // 1. HTTP backend (api_url from env or config.toml)
-    if let Some(ref url) = config.backend.api_url {
-        let backend = match config.backend.api_key.as_ref() {
+    // 1. HTTP backend (server.url from env or config.toml)
+    if let Some(ref url) = config.server.url {
+        let backend = match config.server.token.as_ref() {
             Some(key) => HttpBackend::with_api_key(url, key.clone()),
             None => HttpBackend::new(url),
         };
@@ -82,7 +82,7 @@ pub fn should_fire_client_hooks(config: &Config) -> bool {
 /// Resolve the backend info from config for hook envelope metadata.
 /// Mirrors the priority logic of `create_backend`.
 pub fn resolve_backend_info(config: &Config, project_root: &Path) -> BackendInfo {
-    if let Some(ref url) = config.backend.api_url {
+    if let Some(ref url) = config.server.url {
         return BackendInfo::Http { api_url: url.clone() };
     }
     #[cfg(feature = "dynamodb")]
@@ -122,18 +122,24 @@ pub fn create_pr_verifier() -> Arc<dyn crate::application::port::PrVerifier> {
     Arc::new(GhCliPrVerifier)
 }
 
-/// Validate auth configuration after Config is fully resolved (env + secrets).
+/// Validate that `senko serve` has at least one authentication method configured.
 /// Call before `create_auth_provider`.
-pub fn validate_auth_config(config: &Config) -> Result<()> {
-    config.auth.validate()
+pub fn validate_serve_auth(config: &Config) -> Result<()> {
+    if !config.auth.is_configured() {
+        bail!(
+            "senko serve requires at least one authentication method. \
+             Set auth.oidc (issuer_url + client_id) or auth.api_key.master_key."
+        );
+    }
+    Ok(())
 }
 
 pub fn create_auth_provider(
     config: &Config,
     backend: Arc<dyn TaskBackend>,
 ) -> Result<Option<Arc<dyn AuthProvider>>> {
-    if !config.auth.enabled {
-        tracing::info!("authentication disabled");
+    if !config.auth.oidc.is_configured() && config.auth.api_key.master_key.is_none() {
+        tracing::info!("no authentication method configured");
         return Ok(None);
     }
 
@@ -154,16 +160,13 @@ pub fn create_auth_provider(
         tracing::info!("API key authentication enabled");
         providers.push(Arc::new(ApiKeyProvider::new(
             backend,
-            config.auth.master_api_key.clone(),
-            config.auth.token.clone(),
+            config.auth.api_key.master_key.clone(),
+            config.auth.oidc.session.clone(),
         )));
     }
 
     if providers.is_empty() {
-        bail!(
-            "authentication is enabled but no auth providers could be created. \
-             This is unexpected after config validation; check backend compatibility."
-        );
+        return Ok(None);
     }
 
     if providers.len() == 1 {
@@ -191,8 +194,8 @@ pub fn create_remote_task_operations(
     project_root: &Path,
     backend: Arc<dyn TaskBackend>,
 ) -> RemoteTaskOperations {
-    let url = config.backend.api_url.as_ref().expect("api_url required for remote operations");
-    let api_key = config.backend.api_key.clone();
+    let url = config.server.url.as_ref().expect("server.url required for remote operations");
+    let api_key = config.server.token.clone();
 
     let backend_info = resolve_backend_info(config, project_root);
     let hooks = create_hook_executor(
@@ -212,7 +215,7 @@ pub fn create_task_operations(
     config: &Config,
 ) -> Result<(Arc<dyn TaskOperations>, Arc<dyn TaskBackend>)> {
     let backend = create_backend(project_root, config)?;
-    let using_http = config.backend.api_url.is_some();
+    let using_http = config.server.url.is_some();
     let task_ops: Arc<dyn TaskOperations> = if using_http {
         Arc::new(create_remote_task_operations(config, project_root, backend.clone()))
     } else {
@@ -679,45 +682,35 @@ name = "project-local"
     // --- auth config validation tests ---
 
     #[test]
-    fn validate_auth_disabled_always_ok() {
-        let config = Config::default(); // auth.enabled defaults to false
-        validate_auth_config(&config).unwrap();
-    }
-
-    #[test]
-    fn validate_auth_enabled_with_oidc_ok() {
+    fn validate_serve_auth_with_oidc_ok() {
         let mut config = Config::default();
-        config.auth.enabled = true;
         config.auth.oidc.issuer_url = Some("https://example.com".to_string());
         config.auth.oidc.client_id = Some("my-client".to_string());
-        validate_auth_config(&config).unwrap();
+        validate_serve_auth(&config).unwrap();
     }
 
     #[test]
-    fn validate_auth_enabled_with_master_key_ok() {
+    fn validate_serve_auth_with_master_key_ok() {
         let mut config = Config::default();
-        config.auth.enabled = true;
-        config.auth.master_api_key = Some("secret".to_string());
-        validate_auth_config(&config).unwrap();
+        config.auth.api_key.master_key = Some("secret".to_string());
+        validate_serve_auth(&config).unwrap();
     }
 
     #[test]
-    fn validate_auth_enabled_with_both_ok() {
+    fn validate_serve_auth_with_both_ok() {
         let mut config = Config::default();
-        config.auth.enabled = true;
         config.auth.oidc.issuer_url = Some("https://example.com".to_string());
         config.auth.oidc.client_id = Some("my-client".to_string());
-        config.auth.master_api_key = Some("secret".to_string());
-        validate_auth_config(&config).unwrap();
+        config.auth.api_key.master_key = Some("secret".to_string());
+        validate_serve_auth(&config).unwrap();
     }
 
     #[test]
-    fn validate_auth_enabled_with_neither_fails() {
-        let mut config = Config::default();
-        config.auth.enabled = true;
-        let err = validate_auth_config(&config).unwrap_err();
+    fn validate_serve_auth_with_neither_fails() {
+        let config = Config::default();
+        let err = validate_serve_auth(&config).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("master_api_key"), "error should mention master_api_key: {msg}");
+        assert!(msg.contains("api_key.master_key"), "error should mention api_key.master_key: {msg}");
         assert!(msg.contains("oidc"), "error should mention oidc: {msg}");
     }
 }

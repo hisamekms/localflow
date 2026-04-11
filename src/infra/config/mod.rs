@@ -23,7 +23,9 @@ pub struct Config {
     #[serde(default)]
     pub storage: StorageConfig,
     #[serde(default)]
-    pub web: WebConfig,
+    pub serve: ServeConfig,
+    #[serde(default)]
+    pub server: ServerConfig,
     #[serde(default)]
     pub skill: SkillConfig,
 }
@@ -66,9 +68,16 @@ pub struct SkillConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct WebConfig {
+pub struct ServeConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServerConfig {
+    pub url: Option<String>,
+    #[serde(skip)]
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -86,6 +95,8 @@ pub struct OidcConfig {
     pub scopes: Vec<String>,
     #[serde(default)]
     pub cli: OidcCliConfig,
+    #[serde(default)]
+    pub session: SessionConfig,
 }
 
 impl OidcConfig {
@@ -102,38 +113,30 @@ fn default_oidc_scopes() -> Vec<String> {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct TokenConfig {
+pub struct SessionConfig {
     pub ttl: Option<String>,
     pub inactive_ttl: Option<String>,
     pub max_per_user: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct ApiKeyConfig {
+    pub master_key: Option<String>,
+    pub master_key_arn: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct AuthConfig {
     #[serde(default)]
-    pub enabled: bool,
-    pub master_api_key: Option<String>,
-    pub master_api_key_arn: Option<String>,
+    pub api_key: ApiKeyConfig,
     #[serde(default)]
     pub oidc: OidcConfig,
-    #[serde(default)]
-    pub token: TokenConfig,
 }
 
 impl AuthConfig {
-    /// Validate that auth is properly configured.
-    /// When auth is enabled, at least OIDC or master_api_key must be set.
-    pub fn validate(&self) -> anyhow::Result<()> {
-        if !self.enabled {
-            return Ok(());
-        }
-        if self.oidc.is_configured() || self.master_api_key.is_some() {
-            return Ok(());
-        }
-        anyhow::bail!(
-            "auth.enabled = true but no authentication method is configured. \
-             Set oidc.issuer_url + oidc.client_id, or set master_api_key."
-        );
+    /// Returns true when at least one authentication method is configured.
+    pub fn is_configured(&self) -> bool {
+        self.oidc.is_configured() || self.api_key.master_key.is_some()
     }
 }
 
@@ -192,8 +195,6 @@ pub struct StorageConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BackendConfig {
-    pub api_url: Option<String>,
-    pub api_key: Option<String>,
     #[cfg(feature = "dynamodb")]
     #[serde(default)]
     pub dynamodb: Option<DynamoDbConfig>,
@@ -346,7 +347,9 @@ pub struct RawConfig {
     #[serde(default)]
     pub storage: StorageConfig,
     #[serde(default)]
-    pub web: RawWebConfig,
+    pub serve: RawServeConfig,
+    #[serde(default)]
+    pub server: RawServerConfig,
     #[serde(default)]
     pub skill: Option<SkillConfig>,
 }
@@ -363,8 +366,6 @@ pub struct RawWorkflowConfig {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawBackendConfig {
-    pub api_url: Option<String>,
-    pub api_key: Option<String>,
     #[cfg(feature = "dynamodb")]
     pub dynamodb: Option<DynamoDbConfig>,
     #[cfg(feature = "postgres")]
@@ -391,30 +392,40 @@ pub struct RawOidcConfig {
     pub scopes: Option<Vec<String>>,
     #[serde(default)]
     pub cli: RawOidcCliConfig,
+    #[serde(default)]
+    pub session: RawSessionConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
-pub struct RawTokenConfig {
+pub struct RawSessionConfig {
     pub ttl: Option<String>,
     pub inactive_ttl: Option<String>,
     pub max_per_user: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
-pub struct RawAuthConfig {
-    pub enabled: Option<bool>,
-    pub master_api_key: Option<String>,
-    pub master_api_key_arn: Option<String>,
-    #[serde(default)]
-    pub oidc: RawOidcConfig,
-    #[serde(default)]
-    pub token: RawTokenConfig,
+pub struct RawApiKeyConfig {
+    pub master_key: Option<String>,
+    pub master_key_arn: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
-pub struct RawWebConfig {
+pub struct RawAuthConfig {
+    #[serde(default)]
+    pub api_key: RawApiKeyConfig,
+    #[serde(default)]
+    pub oidc: RawOidcConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawServeConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawServerConfig {
+    pub url: Option<String>,
 }
 
 impl RawConfig {
@@ -430,8 +441,6 @@ impl RawConfig {
                 events: overlay.workflow.events.or(self.workflow.events),
             },
             backend: RawBackendConfig {
-                api_url: overlay.backend.api_url.or(self.backend.api_url),
-                api_key: overlay.backend.api_key.or(self.backend.api_key),
                 #[cfg(feature = "dynamodb")]
                 dynamodb: overlay.backend.dynamodb.or(self.backend.dynamodb),
                 #[cfg(feature = "postgres")]
@@ -449,9 +458,10 @@ impl RawConfig {
                 name: overlay.user.name.or(self.user.name),
             },
             auth: RawAuthConfig {
-                enabled: overlay.auth.enabled.or(self.auth.enabled),
-                master_api_key: overlay.auth.master_api_key.or(self.auth.master_api_key),
-                master_api_key_arn: overlay.auth.master_api_key_arn.or(self.auth.master_api_key_arn),
+                api_key: RawApiKeyConfig {
+                    master_key: overlay.auth.api_key.master_key.or(self.auth.api_key.master_key),
+                    master_key_arn: overlay.auth.api_key.master_key_arn.or(self.auth.api_key.master_key_arn),
+                },
                 oidc: RawOidcConfig {
                     issuer_url: overlay.auth.oidc.issuer_url.or(self.auth.oidc.issuer_url),
                     client_id: overlay.auth.oidc.client_id.or(self.auth.oidc.client_id),
@@ -470,27 +480,32 @@ impl RawConfig {
                             .browser
                             .or(self.auth.oidc.cli.browser),
                     },
-                },
-                token: RawTokenConfig {
-                    ttl: overlay.auth.token.ttl.or(self.auth.token.ttl),
-                    inactive_ttl: overlay
-                        .auth
-                        .token
-                        .inactive_ttl
-                        .or(self.auth.token.inactive_ttl),
-                    max_per_user: overlay
-                        .auth
-                        .token
-                        .max_per_user
-                        .or(self.auth.token.max_per_user),
+                    session: RawSessionConfig {
+                        ttl: overlay.auth.oidc.session.ttl.or(self.auth.oidc.session.ttl),
+                        inactive_ttl: overlay
+                            .auth
+                            .oidc
+                            .session
+                            .inactive_ttl
+                            .or(self.auth.oidc.session.inactive_ttl),
+                        max_per_user: overlay
+                            .auth
+                            .oidc
+                            .session
+                            .max_per_user
+                            .or(self.auth.oidc.session.max_per_user),
+                    },
                 },
             },
             storage: StorageConfig {
                 db_path: overlay.storage.db_path.or(self.storage.db_path),
             },
-            web: RawWebConfig {
-                host: overlay.web.host.or(self.web.host),
-                port: overlay.web.port.or(self.web.port),
+            serve: RawServeConfig {
+                host: overlay.serve.host.or(self.serve.host),
+                port: overlay.serve.port.or(self.serve.port),
+            },
+            server: RawServerConfig {
+                url: overlay.server.url.or(self.server.url),
             },
             skill: overlay.skill.or(self.skill),
         }
@@ -508,8 +523,6 @@ impl RawConfig {
                 events: self.workflow.events.unwrap_or_default(),
             },
             backend: BackendConfig {
-                api_url: self.backend.api_url,
-                api_key: self.backend.api_key,
                 #[cfg(feature = "dynamodb")]
                 dynamodb: self.backend.dynamodb,
                 #[cfg(feature = "postgres")]
@@ -523,9 +536,10 @@ impl RawConfig {
             project: self.project,
             user: self.user,
             auth: AuthConfig {
-                enabled: self.auth.enabled.unwrap_or(false),
-                master_api_key: self.auth.master_api_key,
-                master_api_key_arn: self.auth.master_api_key_arn,
+                api_key: ApiKeyConfig {
+                    master_key: self.auth.api_key.master_key,
+                    master_key_arn: self.auth.api_key.master_key_arn,
+                },
                 oidc: OidcConfig {
                     issuer_url: self.auth.oidc.issuer_url,
                     client_id: self.auth.oidc.client_id,
@@ -534,17 +548,21 @@ impl RawConfig {
                         callback_port: self.auth.oidc.cli.callback_port,
                         browser: self.auth.oidc.cli.browser.unwrap_or(true),
                     },
-                },
-                token: TokenConfig {
-                    ttl: self.auth.token.ttl,
-                    inactive_ttl: self.auth.token.inactive_ttl,
-                    max_per_user: self.auth.token.max_per_user,
+                    session: SessionConfig {
+                        ttl: self.auth.oidc.session.ttl,
+                        inactive_ttl: self.auth.oidc.session.inactive_ttl,
+                        max_per_user: self.auth.oidc.session.max_per_user,
+                    },
                 },
             },
             storage: self.storage,
-            web: WebConfig {
-                host: self.web.host,
-                port: self.web.port,
+            serve: ServeConfig {
+                host: self.serve.host,
+                port: self.serve.port,
+            },
+            server: ServerConfig {
+                url: self.server.url,
+                token: None,
             },
             skill: self.skill.unwrap_or_default(),
         }
@@ -637,19 +655,14 @@ impl Config {
             }
         }
 
-        // Backend settings
-        if let Ok(val) = std::env::var("SENKO_API_URL")
+        // Server settings
+        if let Ok(val) = std::env::var("SENKO_SERVER_URL")
             && !val.is_empty() {
-                self.backend.api_url = Some(val);
+                self.server.url = Some(val);
             }
-        if let Ok(val) = std::env::var("SENKO_API_KEY")
-            && !val.is_empty() {
-                self.backend.api_key = Some(val);
-            }
-        // SENKO_TOKEN takes priority over SENKO_API_KEY
         if let Ok(val) = std::env::var("SENKO_TOKEN")
             && !val.is_empty() {
-                self.backend.api_key = Some(val);
+                self.server.token = Some(val);
             }
         if let Ok(val) = std::env::var("SENKO_HOOKS_ENABLED") {
             match val.to_lowercase().as_str() {
@@ -660,20 +673,13 @@ impl Config {
         }
 
         // Auth settings
-        if let Ok(val) = std::env::var("SENKO_AUTH_ENABLED") {
-            match val.to_lowercase().as_str() {
-                "true" | "1" | "yes" => self.auth.enabled = true,
-                "false" | "0" | "no" => self.auth.enabled = false,
-                other => eprintln!("warning: unknown SENKO_AUTH_ENABLED={other}, ignoring"),
-            }
-        }
-        if let Ok(val) = std::env::var("SENKO_MASTER_API_KEY")
+        if let Ok(val) = std::env::var("SENKO_AUTH_API_KEY_MASTER_KEY")
             && !val.is_empty() {
-                self.auth.master_api_key = Some(val);
+                self.auth.api_key.master_key = Some(val);
             }
-        if let Ok(val) = std::env::var("SENKO_MASTER_API_KEY_ARN")
+        if let Ok(val) = std::env::var("SENKO_AUTH_API_KEY_MASTER_KEY_ARN")
             && !val.is_empty() {
-                self.auth.master_api_key_arn = Some(val);
+                self.auth.api_key.master_key_arn = Some(val);
             }
 
         // OIDC settings
@@ -686,19 +692,19 @@ impl Config {
                 self.auth.oidc.client_id = Some(val);
             }
 
-        // Token settings
-        if let Ok(val) = std::env::var("SENKO_AUTH_TOKEN_TTL")
+        // Session settings
+        if let Ok(val) = std::env::var("SENKO_AUTH_OIDC_SESSION_TTL")
             && !val.is_empty() {
-                self.auth.token.ttl = Some(val);
+                self.auth.oidc.session.ttl = Some(val);
             }
-        if let Ok(val) = std::env::var("SENKO_AUTH_TOKEN_INACTIVE_TTL")
+        if let Ok(val) = std::env::var("SENKO_AUTH_OIDC_SESSION_INACTIVE_TTL")
             && !val.is_empty() {
-                self.auth.token.inactive_ttl = Some(val);
+                self.auth.oidc.session.inactive_ttl = Some(val);
             }
-        if let Ok(val) = std::env::var("SENKO_AUTH_TOKEN_MAX_PER_USER")
+        if let Ok(val) = std::env::var("SENKO_AUTH_OIDC_SESSION_MAX_PER_USER")
             && !val.is_empty()
             && let Ok(n) = val.parse::<u32>() {
-                self.auth.token.max_per_user = Some(n);
+                self.auth.oidc.session.max_per_user = Some(n);
             }
 
         // DynamoDB settings (feature-gated)
@@ -840,14 +846,14 @@ impl Config {
             }
         }
 
-        // Web settings
+        // Serve settings
         if let Ok(val) = std::env::var("SENKO_PORT")
             && let Ok(port) = val.parse::<u16>() {
-                self.web.port = Some(port);
+                self.serve.port = Some(port);
             }
         if let Ok(val) = std::env::var("SENKO_HOST")
             && !val.is_empty() {
-                self.web.host = Some(val);
+                self.serve.host = Some(val);
             }
     }
 
@@ -874,23 +880,23 @@ impl Config {
             self.user.name = Some(name.clone());
         }
         if let Some(port) = overrides.port {
-            self.web.port = Some(port);
+            self.serve.port = Some(port);
         }
         if let Some(ref host) = overrides.host {
-            self.web.host = Some(host.clone());
+            self.serve.host = Some(host.clone());
         }
     }
 
-    pub fn web_port_or(&self, default: u16) -> u16 {
-        self.web.port.unwrap_or(default)
+    pub fn serve_port_or(&self, default: u16) -> u16 {
+        self.serve.port.unwrap_or(default)
     }
 
-    pub fn web_port_is_explicit(&self) -> bool {
-        self.web.port.is_some()
+    pub fn serve_port_is_explicit(&self) -> bool {
+        self.serve.port.is_some()
     }
 
     pub fn effective_host(&self) -> String {
-        self.web
+        self.serve
             .host
             .clone()
             .unwrap_or_else(|| "127.0.0.1".to_string())
@@ -928,9 +934,9 @@ impl Config {
     ) -> anyhow::Result<()> {
         use anyhow::Context;
 
-        if let Some(ref arn) = self.auth.master_api_key_arn {
+        if let Some(ref arn) = self.auth.api_key.master_key_arn {
             let secret = client.get_secret(arn).await?;
-            self.auth.master_api_key = Some(secret);
+            self.auth.api_key.master_key = Some(secret);
         }
 
         #[cfg(feature = "postgres")]
@@ -1018,8 +1024,8 @@ mod resolve_secrets_tests {
     #[tokio::test]
     async fn arn_overwrites_direct_value() {
         let mut config = Config::default();
-        config.auth.master_api_key = Some("direct-value".to_string());
-        config.auth.master_api_key_arn = Some("arn:aws:secretsmanager:us-east-1:123:secret:key".to_string());
+        config.auth.api_key.master_key = Some("direct-value".to_string());
+        config.auth.api_key.master_key_arn = Some("arn:aws:secretsmanager:us-east-1:123:secret:key".to_string());
 
         let client = make_client(HashMap::from([(
             "arn:aws:secretsmanager:us-east-1:123:secret:key".to_string(),
@@ -1029,7 +1035,7 @@ mod resolve_secrets_tests {
         config.resolve_secrets_with(&client).await.unwrap();
 
         assert_eq!(
-            config.auth.master_api_key.as_deref(),
+            config.auth.api_key.master_key.as_deref(),
             Some("arn-resolved-value")
         );
     }
@@ -1037,7 +1043,7 @@ mod resolve_secrets_tests {
     #[tokio::test]
     async fn arn_only_sets_master_key() {
         let mut config = Config::default();
-        config.auth.master_api_key_arn = Some("arn:aws:secretsmanager:us-east-1:123:secret:key".to_string());
+        config.auth.api_key.master_key_arn = Some("arn:aws:secretsmanager:us-east-1:123:secret:key".to_string());
 
         let client = make_client(HashMap::from([(
             "arn:aws:secretsmanager:us-east-1:123:secret:key".to_string(),
@@ -1047,7 +1053,7 @@ mod resolve_secrets_tests {
         config.resolve_secrets_with(&client).await.unwrap();
 
         assert_eq!(
-            config.auth.master_api_key.as_deref(),
+            config.auth.api_key.master_key.as_deref(),
             Some("arn-resolved-value")
         );
     }
@@ -1055,14 +1061,14 @@ mod resolve_secrets_tests {
     #[tokio::test]
     async fn direct_only_unchanged() {
         let mut config = Config::default();
-        config.auth.master_api_key = Some("direct-value".to_string());
+        config.auth.api_key.master_key = Some("direct-value".to_string());
 
         let client = make_client(HashMap::new());
 
         config.resolve_secrets_with(&client).await.unwrap();
 
         assert_eq!(
-            config.auth.master_api_key.as_deref(),
+            config.auth.api_key.master_key.as_deref(),
             Some("direct-value")
         );
     }
@@ -1075,7 +1081,7 @@ mod resolve_secrets_tests {
 
         config.resolve_secrets_with(&client).await.unwrap();
 
-        assert!(config.auth.master_api_key.is_none());
+        assert!(config.auth.api_key.master_key.is_none());
     }
 
     #[cfg(feature = "postgres")]
