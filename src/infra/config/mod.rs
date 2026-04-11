@@ -120,6 +120,23 @@ pub struct AuthConfig {
     pub token: TokenConfig,
 }
 
+impl AuthConfig {
+    /// Validate that auth is properly configured.
+    /// When auth is enabled, at least OIDC or master_api_key must be set.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.oidc.is_configured() || self.master_api_key.is_some() {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "auth.enabled = true but no authentication method is configured. \
+             Set oidc.issuer_url + oidc.client_id, or set master_api_key."
+        );
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProjectConfig {
     pub name: Option<String>,

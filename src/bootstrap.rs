@@ -122,13 +122,19 @@ pub fn create_pr_verifier() -> Arc<dyn crate::application::port::PrVerifier> {
     Arc::new(GhCliPrVerifier)
 }
 
+/// Validate auth configuration after Config is fully resolved (env + secrets).
+/// Call before `create_auth_provider`.
+pub fn validate_auth_config(config: &Config) -> Result<()> {
+    config.auth.validate()
+}
+
 pub fn create_auth_provider(
     config: &Config,
     backend: Arc<dyn TaskBackend>,
-) -> Option<Arc<dyn AuthProvider>> {
+) -> Result<Option<Arc<dyn AuthProvider>>> {
     if !config.auth.enabled {
         tracing::info!("authentication disabled");
-        return None;
+        return Ok(None);
     }
 
     let mut providers: Vec<Arc<dyn AuthProvider>> = Vec::new();
@@ -153,17 +159,17 @@ pub fn create_auth_provider(
     }
 
     if providers.is_empty() {
-        tracing::warn!(
-            "authentication requested but no auth providers could be configured; disabling"
+        bail!(
+            "authentication is enabled but no auth providers could be created. \
+             This is unexpected after config validation; check backend compatibility."
         );
-        return None;
     }
 
     if providers.len() == 1 {
-        Some(providers.pop().unwrap())
+        Ok(Some(providers.pop().unwrap()))
     } else {
         tracing::info!("authentication chain: JWT -> API key");
-        Some(Arc::new(ChainAuthProvider::new(providers)))
+        Ok(Some(Arc::new(ChainAuthProvider::new(providers))))
     }
 }
 
@@ -667,5 +673,50 @@ name = "project-local"
 
         // project.name: user-project → (user local doesn't set it) → project-base → project-local
         assert_eq!(config.project.name.as_deref(), Some("project-local"));
+    }
+
+    // --- auth config validation tests ---
+
+    #[test]
+    fn validate_auth_disabled_always_ok() {
+        let config = Config::default(); // auth.enabled defaults to false
+        validate_auth_config(&config).unwrap();
+    }
+
+    #[test]
+    fn validate_auth_enabled_with_oidc_ok() {
+        let mut config = Config::default();
+        config.auth.enabled = true;
+        config.auth.oidc.issuer_url = Some("https://example.com".to_string());
+        config.auth.oidc.client_id = Some("my-client".to_string());
+        validate_auth_config(&config).unwrap();
+    }
+
+    #[test]
+    fn validate_auth_enabled_with_master_key_ok() {
+        let mut config = Config::default();
+        config.auth.enabled = true;
+        config.auth.master_api_key = Some("secret".to_string());
+        validate_auth_config(&config).unwrap();
+    }
+
+    #[test]
+    fn validate_auth_enabled_with_both_ok() {
+        let mut config = Config::default();
+        config.auth.enabled = true;
+        config.auth.oidc.issuer_url = Some("https://example.com".to_string());
+        config.auth.oidc.client_id = Some("my-client".to_string());
+        config.auth.master_api_key = Some("secret".to_string());
+        validate_auth_config(&config).unwrap();
+    }
+
+    #[test]
+    fn validate_auth_enabled_with_neither_fails() {
+        let mut config = Config::default();
+        config.auth.enabled = true;
+        let err = validate_auth_config(&config).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("master_api_key"), "error should mention master_api_key: {msg}");
+        assert!(msg.contains("oidc"), "error should mention oidc: {msg}");
     }
 }
