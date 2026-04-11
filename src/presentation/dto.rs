@@ -371,6 +371,14 @@ pub struct TokenResponse {
     pub expires_at: Option<String>,
 }
 
+// --- Me (auth status) ---
+
+#[derive(Serialize)]
+pub struct MeResponse {
+    pub user: UserResponse,
+    pub session: SessionResponse,
+}
+
 // --- Config ---
 
 #[derive(Serialize)]

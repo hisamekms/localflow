@@ -32,7 +32,7 @@ use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role,
 };
 use super::dto::{
-    ApiKeyResponse, ApiKeyWithSecretResponse, CompleteTaskResponse, ConfigResponse,
+    ApiKeyResponse, ApiKeyWithSecretResponse, CompleteTaskResponse, ConfigResponse, MeResponse,
     PreviewTransitionResponse, ProjectMemberResponse, ProjectResponse, SessionResponse,
     TaskResponse, TokenResponse, UserResponse,
 };
@@ -426,6 +426,7 @@ pub async fn serve(
             get(get_stats),
         )
         // Auth / Session management
+        .route("/auth/me", get(get_me))
         .route("/auth/token", post(create_token))
         .route("/auth/sessions", get(list_sessions).delete(revoke_all_sessions))
         .route("/auth/sessions/{id}", delete(revoke_session))
@@ -1039,6 +1040,36 @@ async fn delete_api_key(
 }
 
 // --- Auth / Session Management Handlers ---
+
+// GET /auth/me — current user + session info
+async fn get_me(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<MeResponse>, ApiError> {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or(AuthError::MissingToken)?;
+    let token_prefix = &token[..token.len().min(11)];
+
+    let sessions = state
+        .user_service
+        .list_active_sessions(auth.user.id(), &state.token_config)
+        .await
+        .map_err(classify_error)?;
+
+    let current_session = sessions
+        .into_iter()
+        .find(|s| s.key_prefix() == token_prefix)
+        .ok_or_else(|| classify_error(anyhow::anyhow!("current session not found")))?;
+
+    Ok(Json(MeResponse {
+        user: UserResponse::from(auth.user),
+        session: SessionResponse::from(current_session),
+    }))
+}
 
 #[derive(Deserialize)]
 struct CreateTokenRequest {

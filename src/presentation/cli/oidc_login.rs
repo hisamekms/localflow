@@ -134,7 +134,7 @@ pub async fn perform_login(
         .context("failed to parse /auth/token response")?;
 
     // Step 8: Save to keychain
-    save_to_keychain(api_url, &senko_token.token)?;
+    super::keychain::save(api_url, &senko_token.token)?;
 
     Ok(LoginResult {
         key_prefix: senko_token.key_prefix,
@@ -197,11 +197,3 @@ async fn receive_callback(listener: &TcpListener) -> Result<(String, String)> {
     Ok((code, state))
 }
 
-fn save_to_keychain(api_url: &str, api_key: &str) -> Result<()> {
-    let entry = keyring::Entry::new("senko", api_url)
-        .context("failed to create keychain entry")?;
-    entry
-        .set_password(api_key)
-        .context("failed to save API key to keychain")?;
-    Ok(())
-}

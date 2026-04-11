@@ -1,4 +1,5 @@
 pub mod handlers;
+pub mod keychain;
 mod oidc_login;
 pub mod skill;
 
@@ -353,6 +354,23 @@ pub enum AuthCommand {
         /// Device name for the session token
         #[arg(long)]
         device_name: Option<String>,
+    },
+    /// Print the stored API token to stdout
+    Token,
+    /// Show login status and current session info
+    Status,
+    /// Logout: revoke current session and remove token from keychain
+    Logout,
+    /// List active sessions
+    Sessions,
+    /// Revoke a session
+    Revoke {
+        /// Session ID to revoke
+        #[arg(conflicts_with = "all")]
+        id: Option<i64>,
+        /// Revoke all sessions
+        #[arg(long, conflicts_with = "id")]
+        all: bool,
     },
 }
 
@@ -767,6 +785,13 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Auth { ref command } => match command {
             AuthCommand::Login { device_name } => {
                 handlers::cmd_auth_login(&cli, device_name.clone()).await
+            }
+            AuthCommand::Token => handlers::cmd_auth_token(&cli).await,
+            AuthCommand::Status => handlers::cmd_auth_status(&cli).await,
+            AuthCommand::Logout => handlers::cmd_auth_logout(&cli).await,
+            AuthCommand::Sessions => handlers::cmd_auth_sessions(&cli).await,
+            AuthCommand::Revoke { id, all } => {
+                handlers::cmd_auth_revoke(&cli, *id, *all).await
             }
         },
     }

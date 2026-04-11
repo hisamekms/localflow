@@ -1505,6 +1505,267 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
     Ok(())
 }
 
+// --- Auth subcommand helpers ---
+
+fn require_api_url_and_token(cli: &Cli) -> Result<(String, String)> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let config = load_config(cli, &root)?;
+    let api_url = config
+        .backend
+        .api_url
+        .as_deref()
+        .context("backend.api_url is not configured. Set it in config to point to the senko API server.")?
+        .to_string();
+    let token = super::keychain::load(&api_url)
+        .context("Not logged in. Run `senko auth login` first.")?;
+    Ok((api_url, token))
+}
+
+fn http_client() -> reqwest::Client {
+    reqwest::Client::new()
+}
+
+fn api_url_base(api_url: &str) -> &str {
+    api_url.trim_end_matches('/')
+}
+
+// CLI-local response types for deserializing server responses
+
+#[derive(serde::Deserialize)]
+struct CliMeResponse {
+    user: CliUserInfo,
+    session: CliSessionInfo,
+}
+
+#[derive(serde::Deserialize)]
+struct CliUserInfo {
+    username: String,
+    display_name: Option<String>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct CliSessionInfo {
+    id: i64,
+    key_prefix: String,
+    device_name: Option<String>,
+    created_at: String,
+    last_used_at: Option<String>,
+}
+
+// --- Auth subcommand handlers ---
+
+pub async fn cmd_auth_token(cli: &Cli) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let config = load_config(cli, &root)?;
+    let api_url = config
+        .backend
+        .api_url
+        .as_deref()
+        .context("backend.api_url is not configured. Set it in config to point to the senko API server.")?;
+    let token = super::keychain::load(api_url)
+        .context("Not logged in. Run `senko auth login` first.")?;
+    match cli.output {
+        OutputFormat::Json => println!("{}", serde_json::json!({"token": token})),
+        OutputFormat::Text => print!("{token}"),
+    }
+    Ok(())
+}
+
+pub async fn cmd_auth_status(cli: &Cli) -> Result<()> {
+    let (api_url, token) = require_api_url_and_token(cli)?;
+    let client = http_client();
+    let resp = client
+        .get(format!("{}/auth/me", api_url_base(&api_url)))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .context("failed to connect to server")?;
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        bail!("Session expired or invalid. Run `senko auth login` to re-authenticate.");
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        bail!("GET /auth/me failed ({status}): {body}");
+    }
+    let me: CliMeResponse = resp
+        .json()
+        .await
+        .context("failed to parse /auth/me response")?;
+    match cli.output {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "logged_in": true,
+                    "username": me.user.username,
+                    "display_name": me.user.display_name,
+                    "session_id": me.session.id,
+                    "key_prefix": me.session.key_prefix,
+                    "api_url": api_url,
+                })
+            );
+        }
+        OutputFormat::Text => {
+            eprintln!("Logged in as: {}", me.user.username);
+            if let Some(ref dn) = me.user.display_name {
+                eprintln!("  Display name: {dn}");
+            }
+            eprintln!("  Session ID: {}", me.session.id);
+            eprintln!("  Key prefix: {}...", me.session.key_prefix);
+            eprintln!("  API URL: {api_url}");
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_auth_logout(cli: &Cli) -> Result<()> {
+    let (api_url, token) = require_api_url_and_token(cli)?;
+    let client = http_client();
+    let base = api_url_base(&api_url);
+
+    // Try to get current session ID and revoke on server
+    let mut server_revoked = false;
+    let me_resp = client
+        .get(format!("{base}/auth/me"))
+        .bearer_auth(&token)
+        .send()
+        .await;
+    if let Ok(resp) = me_resp {
+        if resp.status().is_success() {
+            if let Ok(me) = resp.json::<CliMeResponse>().await {
+                let revoke_resp = client
+                    .delete(format!("{base}/auth/sessions/{}", me.session.id))
+                    .bearer_auth(&token)
+                    .send()
+                    .await;
+                server_revoked = revoke_resp.map(|r| r.status().is_success()).unwrap_or(false);
+            }
+        }
+    }
+
+    // Always delete from keychain
+    super::keychain::delete(&api_url)?;
+
+    match cli.output {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "logged_out",
+                    "server_revoked": server_revoked,
+                })
+            );
+        }
+        OutputFormat::Text => {
+            if server_revoked {
+                eprintln!("Logged out (session revoked on server).");
+            } else {
+                eprintln!("Logged out (local token removed; server revocation may have failed).");
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_auth_sessions(cli: &Cli) -> Result<()> {
+    let (api_url, token) = require_api_url_and_token(cli)?;
+    let client = http_client();
+    let resp = client
+        .get(format!("{}/auth/sessions", api_url_base(&api_url)))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .context("failed to connect to server")?;
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        bail!("Session expired or invalid. Run `senko auth login` to re-authenticate.");
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        bail!("GET /auth/sessions failed ({status}): {body}");
+    }
+    let sessions: Vec<CliSessionInfo> = resp
+        .json()
+        .await
+        .context("failed to parse /auth/sessions response")?;
+    match cli.output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string(&sessions).unwrap_or_default());
+        }
+        OutputFormat::Text => {
+            if sessions.is_empty() {
+                eprintln!("No active sessions.");
+            } else {
+                eprintln!(
+                    "{:<6} {:<14} {:<16} {:<22} {}",
+                    "ID", "KEY PREFIX", "DEVICE", "CREATED", "LAST USED"
+                );
+                for s in &sessions {
+                    eprintln!(
+                        "{:<6} {:<14} {:<16} {:<22} {}",
+                        s.id,
+                        format!("{}...", s.key_prefix),
+                        s.device_name.as_deref().unwrap_or("-"),
+                        &s.created_at,
+                        s.last_used_at.as_deref().unwrap_or("-"),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_auth_revoke(cli: &Cli, id: Option<i64>, all: bool) -> Result<()> {
+    let (api_url, token) = require_api_url_and_token(cli)?;
+    let client = http_client();
+    let base = api_url_base(&api_url);
+
+    if all {
+        let resp = client
+            .delete(format!("{base}/auth/sessions"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .context("failed to connect to server")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            bail!("DELETE /auth/sessions failed ({status}): {body}");
+        }
+        match cli.output {
+            OutputFormat::Json => println!("{}", serde_json::json!({"revoked": "all"})),
+            OutputFormat::Text => {
+                eprintln!("All sessions revoked.");
+                eprintln!("Note: your current session has also been revoked. Run `senko auth login` to re-authenticate.");
+            }
+        }
+    } else if let Some(session_id) = id {
+        let resp = client
+            .delete(format!("{base}/auth/sessions/{session_id}"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .context("failed to connect to server")?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            bail!("Session {session_id} not found.");
+        }
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            bail!("DELETE /auth/sessions/{session_id} failed ({status}): {body}");
+        }
+        match cli.output {
+            OutputFormat::Json => println!("{}", serde_json::json!({"revoked": session_id})),
+            OutputFormat::Text => eprintln!("Session {session_id} revoked."),
+        }
+    } else {
+        bail!("Provide a session ID or use --all to revoke all sessions.");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
