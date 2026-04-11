@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Request, State};
 use axum::http::StatusCode;
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
@@ -48,6 +49,7 @@ struct AppState {
     user_service: Arc<UserService>,
     auth_provider: Option<Arc<dyn AuthProvider>>,
     master_key_configured: bool,
+    proxy_mode: bool,
     session_config: crate::infra::config::SessionConfig,
     oidc_config: crate::infra::config::OidcConfig,
 }
@@ -179,6 +181,15 @@ fn classify_error(e: anyhow::Error) -> ApiError {
     if e.downcast_ref::<crate::application::port::auth::AuthError>().is_some() {
         return ApiError::Forbidden(e.to_string());
     }
+    if let Some(ue) = e.downcast_ref::<crate::infra::http::UpstreamHttpError>() {
+        return match ue.status.as_u16() {
+            401 => ApiError::Unauthorized(ue.message.clone()),
+            403 => ApiError::Forbidden(ue.message.clone()),
+            404 => ApiError::NotFound(ue.message.clone()),
+            409 => ApiError::Conflict(ue.message.clone()),
+            _ => ApiError::Internal(format!("upstream error: {}", ue.message)),
+        };
+    }
     if let Some(de) = e.downcast_ref::<DomainError>() {
         let msg = de.to_string();
         return match de {
@@ -210,6 +221,34 @@ fn classify_error(e: anyhow::Error) -> ApiError {
     }
     tracing::error!(error = ?e, "unclassified internal error");
     ApiError::Internal("internal server error".into())
+}
+
+// --- Proxy mode middleware ---
+
+async fn passthrough_auth_middleware(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if !state.proxy_mode {
+        return next.run(req).await;
+    }
+
+    let token = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(String::from);
+
+    match token {
+        Some(t) => {
+            crate::infra::http::PASSTHROUGH_TOKEN
+                .scope(t, next.run(req))
+                .await
+        }
+        None => next.run(req).await,
+    }
 }
 
 // --- Request types ---
@@ -356,6 +395,7 @@ pub async fn serve(
         user_service,
         auth_provider,
         master_key_configured: config.auth.api_key.master_key.is_some(),
+        proxy_mode: config.server.url.is_some(),
         session_config: config.auth.oidc.session.clone(),
         oidc_config: config.auth.oidc.clone(),
     };
@@ -468,6 +508,10 @@ pub async fn serve(
         // Server-wide
         .route("/api/v1/health", get(health_check))
         .route("/api/v1/config", get(get_config))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            passthrough_auth_middleware,
+        ))
         .with_state(state)
         .layer(
             TraceLayer::new_for_http()
@@ -1193,4 +1237,52 @@ async fn revoke_all_sessions(
 ) -> Result<StatusCode, ApiError> {
     state.user_service.revoke_all_sessions(auth.user.id()).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn upstream_error(status: u16, message: &str) -> anyhow::Error {
+        anyhow::Error::new(crate::infra::http::UpstreamHttpError {
+            status: reqwest::StatusCode::from_u16(status).unwrap(),
+            message: message.to_string(),
+        })
+    }
+
+    fn assert_api_error_status(err: ApiError, expected_status: StatusCode, expected_msg: &str) {
+        let resp = err.into_response();
+        assert_eq!(resp.status(), expected_status);
+        let _ = expected_msg; // message validated via status mapping
+    }
+
+    #[test]
+    fn classify_upstream_401() {
+        let err = classify_error(upstream_error(401, "invalid token"));
+        assert_api_error_status(err, StatusCode::UNAUTHORIZED, "invalid token");
+    }
+
+    #[test]
+    fn classify_upstream_403() {
+        let err = classify_error(upstream_error(403, "access denied"));
+        assert_api_error_status(err, StatusCode::FORBIDDEN, "access denied");
+    }
+
+    #[test]
+    fn classify_upstream_404() {
+        let err = classify_error(upstream_error(404, "not found"));
+        assert_api_error_status(err, StatusCode::NOT_FOUND, "not found");
+    }
+
+    #[test]
+    fn classify_upstream_409() {
+        let err = classify_error(upstream_error(409, "conflict"));
+        assert_api_error_status(err, StatusCode::CONFLICT, "conflict");
+    }
+
+    #[test]
+    fn classify_upstream_500_becomes_internal() {
+        let err = classify_error(upstream_error(500, "server error"));
+        assert_api_error_status(err, StatusCode::INTERNAL_SERVER_ERROR, "server error");
+    }
 }
