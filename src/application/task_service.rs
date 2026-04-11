@@ -87,6 +87,7 @@ impl TaskOperations for LocalTaskOperations {
         project_id: i64,
         params: &CreateTaskParams,
     ) -> Result<Task> {
+        params.validate()?;
         if let Some(ref metadata) = params.metadata {
             validate_metadata(metadata)?;
         }
@@ -128,6 +129,9 @@ impl TaskOperations for LocalTaskOperations {
         user_id: Option<i64>,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
+        if let Some(ref sid) = session_id {
+            crate::domain::validator::validate_string_length("session_id", sid, crate::domain::validator::MAX_SESSION_ID_LEN)?;
+        }
         match &metadata {
             Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => validate_metadata(v)?,
             _ => {}
@@ -155,6 +159,9 @@ impl TaskOperations for LocalTaskOperations {
         include_unassigned: bool,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
+        if let Some(ref sid) = session_id {
+            crate::domain::validator::validate_string_length("session_id", sid, crate::domain::validator::MAX_SESSION_ID_LEN)?;
+        }
         match &metadata {
             Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => validate_metadata(v)?,
             _ => {}
@@ -262,6 +269,9 @@ impl TaskOperations for LocalTaskOperations {
         id: i64,
         reason: Option<String>,
     ) -> Result<Task> {
+        if let Some(ref r) = reason {
+            crate::domain::validator::validate_string_length("reason", r, crate::domain::validator::MAX_LONG_TEXT_LEN)?;
+        }
         let prev_status = self.backend.get_task(project_id, id).await?.status();
         let task = self.backend.cancel_task(project_id, id, reason).await?;
 
@@ -449,6 +459,7 @@ impl TaskOperations for LocalTaskOperations {
         id: i64,
         params: &UpdateTaskParams,
     ) -> Result<Task> {
+        params.validate()?;
         match &params.metadata {
             Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => validate_metadata(v)?,
             _ => {}
@@ -462,6 +473,7 @@ impl TaskOperations for LocalTaskOperations {
         id: i64,
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
+        params.validate()?;
         self.backend.update_task_arrays(project_id, id, params).await
     }
 

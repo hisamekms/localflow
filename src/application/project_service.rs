@@ -28,6 +28,7 @@ impl ProjectOperations for ProjectService {
     }
 
     async fn create_project(&self, params: &CreateProjectParams, caller_user_id: Option<i64>) -> Result<Project> {
+        params.validate()?;
         let project = self.backend.create_project(params).await?;
         if let Some(uid) = caller_user_id {
             let member_params = AddProjectMemberParams::new(uid, Some(Role::Owner));

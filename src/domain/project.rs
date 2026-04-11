@@ -53,6 +53,15 @@ pub struct CreateProjectParams {
     pub description: Option<String>,
 }
 
+impl CreateProjectParams {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        use super::validator::*;
+        validate_string_length("name", &self.name, MAX_PROJECT_NAME_LEN)?;
+        validate_optional_string_length("description", &self.description, MAX_PROJECT_DESCRIPTION_LEN)?;
+        Ok(())
+    }
+}
+
 #[async_trait]
 pub trait ProjectRepository: Send + Sync {
     async fn create_project(&self, params: &CreateProjectParams) -> Result<Project>;

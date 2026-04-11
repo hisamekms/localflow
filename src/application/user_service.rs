@@ -30,6 +30,7 @@ impl UserOperations for UserService {
     }
 
     async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
+        params.validate()?;
         self.backend.create_user(params).await
     }
 
