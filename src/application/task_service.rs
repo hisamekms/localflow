@@ -11,7 +11,7 @@ use crate::domain::task::{
     self, CompletionPolicy, CreateTaskParams, ListTasksFilter, Task, TaskEvent, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
-use crate::domain::validator::has_cycle_async;
+use crate::domain::validator::{has_cycle_async, validate_metadata};
 
 use super::HookTrigger;
 use super::port::{CompleteResult, HookExecutor, PreviewResult, PrVerifier, TaskOperations};
@@ -87,6 +87,9 @@ impl TaskOperations for LocalTaskOperations {
         project_id: i64,
         params: &CreateTaskParams,
     ) -> Result<Task> {
+        if let Some(ref metadata) = params.metadata {
+            validate_metadata(metadata)?;
+        }
         let task = self.backend.create_task(project_id, params).await?;
 
         self.hooks
@@ -125,6 +128,9 @@ impl TaskOperations for LocalTaskOperations {
         user_id: Option<i64>,
         metadata: Option<serde_json::Value>,
     ) -> Result<Task> {
+        if let Some(ref metadata) = metadata {
+            validate_metadata(metadata)?;
+        }
         let prev_status = self.backend.get_task(project_id, id).await?.status();
         let task = self.backend.start_task(project_id, id, session_id, user_id, metadata).await?;
 
@@ -147,6 +153,9 @@ impl TaskOperations for LocalTaskOperations {
         user_id: Option<i64>,
         metadata: Option<serde_json::Value>,
     ) -> Result<Task> {
+        if let Some(ref metadata) = metadata {
+            validate_metadata(metadata)?;
+        }
         let task = match self.backend.next_task(project_id).await? {
             Some(t) => t,
             None => {
@@ -420,6 +429,9 @@ impl TaskOperations for LocalTaskOperations {
         id: i64,
         params: &UpdateTaskParams,
     ) -> Result<Task> {
+        if let Some(Some(ref metadata)) = params.metadata {
+            validate_metadata(metadata)?;
+        }
         self.backend.update_task(project_id, id, params).await
     }
 
