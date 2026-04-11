@@ -109,6 +109,7 @@ pub struct JwtAuthProvider {
     http_client: reqwest::Client,
     issuer_url: String,
     client_id: String,
+    username_claim: Option<String>,
     required_claims: HashMap<String, String>,
     jwks_uri: OnceCell<String>,
     jwks_cache: RwLock<Option<JwksCache>>,
@@ -120,6 +121,7 @@ impl JwtAuthProvider {
     pub fn new(
         issuer_url: String,
         client_id: String,
+        username_claim: Option<String>,
         required_claims: HashMap<String, String>,
         backend: Arc<dyn TaskBackend>,
     ) -> Self {
@@ -127,6 +129,7 @@ impl JwtAuthProvider {
             http_client: reqwest::Client::new(),
             issuer_url,
             client_id,
+            username_claim,
             required_claims,
             jwks_uri: OnceCell::new(),
             jwks_cache: RwLock::new(None),
@@ -318,22 +321,35 @@ impl AuthProvider for JwtAuthProvider {
             }
         }
 
-        let sub = token_data
-            .claims
-            .get("sub")
-            .and_then(|v| v.as_str())
-            .ok_or(AuthError::InvalidToken)?;
+        let username = if let Some(ref claim_name) = self.username_claim {
+            token_data
+                .claims
+                .get(claim_name.as_str())
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    tracing::debug!(claim = %claim_name, "configured username_claim not found in token");
+                    AuthError::InvalidToken
+                })?
+        } else {
+            token_data
+                .claims
+                .get("preferred_username")
+                .and_then(|v| v.as_str())
+                .or_else(|| token_data.claims.get("email").and_then(|v| v.as_str()))
+                .or_else(|| token_data.claims.get("sub").and_then(|v| v.as_str()))
+                .ok_or(AuthError::InvalidToken)?
+        };
 
         // Try to find existing user; auto-create if not found (standard OIDC provisioning)
-        match self.backend.get_user_by_username(sub).await {
+        match self.backend.get_user_by_username(username).await {
             Ok(user) => Ok(user),
             Err(_) => {
                 let display_name = token_data.claims.get("name").and_then(|v| v.as_str()).map(String::from);
                 let email = token_data.claims.get("email").and_then(|v| v.as_str()).map(String::from);
-                tracing::info!(username = %sub, "auto-provisioning user from OIDC claims");
+                tracing::info!(username = %username, "auto-provisioning user from OIDC claims");
                 self.backend
                     .create_user(&CreateUserParams {
-                        username: sub.to_string(),
+                        username: username.to_string(),
                         display_name,
                         email,
                     })
@@ -649,6 +665,7 @@ mod tests {
         let provider = JwtAuthProvider::new(
             "https://issuer.example.com".to_string(),
             "test-client-id".to_string(),
+            None,
             HashMap::new(),
             backend,
         );
@@ -684,6 +701,7 @@ mod tests {
         let provider = JwtAuthProvider::new(
             "https://issuer.example.com".to_string(),
             "test-client-id".to_string(),
+            None,
             HashMap::new(),
             backend,
         );
@@ -717,6 +735,7 @@ mod tests {
         let provider = JwtAuthProvider::new(
             "https://issuer.example.com".to_string(),
             "test-client-id".to_string(),
+            None,
             HashMap::new(),
             backend,
         );
@@ -750,6 +769,7 @@ mod tests {
         let provider = JwtAuthProvider::new(
             "https://issuer.example.com".to_string(),
             "test-client-id".to_string(),
+            None,
             HashMap::new(),
             backend,
         );
@@ -783,6 +803,7 @@ mod tests {
         let provider = JwtAuthProvider::new(
             "https://issuer.example.com".to_string(),
             "test-client-id".to_string(),
+            None,
             HashMap::new(),
             backend,
         );
@@ -815,6 +836,7 @@ mod tests {
         let provider = JwtAuthProvider::new(
             "https://issuer.example.com".to_string(),
             "test-client-id".to_string(),
+            None,
             HashMap::new(),
             backend,
         );
@@ -838,7 +860,8 @@ mod tests {
         let token = make_jwt(&encoding_key, &claims);
 
         let user = provider.authenticate(&token).await.unwrap();
-        assert_eq!(user.username(), "new-oidc-user");
+        // Fallback order: preferred_username → email → sub
+        assert_eq!(user.username(), "new@example.com");
         assert_eq!(user.display_name(), Some("New User"));
         assert_eq!(user.email(), Some("new@example.com"));
     }
@@ -863,6 +886,7 @@ mod tests {
         let provider = JwtAuthProvider::new(
             "https://issuer.example.com".to_string(),
             "test-client-id".to_string(),
+            None,
             required,
             backend,
         );
@@ -908,6 +932,7 @@ mod tests {
         let provider = JwtAuthProvider::new(
             "https://issuer.example.com".to_string(),
             "test-client-id".to_string(),
+            None,
             required,
             backend,
         );
@@ -945,6 +970,7 @@ mod tests {
         let provider = JwtAuthProvider::new(
             "https://issuer.example.com".to_string(),
             "test-client-id".to_string(),
+            None,
             required,
             backend,
         );
@@ -982,6 +1008,7 @@ mod tests {
         let provider = JwtAuthProvider::new(
             "https://issuer.example.com".to_string(),
             "test-client-id".to_string(),
+            None,
             required,
             backend,
         );
@@ -1019,6 +1046,7 @@ mod tests {
         let provider = JwtAuthProvider::new(
             "https://issuer.example.com".to_string(),
             "test-client-id".to_string(),
+            None,
             required,
             backend,
         );
@@ -1037,6 +1065,182 @@ mod tests {
             "aud": "test-client-id",
             "exp": (chrono::Utc::now().timestamp() + 3600),
             "cognito:groups": ["admin", "users"],
+        });
+        let token = make_jwt(&encoding_key, &claims);
+
+        let result = provider.authenticate(&token).await;
+        assert!(matches!(result, Err(AuthError::InvalidToken)));
+    }
+
+    #[tokio::test]
+    async fn jwt_provider_uses_preferred_username_fallback() {
+        let encoding_key = make_test_encoding_key();
+        let jwk = make_test_jwk();
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+
+        let provider = JwtAuthProvider::new(
+            "https://issuer.example.com".to_string(),
+            "test-client-id".to_string(),
+            None,
+            HashMap::new(),
+            backend,
+        );
+
+        {
+            let mut cache = provider.jwks_cache.write().await;
+            *cache = Some(JwksCache {
+                keys: JwkSet { keys: vec![jwk] },
+                fetched_at: Instant::now(),
+            });
+        }
+
+        let claims = serde_json::json!({
+            "sub": "sub-value",
+            "preferred_username": "pref-user",
+            "email": "user@example.com",
+            "iss": "https://issuer.example.com",
+            "aud": "test-client-id",
+            "exp": (chrono::Utc::now().timestamp() + 3600),
+        });
+        let token = make_jwt(&encoding_key, &claims);
+
+        let user = provider.authenticate(&token).await.unwrap();
+        assert_eq!(user.username(), "pref-user");
+    }
+
+    #[tokio::test]
+    async fn jwt_provider_uses_email_fallback() {
+        let encoding_key = make_test_encoding_key();
+        let jwk = make_test_jwk();
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+
+        let provider = JwtAuthProvider::new(
+            "https://issuer.example.com".to_string(),
+            "test-client-id".to_string(),
+            None,
+            HashMap::new(),
+            backend,
+        );
+
+        {
+            let mut cache = provider.jwks_cache.write().await;
+            *cache = Some(JwksCache {
+                keys: JwkSet { keys: vec![jwk] },
+                fetched_at: Instant::now(),
+            });
+        }
+
+        let claims = serde_json::json!({
+            "sub": "sub-value",
+            "email": "user@example.com",
+            "iss": "https://issuer.example.com",
+            "aud": "test-client-id",
+            "exp": (chrono::Utc::now().timestamp() + 3600),
+        });
+        let token = make_jwt(&encoding_key, &claims);
+
+        let user = provider.authenticate(&token).await.unwrap();
+        assert_eq!(user.username(), "user@example.com");
+    }
+
+    #[tokio::test]
+    async fn jwt_provider_uses_sub_fallback() {
+        let encoding_key = make_test_encoding_key();
+        let jwk = make_test_jwk();
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+
+        let provider = JwtAuthProvider::new(
+            "https://issuer.example.com".to_string(),
+            "test-client-id".to_string(),
+            None,
+            HashMap::new(),
+            backend,
+        );
+
+        {
+            let mut cache = provider.jwks_cache.write().await;
+            *cache = Some(JwksCache {
+                keys: JwkSet { keys: vec![jwk] },
+                fetched_at: Instant::now(),
+            });
+        }
+
+        let claims = serde_json::json!({
+            "sub": "sub-value",
+            "iss": "https://issuer.example.com",
+            "aud": "test-client-id",
+            "exp": (chrono::Utc::now().timestamp() + 3600),
+        });
+        let token = make_jwt(&encoding_key, &claims);
+
+        let user = provider.authenticate(&token).await.unwrap();
+        assert_eq!(user.username(), "sub-value");
+    }
+
+    #[tokio::test]
+    async fn jwt_provider_uses_configured_username_claim() {
+        let encoding_key = make_test_encoding_key();
+        let jwk = make_test_jwk();
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+
+        let provider = JwtAuthProvider::new(
+            "https://issuer.example.com".to_string(),
+            "test-client-id".to_string(),
+            Some("custom_name".to_string()),
+            HashMap::new(),
+            backend,
+        );
+
+        {
+            let mut cache = provider.jwks_cache.write().await;
+            *cache = Some(JwksCache {
+                keys: JwkSet { keys: vec![jwk] },
+                fetched_at: Instant::now(),
+            });
+        }
+
+        let claims = serde_json::json!({
+            "sub": "sub-value",
+            "preferred_username": "pref-user",
+            "custom_name": "custom-user",
+            "iss": "https://issuer.example.com",
+            "aud": "test-client-id",
+            "exp": (chrono::Utc::now().timestamp() + 3600),
+        });
+        let token = make_jwt(&encoding_key, &claims);
+
+        let user = provider.authenticate(&token).await.unwrap();
+        assert_eq!(user.username(), "custom-user");
+    }
+
+    #[tokio::test]
+    async fn jwt_provider_rejects_missing_configured_username_claim() {
+        let encoding_key = make_test_encoding_key();
+        let jwk = make_test_jwk();
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+
+        let provider = JwtAuthProvider::new(
+            "https://issuer.example.com".to_string(),
+            "test-client-id".to_string(),
+            Some("custom_name".to_string()),
+            HashMap::new(),
+            backend,
+        );
+
+        {
+            let mut cache = provider.jwks_cache.write().await;
+            *cache = Some(JwksCache {
+                keys: JwkSet { keys: vec![jwk] },
+                fetched_at: Instant::now(),
+            });
+        }
+
+        let claims = serde_json::json!({
+            "sub": "sub-value",
+            "preferred_username": "pref-user",
+            "iss": "https://issuer.example.com",
+            "aud": "test-client-id",
+            "exp": (chrono::Utc::now().timestamp() + 3600),
         });
         let token = make_jwt(&encoding_key, &claims);
 

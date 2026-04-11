@@ -1509,6 +1509,7 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
                     .collect()
             })
             .unwrap_or_default(),
+        username_claim: None,
         required_claims: Default::default(),
         cli: config.auth.oidc.cli.clone(),
         session: Default::default(),

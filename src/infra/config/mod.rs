@@ -91,6 +91,7 @@ pub struct OidcCliConfig {
 pub struct OidcConfig {
     pub issuer_url: Option<String>,
     pub client_id: Option<String>,
+    pub username_claim: Option<String>,
     #[serde(default = "default_oidc_scopes")]
     pub scopes: Vec<String>,
     #[serde(default)]
@@ -391,6 +392,7 @@ pub struct RawOidcCliConfig {
 pub struct RawOidcConfig {
     pub issuer_url: Option<String>,
     pub client_id: Option<String>,
+    pub username_claim: Option<String>,
     pub scopes: Option<Vec<String>>,
     pub required_claims: Option<HashMap<String, String>>,
     #[serde(default)]
@@ -468,6 +470,7 @@ impl RawConfig {
                 oidc: RawOidcConfig {
                     issuer_url: overlay.auth.oidc.issuer_url.or(self.auth.oidc.issuer_url),
                     client_id: overlay.auth.oidc.client_id.or(self.auth.oidc.client_id),
+                    username_claim: overlay.auth.oidc.username_claim.or(self.auth.oidc.username_claim),
                     scopes: overlay.auth.oidc.scopes.or(self.auth.oidc.scopes),
                     required_claims: overlay
                         .auth
@@ -551,6 +554,7 @@ impl RawConfig {
                 oidc: OidcConfig {
                     issuer_url: self.auth.oidc.issuer_url,
                     client_id: self.auth.oidc.client_id,
+                    username_claim: self.auth.oidc.username_claim,
                     scopes: self.auth.oidc.scopes.unwrap_or_else(default_oidc_scopes),
                     required_claims: self.auth.oidc.required_claims.unwrap_or_default(),
                     cli: OidcCliConfig {
@@ -699,6 +703,10 @@ impl Config {
         if let Ok(val) = std::env::var("SENKO_OIDC_CLIENT_ID")
             && !val.is_empty() {
                 self.auth.oidc.client_id = Some(val);
+            }
+        if let Ok(val) = std::env::var("SENKO_OIDC_USERNAME_CLAIM")
+            && !val.is_empty() {
+                self.auth.oidc.username_claim = Some(val);
             }
 
         // Session settings
