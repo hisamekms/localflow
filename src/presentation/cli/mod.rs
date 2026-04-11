@@ -1,4 +1,5 @@
 pub mod handlers;
+mod oidc_login;
 pub mod skill;
 
 use std::path::PathBuf;
@@ -337,6 +338,21 @@ pub enum Command {
     Members {
         #[command(subcommand)]
         action: MemberAction,
+    },
+    /// Authentication commands
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuthCommand {
+    /// Login via OIDC (OAuth PKCE flow)
+    Login {
+        /// Device name for the session token
+        #[arg(long)]
+        device_name: Option<String>,
     },
 }
 
@@ -748,6 +764,11 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Project { ref action } => handlers::cmd_project(&cli, action).await,
         Command::User { ref action } => handlers::cmd_user(&cli, action).await,
         Command::Members { ref action } => handlers::cmd_members(&cli, action).await,
+        Command::Auth { ref command } => match command {
+            AuthCommand::Login { device_name } => {
+                handlers::cmd_auth_login(&cli, device_name.clone()).await
+            }
+        },
     }
 }
 

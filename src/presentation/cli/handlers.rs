@@ -1462,6 +1462,49 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
     Ok(())
 }
 
+pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let config = load_config(cli, &root)?;
+
+    if !config.auth.oidc.is_configured() {
+        bail!(
+            "OIDC is not configured. Set auth.oidc.issuer_url and auth.oidc.client_id in config."
+        );
+    }
+
+    let api_url = config.backend.api_url.as_deref().context(
+        "backend.api_url is not configured. Set it in config to point to the senko API server.",
+    )?;
+
+    let result = super::oidc_login::perform_login(
+        &config.auth.oidc,
+        api_url,
+        device_name.as_deref(),
+    )
+    .await?;
+
+    match cli.output {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "key_prefix": result.key_prefix,
+                    "expires_at": result.expires_at,
+                })
+            );
+        }
+        OutputFormat::Text => {
+            eprintln!("Login successful!");
+            eprintln!("  API key: {}...", result.key_prefix);
+            if let Some(ref exp) = result.expires_at {
+                eprintln!("  Expires: {exp}");
+            }
+            eprintln!("  Saved to OS keychain.");
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

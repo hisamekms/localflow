@@ -41,6 +41,9 @@ aws-sdk-secretsmanager = { version = "1", optional = true }
 aws-config = { version = "1", optional = true, features = ["behavior-version-latest"] }
 sqlx = { version = "0.8", optional = true, default-features = false, features = ["runtime-tokio", "postgres", "tls-rustls"] }
 percent-encoding = "2"
+oauth2 = "5"
+keyring = { version = "3", features = ["sync-secret-service"] }
+open = "5"
 
 [dev-dependencies]
 tempfile = "3"
