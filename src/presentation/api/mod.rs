@@ -32,9 +32,10 @@ use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role,
 };
 use super::dto::{
-    ApiKeyResponse, ApiKeyWithSecretResponse, CompleteTaskResponse, ConfigResponse, MeResponse,
-    PreviewTransitionResponse, ProjectMemberResponse, ProjectResponse, SessionResponse,
-    TaskResponse, TokenResponse, UserResponse,
+    ApiKeyResponse, ApiKeyWithSecretResponse, AuthConfigOidc, AuthConfigResponse,
+    CompleteTaskResponse, ConfigResponse, MeResponse, PreviewTransitionResponse,
+    ProjectMemberResponse, ProjectResponse, SessionResponse, TaskResponse, TokenResponse,
+    UserResponse,
 };
 
 #[derive(Clone)]
@@ -47,6 +48,7 @@ struct AppState {
     user_service: Arc<UserService>,
     auth_provider: Option<Arc<dyn AuthProvider>>,
     session_config: crate::infra::config::SessionConfig,
+    oidc_config: crate::infra::config::OidcConfig,
 }
 
 impl HasAuth for AppState {
@@ -325,6 +327,7 @@ pub async fn serve(
         user_service,
         auth_provider,
         session_config: config.auth.oidc.session.clone(),
+        oidc_config: config.auth.oidc.clone(),
     };
 
     let app = Router::new()
@@ -425,6 +428,8 @@ pub async fn serve(
             "/api/v1/projects/{project_id}/stats",
             get(get_stats),
         )
+        // Auth config (public, no auth required)
+        .route("/auth/config", get(get_auth_config))
         // Auth / Session management
         .route("/auth/me", get(get_me))
         .route("/auth/token", post(create_token))
@@ -853,6 +858,20 @@ async fn uncheck_dod(
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let task = state.task_service.uncheck_dod(project_id, id, index).await.map_err(classify_error)?;
     Ok(Json(TaskResponse::from(task)))
+}
+
+// GET /auth/config (public, no auth required)
+async fn get_auth_config(State(state): State<AppState>) -> Json<AuthConfigResponse> {
+    let oidc = if state.oidc_config.is_configured() {
+        Some(AuthConfigOidc {
+            issuer_url: state.oidc_config.issuer_url.clone().unwrap(),
+            client_id: state.oidc_config.client_id.clone().unwrap(),
+            scopes: state.oidc_config.scopes.clone(),
+        })
+    } else {
+        None
+    };
+    Json(AuthConfigResponse { oidc })
 }
 
 // GET /api/v1/config

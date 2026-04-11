@@ -371,6 +371,20 @@ pub struct TokenResponse {
     pub expires_at: Option<String>,
 }
 
+// --- Auth config (public) ---
+
+#[derive(Serialize)]
+pub struct AuthConfigResponse {
+    pub oidc: Option<AuthConfigOidc>,
+}
+
+#[derive(Serialize)]
+pub struct AuthConfigOidc {
+    pub issuer_url: String,
+    pub client_id: String,
+    pub scopes: Vec<String>,
+}
+
 // --- Me (auth status) ---
 
 #[derive(Serialize)]

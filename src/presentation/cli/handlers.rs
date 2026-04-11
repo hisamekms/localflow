@@ -1464,18 +1464,57 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
 
-    if !config.auth.oidc.is_configured() {
-        bail!(
-            "OIDC is not configured. Set auth.oidc.issuer_url and auth.oidc.client_id in config."
-        );
-    }
-
     let api_url = config.server.url.as_deref().context(
         "server.url is not configured. Set it in config to point to the senko API server.",
     )?;
 
+    // Fetch OIDC config from server
+    let auth_config_url = format!("{}/auth/config", api_url.trim_end_matches('/'));
+    let http = reqwest::Client::new();
+    let resp = http
+        .get(&auth_config_url)
+        .send()
+        .await
+        .context("failed to fetch auth config from server")?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        bail!("GET /auth/config failed ({status}): {body}");
+    }
+    let auth_config: serde_json::Value = resp
+        .json()
+        .await
+        .context("failed to parse /auth/config response")?;
+    let server_oidc = auth_config
+        .get("oidc")
+        .and_then(|v| if v.is_null() { None } else { Some(v) })
+        .context("OIDC is not configured on the server")?;
+
+    // Build OidcConfig from server response + local CLI settings
+    let oidc_config = crate::infra::config::OidcConfig {
+        issuer_url: server_oidc
+            .get("issuer_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        client_id: server_oidc
+            .get("client_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        scopes: server_oidc
+            .get("scopes")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        cli: config.auth.oidc.cli.clone(),
+        session: Default::default(),
+    };
+
     let result = super::oidc_login::perform_login(
-        &config.auth.oidc,
+        &oidc_config,
         api_url,
         device_name.as_deref(),
     )
