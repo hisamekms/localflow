@@ -162,7 +162,8 @@ fn classify_error(e: anyhow::Error) -> ApiError {
             | DomainError::InvalidRole { .. }
             | DomainError::SelfDependency
             | DomainError::DependencyCycle { .. }
-            | DomainError::DodIndexOutOfRange { .. } => ApiError::BadRequest(msg),
+            | DomainError::DodIndexOutOfRange { .. }
+            | DomainError::ValidationError { .. } => ApiError::BadRequest(msg),
 
             DomainError::InvalidStatusTransition { .. }
             | DomainError::CannotCompleteTask { .. }

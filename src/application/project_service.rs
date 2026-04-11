@@ -24,6 +24,7 @@ impl ProjectService {
     }
 
     pub async fn create_project(&self, params: &CreateProjectParams) -> Result<Project> {
+        params.validate()?;
         self.backend.create_project(params).await
     }
 
