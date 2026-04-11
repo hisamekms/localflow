@@ -211,6 +211,10 @@ curl -s http://localhost:3141/api/v1/projects \
   -H "Authorization: Bearer $SENKO_API_KEY" | jq .
 ```
 
+## 認証
+
+senkoはLocal、Remote + APIキー、Remote + OIDCの3つの認証モードをサポートしています。詳細は[認証モード別セットアップガイド](AUTH_SETUP.ja.md)を参照してください。
+
 ## CLIリファレンス
 
 CLIを直接使用する場合は[CLIリファレンス](CLI.ja.md)を参照してください。
