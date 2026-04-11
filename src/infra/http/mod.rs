@@ -327,7 +327,7 @@ impl AuthenticationPort for HttpBackend {
         false
     }
 
-    async fn get_user_by_api_key(&self, _key_hash: &str) -> Result<User> {
+    async fn get_user_by_api_key(&self, _key_hash: &str) -> Result<crate::application::port::ApiKeyAuthResult> {
         Err(DomainError::UnsupportedOperation {
             operation: "get_user_by_api_key".into(),
         }.into())
@@ -336,10 +336,10 @@ impl AuthenticationPort for HttpBackend {
 
 #[async_trait]
 impl ApiKeyRepository for HttpBackend {
-    async fn create_api_key(&self, user_id: i64, name: &str, _new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
+    async fn create_api_key(&self, user_id: i64, name: &str, device_name: Option<&str>, _new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         let resp = self.auth(
             self.client.post(self.url(&format!("/api/v1/users/{user_id}/api-keys")))
-                .json(&json!({ "name": name }))
+                .json(&json!({ "name": name, "device_name": device_name }))
         ).send().await?;
         read_json_or_error(resp).await
     }
@@ -348,6 +348,17 @@ impl ApiKeyRepository for HttpBackend {
         let resp = self.auth(self.client.delete(self.url(&format!("/api/v1/users/0/api-keys/{key_id}"))))
             .send().await?;
         check_success(resp).await
+    }
+
+    async fn delete_api_key_for_user(&self, key_id: i64, _user_id: i64) -> Result<()> {
+        // HTTP backend delegates to the remote API
+        self.delete_api_key(key_id).await
+    }
+
+    async fn delete_all_api_keys_for_user(&self, _user_id: i64) -> Result<()> {
+        Err(DomainError::UnsupportedOperation {
+            operation: "delete_all_api_keys_for_user".into(),
+        }.into())
     }
 }
 

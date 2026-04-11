@@ -10,7 +10,7 @@ pub mod task_transition;
 pub mod user_query;
 
 pub use auth::{AuthError, AuthProvider};
-pub use authentication::AuthenticationPort;
+pub use authentication::{ApiKeyAuthResult, AuthenticationPort};
 pub use hook_executor::{HookExecutor, NoOpHookExecutor};
 pub use hook_test::HookTestPort;
 pub use pr_verifier::PrVerifier;

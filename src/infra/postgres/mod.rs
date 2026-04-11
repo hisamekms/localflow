@@ -487,7 +487,7 @@ impl UserRepository for PostgresBackend {
 
 #[async_trait]
 impl AuthenticationPort for PostgresBackend {
-    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<User> {
+    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<crate::application::port::ApiKeyAuthResult> {
         let pool = self.pool().await?;
 
         sqlx::query(
@@ -498,30 +498,38 @@ impl AuthenticationPort for PostgresBackend {
         .execute(pool)
         .await?;
 
-        let row = sqlx::query("SELECT user_id FROM api_keys WHERE key_hash = $1")
+        let row = sqlx::query("SELECT user_id, created_at, last_used_at FROM api_keys WHERE key_hash = $1")
             .bind(&key_hash)
             .fetch_optional(pool)
             .await?
             .context("invalid api key")?;
         let user_id: i64 = row.get("user_id");
-        self.get_user(user_id).await
+        let key_created_at: String = row.get("created_at");
+        let key_last_used_at: Option<String> = row.get("last_used_at");
+        let user = self.get_user(user_id).await?;
+        Ok(crate::application::port::ApiKeyAuthResult {
+            user,
+            key_created_at,
+            key_last_used_at,
+        })
     }
 }
 
 #[async_trait]
 impl ApiKeyRepository for PostgresBackend {
-    async fn create_api_key(&self, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
+    async fn create_api_key(&self, user_id: i64, name: &str, device_name: Option<&str>, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         let pool = self.pool().await?;
         // Verify user exists
         self.get_user(user_id).await?;
 
         let row = sqlx::query(
-            "INSERT INTO api_keys (user_id, key_hash, key_prefix, name) VALUES ($1, $2, $3, $4) RETURNING id, created_at",
+            "INSERT INTO api_keys (user_id, key_hash, key_prefix, name, device_name) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at",
         )
         .bind(user_id)
         .bind(&new_key.key_hash)
         .bind(&new_key.key_prefix)
         .bind(name)
+        .bind(device_name)
         .fetch_one(pool)
         .await?;
 
@@ -531,6 +539,7 @@ impl ApiKeyRepository for PostgresBackend {
             new_key.raw_key.clone(),
             new_key.key_prefix.clone(),
             name.to_string(),
+            device_name.map(String::from),
             row.get("created_at"),
         ))
     }
@@ -544,6 +553,28 @@ impl ApiKeyRepository for PostgresBackend {
         if result.rows_affected() == 0 {
             anyhow::bail!("api key not found: {key_id}");
         }
+        Ok(())
+    }
+
+    async fn delete_api_key_for_user(&self, key_id: i64, user_id: i64) -> Result<()> {
+        let pool = self.pool().await?;
+        let result = sqlx::query("DELETE FROM api_keys WHERE id = $1 AND user_id = $2")
+            .bind(key_id)
+            .bind(user_id)
+            .execute(pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            anyhow::bail!("api key not found: {key_id}");
+        }
+        Ok(())
+    }
+
+    async fn delete_all_api_keys_for_user(&self, user_id: i64) -> Result<()> {
+        let pool = self.pool().await?;
+        sqlx::query("DELETE FROM api_keys WHERE user_id = $1")
+            .bind(user_id)
+            .execute(pool)
+            .await?;
         Ok(())
     }
 }
@@ -595,7 +626,7 @@ impl UserQueryPort for PostgresBackend {
     async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
         let pool = self.pool().await?;
         let rows = sqlx::query(
-            "SELECT id, user_id, key_prefix, name, created_at, last_used_at FROM api_keys WHERE user_id = $1 ORDER BY id",
+            "SELECT id, user_id, key_prefix, name, device_name, created_at, last_used_at FROM api_keys WHERE user_id = $1 ORDER BY id",
         )
         .bind(user_id)
         .fetch_all(pool)
@@ -607,6 +638,7 @@ impl UserQueryPort for PostgresBackend {
                 r.get("user_id"),
                 r.get("key_prefix"),
                 r.get("name"),
+                r.get("device_name"),
                 r.get("created_at"),
                 r.get("last_used_at"),
             ))

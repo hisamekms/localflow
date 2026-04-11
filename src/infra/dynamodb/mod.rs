@@ -787,7 +787,7 @@ impl AuthenticationPort for DynamoDbBackend {
         false
     }
 
-    async fn get_user_by_api_key(&self, _key_hash: &str) -> Result<User> {
+    async fn get_user_by_api_key(&self, _key_hash: &str) -> Result<crate::application::port::ApiKeyAuthResult> {
         Err(DomainError::UnsupportedOperation {
             operation: "get_user_by_api_key".into(),
         }.into())
@@ -800,7 +800,7 @@ impl ApiKeyRepository for DynamoDbBackend {
         false
     }
 
-    async fn create_api_key(&self, _user_id: i64, _name: &str, _new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
+    async fn create_api_key(&self, _user_id: i64, _name: &str, _device_name: Option<&str>, _new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         Err(DomainError::UnsupportedOperation {
             operation: "create_api_key".into(),
         }.into())
@@ -809,6 +809,18 @@ impl ApiKeyRepository for DynamoDbBackend {
     async fn delete_api_key(&self, _key_id: i64) -> Result<()> {
         Err(DomainError::UnsupportedOperation {
             operation: "delete_api_key".into(),
+        }.into())
+    }
+
+    async fn delete_api_key_for_user(&self, _key_id: i64, _user_id: i64) -> Result<()> {
+        Err(DomainError::UnsupportedOperation {
+            operation: "delete_api_key_for_user".into(),
+        }.into())
+    }
+
+    async fn delete_all_api_keys_for_user(&self, _user_id: i64) -> Result<()> {
+        Err(DomainError::UnsupportedOperation {
+            operation: "delete_all_api_keys_for_user".into(),
         }.into())
     }
 }

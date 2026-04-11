@@ -141,13 +141,14 @@ pub struct ApiKey {
     user_id: i64,
     key_prefix: String,
     name: String,
+    device_name: Option<String>,
     created_at: String,
     last_used_at: Option<String>,
 }
 
 impl ApiKey {
-    pub fn new(id: i64, user_id: i64, key_prefix: String, name: String, created_at: String, last_used_at: Option<String>) -> Self {
-        Self { id, user_id, key_prefix, name, created_at, last_used_at }
+    pub fn new(id: i64, user_id: i64, key_prefix: String, name: String, device_name: Option<String>, created_at: String, last_used_at: Option<String>) -> Self {
+        Self { id, user_id, key_prefix, name, device_name, created_at, last_used_at }
     }
 
     pub fn id(&self) -> i64 {
@@ -166,6 +167,10 @@ impl ApiKey {
         &self.name
     }
 
+    pub fn device_name(&self) -> Option<&str> {
+        self.device_name.as_deref()
+    }
+
     pub fn created_at(&self) -> &str {
         &self.created_at
     }
@@ -182,12 +187,13 @@ pub struct ApiKeyWithSecret {
     key: String,
     key_prefix: String,
     name: String,
+    device_name: Option<String>,
     created_at: String,
 }
 
 impl ApiKeyWithSecret {
-    pub fn new(id: i64, user_id: i64, key: String, key_prefix: String, name: String, created_at: String) -> Self {
-        Self { id, user_id, key, key_prefix, name, created_at }
+    pub fn new(id: i64, user_id: i64, key: String, key_prefix: String, name: String, device_name: Option<String>, created_at: String) -> Self {
+        Self { id, user_id, key, key_prefix, name, device_name, created_at }
     }
 
     pub fn id(&self) -> i64 {
@@ -210,6 +216,10 @@ impl ApiKeyWithSecret {
         &self.name
     }
 
+    pub fn device_name(&self) -> Option<&str> {
+        self.device_name.as_deref()
+    }
+
     pub fn created_at(&self) -> &str {
         &self.created_at
     }
@@ -218,6 +228,7 @@ impl ApiKeyWithSecret {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateApiKeyParams {
     pub name: Option<String>,
+    pub device_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -261,6 +272,8 @@ pub trait ApiKeyRepository: Send + Sync {
         true
     }
 
-    async fn create_api_key(&self, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret>;
+    async fn create_api_key(&self, user_id: i64, name: &str, device_name: Option<&str>, new_key: &NewApiKey) -> Result<ApiKeyWithSecret>;
     async fn delete_api_key(&self, key_id: i64) -> Result<()>;
+    async fn delete_api_key_for_user(&self, key_id: i64, user_id: i64) -> Result<()>;
+    async fn delete_all_api_keys_for_user(&self, user_id: i64) -> Result<()>;
 }

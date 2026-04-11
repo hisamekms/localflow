@@ -171,6 +171,13 @@ const MIGRATIONS: &[Migration] = &[
             CREATE UNIQUE INDEX idx_tasks_project_task_number ON tasks(project_id, task_number);
         ",
     },
+    Migration {
+        version: 7,
+        name: "add_api_key_device_name",
+        sql: "
+            ALTER TABLE api_keys ADD COLUMN device_name TEXT;
+        ",
+    },
 ];
 
 fn run_migrations(conn: &Connection) -> Result<()> {
@@ -606,12 +613,12 @@ fn delete_user(conn: &Connection, id: i64) -> Result<()> {
 
 // --- API Key CRUD ---
 
-fn create_api_key(conn: &Connection, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
+fn create_api_key(conn: &Connection, user_id: i64, name: &str, device_name: Option<&str>, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
     get_user(conn, user_id)?;
 
     conn.execute(
-        "INSERT INTO api_keys (user_id, key_hash, key_prefix, name) VALUES (?1, ?2, ?3, ?4)",
-        params![user_id, new_key.key_hash, new_key.key_prefix, name],
+        "INSERT INTO api_keys (user_id, key_hash, key_prefix, name, device_name) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![user_id, new_key.key_hash, new_key.key_prefix, name, device_name],
     )?;
     let id = conn.last_insert_rowid();
     let created_at: String = conn.query_row(
@@ -626,31 +633,37 @@ fn create_api_key(conn: &Connection, user_id: i64, name: &str, new_key: &NewApiK
         new_key.raw_key.clone(),
         new_key.key_prefix.clone(),
         name.to_string(),
+        device_name.map(String::from),
         created_at,
     ))
 }
 
-fn get_user_by_api_key(conn: &Connection, key_hash: &str) -> Result<User> {
+fn get_user_by_api_key(conn: &Connection, key_hash: &str) -> Result<crate::application::port::ApiKeyAuthResult> {
     conn.execute(
         "UPDATE api_keys SET last_used_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE key_hash = ?1",
         params![key_hash],
     )?;
 
-    let (user_id,): (i64,) = conn
+    let (user_id, key_created_at, key_last_used_at): (i64, String, Option<String>) = conn
         .query_row(
-            "SELECT user_id FROM api_keys WHERE key_hash = ?1",
+            "SELECT user_id, created_at, last_used_at FROM api_keys WHERE key_hash = ?1",
             params![key_hash],
-            |row| Ok((row.get(0)?,)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()?
         .ok_or(DomainError::ApiKeyNotFound)?;
 
-    get_user(conn, user_id)
+    let user = get_user(conn, user_id)?;
+    Ok(crate::application::port::ApiKeyAuthResult {
+        user,
+        key_created_at,
+        key_last_used_at,
+    })
 }
 
 fn list_api_keys(conn: &Connection, user_id: i64) -> Result<Vec<ApiKey>> {
     let mut stmt = conn.prepare(
-        "SELECT id, user_id, key_prefix, name, created_at, last_used_at FROM api_keys WHERE user_id = ?1 ORDER BY id",
+        "SELECT id, user_id, key_prefix, name, device_name, created_at, last_used_at FROM api_keys WHERE user_id = ?1 ORDER BY id",
     )?;
     let keys = stmt
         .query_map(params![user_id], |row| {
@@ -661,6 +674,7 @@ fn list_api_keys(conn: &Connection, user_id: i64) -> Result<Vec<ApiKey>> {
                 row.get(3)?,
                 row.get(4)?,
                 row.get(5)?,
+                row.get(6)?,
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -672,6 +686,22 @@ fn delete_api_key(conn: &Connection, key_id: i64) -> Result<()> {
     if affected == 0 {
         return Err(DomainError::ApiKeyNotFound.into());
     }
+    Ok(())
+}
+
+fn delete_api_key_for_user(conn: &Connection, key_id: i64, user_id: i64) -> Result<()> {
+    let affected = conn.execute(
+        "DELETE FROM api_keys WHERE id = ?1 AND user_id = ?2",
+        params![key_id, user_id],
+    )?;
+    if affected == 0 {
+        return Err(DomainError::ApiKeyNotFound.into());
+    }
+    Ok(())
+}
+
+fn delete_all_api_keys_for_user(conn: &Connection, user_id: i64) -> Result<()> {
+    conn.execute("DELETE FROM api_keys WHERE user_id = ?1", params![user_id])?;
     Ok(())
 }
 
@@ -1537,7 +1567,7 @@ impl UserRepository for SqliteBackend {
 
 #[async_trait]
 impl AuthenticationPort for SqliteBackend {
-    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<User> {
+    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<crate::application::port::ApiKeyAuthResult> {
         let key_hash = key_hash.to_owned();
         blocking!(self, |conn: &Connection| get_user_by_api_key(conn, &key_hash))
     }
@@ -1545,14 +1575,23 @@ impl AuthenticationPort for SqliteBackend {
 
 #[async_trait]
 impl ApiKeyRepository for SqliteBackend {
-    async fn create_api_key(&self, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
+    async fn create_api_key(&self, user_id: i64, name: &str, device_name: Option<&str>, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         let name = name.to_owned();
+        let device_name = device_name.map(String::from);
         let new_key = new_key.clone();
-        blocking!(self, |conn: &Connection| create_api_key(conn, user_id, &name, &new_key))
+        blocking!(self, |conn: &Connection| create_api_key(conn, user_id, &name, device_name.as_deref(), &new_key))
     }
 
     async fn delete_api_key(&self, key_id: i64) -> Result<()> {
         blocking!(self, |conn: &Connection| delete_api_key(conn, key_id))
+    }
+
+    async fn delete_api_key_for_user(&self, key_id: i64, user_id: i64) -> Result<()> {
+        blocking!(self, |conn: &Connection| delete_api_key_for_user(conn, key_id, user_id))
+    }
+
+    async fn delete_all_api_keys_for_user(&self, user_id: i64) -> Result<()> {
+        blocking!(self, |conn: &Connection| delete_all_api_keys_for_user(conn, user_id))
     }
 }
 
@@ -2596,7 +2635,7 @@ mod tests {
     fn fresh_db_records_migration_version() {
         let (_tmp, conn) = setup();
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
     }
 
     #[test]
@@ -2691,7 +2730,7 @@ mod tests {
 
         // Version should include all migrations
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
         // Legacy columns should have been migrated
         let has_description: bool = conn.prepare("SELECT description FROM tasks LIMIT 0").is_ok();
@@ -2735,7 +2774,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 6);
+        assert_eq!(count, 7);
     }
 
     #[test]

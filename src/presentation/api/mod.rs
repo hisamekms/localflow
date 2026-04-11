@@ -20,7 +20,7 @@ use crate::application::auth as app_auth;
 use crate::application::auth::Permission;
 use crate::application::port::auth::{AuthError, AuthProvider};
 use crate::application::port::TaskBackend;
-use self::auth::{HasAuth, OptionalAuthUser};
+use self::auth::{AuthUser, HasAuth, OptionalAuthUser};
 use crate::bootstrap;
 use crate::infra::config::Config;
 use crate::domain::project::CreateProjectParams;
@@ -33,7 +33,8 @@ use crate::domain::user::{
 };
 use super::dto::{
     ApiKeyResponse, ApiKeyWithSecretResponse, CompleteTaskResponse, ConfigResponse,
-    PreviewTransitionResponse, ProjectMemberResponse, ProjectResponse, TaskResponse, UserResponse,
+    PreviewTransitionResponse, ProjectMemberResponse, ProjectResponse, SessionResponse,
+    TaskResponse, TokenResponse, UserResponse,
 };
 
 #[derive(Clone)]
@@ -45,6 +46,7 @@ struct AppState {
     project_service: Arc<ProjectService>,
     user_service: Arc<UserService>,
     auth_provider: Option<Arc<dyn AuthProvider>>,
+    token_config: crate::infra::config::TokenConfig,
 }
 
 impl HasAuth for AppState {
@@ -169,7 +171,8 @@ fn classify_error(e: anyhow::Error) -> ApiError {
             DomainError::InvalidStatusTransition { .. }
             | DomainError::CannotCompleteTask { .. }
             | DomainError::CannotDeleteDefaultProject
-            | DomainError::CannotDeleteProjectWithTasks { .. } => ApiError::Conflict(msg),
+            | DomainError::CannotDeleteProjectWithTasks { .. }
+            | DomainError::SessionLimitExceeded { .. } => ApiError::Conflict(msg),
 
             DomainError::UnsupportedOperation { .. } => ApiError::NotImplemented(msg),
         };
@@ -321,6 +324,7 @@ pub async fn serve(
         project_service,
         user_service,
         auth_provider,
+        token_config: config.auth.token.clone(),
     };
 
     let app = Router::new()
@@ -421,6 +425,10 @@ pub async fn serve(
             "/api/v1/projects/{project_id}/stats",
             get(get_stats),
         )
+        // Auth / Session management
+        .route("/auth/token", post(create_token))
+        .route("/auth/sessions", get(list_sessions).delete(revoke_all_sessions))
+        .route("/auth/sessions/{id}", delete(revoke_session))
         // Server-wide
         .route("/api/v1/health", get(health_check))
         .route("/api/v1/config", get(get_config))
@@ -1011,8 +1019,11 @@ async fn create_api_key(
     body: Option<Json<CreateApiKeyParams>>,
 ) -> Result<(StatusCode, Json<ApiKeyWithSecretResponse>), ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
-    let name = body.and_then(|b| b.0.name).unwrap_or_default();
-    let key = state.user_service.create_api_key(user_id, &name).await.map_err(classify_error)?;
+    let (name, device_name) = match body {
+        Some(Json(b)) => (b.name.unwrap_or_default(), b.device_name),
+        None => (String::new(), None),
+    };
+    let key = state.user_service.create_api_key(user_id, &name, device_name.as_deref()).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(ApiKeyWithSecretResponse::from(key))))
 }
 
@@ -1024,5 +1035,79 @@ async fn delete_api_key(
 ) -> Result<StatusCode, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
     state.user_service.delete_api_key(key_id).await.map_err(classify_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// --- Auth / Session Management Handlers ---
+
+#[derive(Deserialize)]
+struct CreateTokenRequest {
+    device_name: Option<String>,
+}
+
+// POST /auth/token — JWT → API key exchange
+async fn create_token(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    body: Option<Json<CreateTokenRequest>>,
+) -> Result<(StatusCode, Json<TokenResponse>), ApiError> {
+    let device_name = body.and_then(|b| b.0.device_name);
+    // Ensure user exists in DB (auto-created by JwtAuthProvider if OIDC)
+    let user = state.user_service
+        .get_or_create_user(auth.user.username(), auth.user.display_name(), auth.user.email())
+        .await
+        .map_err(classify_error)?;
+
+    let key = state.user_service
+        .create_session_token(user.id(), device_name.as_deref(), &state.token_config)
+        .await
+        .map_err(classify_error)?;
+
+    let expires_at = compute_expires_at(key.created_at(), &state.token_config);
+
+    Ok((StatusCode::CREATED, Json(TokenResponse {
+        token: key.key().to_owned(),
+        id: key.id(),
+        key_prefix: key.key_prefix().to_owned(),
+        expires_at,
+    })))
+}
+
+fn compute_expires_at(created_at: &str, token_config: &crate::infra::config::TokenConfig) -> Option<String> {
+    let ttl_str = token_config.ttl.as_ref()?;
+    let ttl = crate::domain::duration::parse_duration(ttl_str).ok()?;
+    let created = chrono::DateTime::parse_from_rfc3339(created_at).ok()?;
+    let expires = created + chrono::Duration::from_std(ttl).ok()?;
+    Some(expires.to_rfc3339())
+}
+
+// GET /auth/sessions — list caller's active sessions
+async fn list_sessions(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<Vec<SessionResponse>>, ApiError> {
+    let sessions = state.user_service
+        .list_active_sessions(auth.user.id(), &state.token_config)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(sessions.into_iter().map(SessionResponse::from).collect()))
+}
+
+// DELETE /auth/sessions/{id} — revoke a specific session
+async fn revoke_session(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(key_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    state.user_service.revoke_session(key_id, auth.user.id()).await.map_err(classify_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// DELETE /auth/sessions — revoke all sessions
+async fn revoke_all_sessions(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<StatusCode, ApiError> {
+    state.user_service.revoke_all_sessions(auth.user.id()).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -149,6 +149,7 @@ pub fn create_auth_provider(
         providers.push(Arc::new(ApiKeyProvider::new(
             backend,
             config.auth.master_api_key.clone(),
+            config.auth.token.clone(),
         )));
     }
 

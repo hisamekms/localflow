@@ -292,6 +292,7 @@ pub struct ApiKeyResponse {
     user_id: i64,
     key_prefix: String,
     name: String,
+    device_name: Option<String>,
     created_at: String,
     last_used_at: Option<String>,
 }
@@ -303,6 +304,7 @@ impl From<ApiKey> for ApiKeyResponse {
             user_id: k.user_id(),
             key_prefix: k.key_prefix().to_owned(),
             name: k.name().to_owned(),
+            device_name: k.device_name().map(|s| s.to_owned()),
             created_at: k.created_at().to_owned(),
             last_used_at: k.last_used_at().map(|s| s.to_owned()),
         }
@@ -318,6 +320,7 @@ pub struct ApiKeyWithSecretResponse {
     key: String,
     key_prefix: String,
     name: String,
+    device_name: Option<String>,
     created_at: String,
 }
 
@@ -329,9 +332,43 @@ impl From<ApiKeyWithSecret> for ApiKeyWithSecretResponse {
             key: k.key().to_owned(),
             key_prefix: k.key_prefix().to_owned(),
             name: k.name().to_owned(),
+            device_name: k.device_name().map(|s| s.to_owned()),
             created_at: k.created_at().to_owned(),
         }
     }
+}
+
+// --- Session ---
+
+#[derive(Serialize)]
+pub struct SessionResponse {
+    pub id: i64,
+    pub key_prefix: String,
+    pub name: String,
+    pub device_name: Option<String>,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+}
+
+impl From<ApiKey> for SessionResponse {
+    fn from(k: ApiKey) -> Self {
+        Self {
+            id: k.id(),
+            key_prefix: k.key_prefix().to_owned(),
+            name: k.name().to_owned(),
+            device_name: k.device_name().map(|s| s.to_owned()),
+            created_at: k.created_at().to_owned(),
+            last_used_at: k.last_used_at().map(|s| s.to_owned()),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct TokenResponse {
+    pub token: String,
+    pub id: i64,
+    pub key_prefix: String,
+    pub expires_at: Option<String>,
 }
 
 // --- Config ---
