@@ -1,5 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 
+use super::error::DomainError;
+
 /// Check if adding dep_id as a dependency of task_id would create a cycle.
 /// Performs BFS from dep_id following its dependencies; if task_id is reachable, it's a cycle.
 ///
@@ -48,6 +50,41 @@ where
         }
     }
     false
+}
+
+/// Maximum serialized size for metadata JSON (64 KiB).
+pub const METADATA_MAX_SIZE: usize = 65_536;
+
+/// Maximum nesting depth for metadata JSON.
+pub const METADATA_MAX_DEPTH: u32 = 10;
+
+/// Validate metadata JSON for size and nesting depth limits.
+pub fn validate_metadata(value: &serde_json::Value) -> Result<(), DomainError> {
+    let size = serde_json::to_string(value)
+        .map(|s| s.len())
+        .unwrap_or(0);
+    if size > METADATA_MAX_SIZE {
+        return Err(DomainError::MetadataTooLarge {
+            size,
+            max: METADATA_MAX_SIZE,
+        });
+    }
+    let depth = json_depth(value);
+    if depth > METADATA_MAX_DEPTH {
+        return Err(DomainError::MetadataTooDeep {
+            depth,
+            max: METADATA_MAX_DEPTH,
+        });
+    }
+    Ok(())
+}
+
+fn json_depth(value: &serde_json::Value) -> u32 {
+    match value {
+        serde_json::Value::Array(arr) => 1 + arr.iter().map(json_depth).max().unwrap_or(0),
+        serde_json::Value::Object(map) => 1 + map.values().map(json_depth).max().unwrap_or(0),
+        _ => 0,
+    }
 }
 
 #[cfg(test)]
@@ -105,5 +142,74 @@ mod tests {
     fn no_dependencies_no_cycle() {
         let edges: [(i64, Vec<i64>); 0] = [];
         assert!(!has_cycle(2, 1, make_graph(&edges)));
+    }
+
+    // --- metadata validation tests ---
+
+    #[test]
+    fn metadata_within_limits() {
+        let val = serde_json::json!({"key": "value", "num": 42});
+        assert!(validate_metadata(&val).is_ok());
+    }
+
+    #[test]
+    fn metadata_too_large() {
+        let big = "x".repeat(70_000);
+        let val = serde_json::json!({"big": big});
+        let err = validate_metadata(&val).unwrap_err();
+        assert!(matches!(err, DomainError::MetadataTooLarge { .. }));
+    }
+
+    #[test]
+    fn metadata_depth_at_limit() {
+        // 10 levels deep: {a:{a:{a:{a:{a:{a:{a:{a:{a:{a:1}}}}}}}}}}
+        let mut val = serde_json::json!(1);
+        for _ in 0..METADATA_MAX_DEPTH {
+            val = serde_json::json!({"a": val});
+        }
+        assert!(validate_metadata(&val).is_ok());
+    }
+
+    #[test]
+    fn metadata_too_deep() {
+        // 11 levels deep
+        let mut val = serde_json::json!(1);
+        for _ in 0..=METADATA_MAX_DEPTH {
+            val = serde_json::json!({"a": val});
+        }
+        let err = validate_metadata(&val).unwrap_err();
+        assert!(matches!(err, DomainError::MetadataTooDeep { .. }));
+    }
+
+    #[test]
+    fn metadata_empty_object() {
+        let val = serde_json::json!({});
+        assert!(validate_metadata(&val).is_ok());
+    }
+
+    #[test]
+    fn metadata_flat_array() {
+        let val = serde_json::json!([1, 2, 3]);
+        assert!(validate_metadata(&val).is_ok());
+    }
+
+    #[test]
+    fn json_depth_nested_arrays() {
+        let val = serde_json::json!([[[1]]]);
+        assert_eq!(json_depth(&val), 3);
+    }
+
+    #[test]
+    fn json_depth_mixed() {
+        let val = serde_json::json!({"a": [{"b": 1}]});
+        // object(1) -> array(2) -> object(3) -> leaf = depth 3
+        assert_eq!(json_depth(&val), 3);
+    }
+
+    #[test]
+    fn json_depth_scalar() {
+        assert_eq!(json_depth(&serde_json::json!(42)), 0);
+        assert_eq!(json_depth(&serde_json::json!("hello")), 0);
+        assert_eq!(json_depth(&serde_json::Value::Null), 0);
     }
 }

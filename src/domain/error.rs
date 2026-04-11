@@ -45,6 +45,12 @@ pub enum DomainError {
         count: usize,
     },
 
+    #[error("metadata too large: {size} bytes exceeds {max} byte limit")]
+    MetadataTooLarge { size: usize, max: usize },
+
+    #[error("metadata nesting too deep: depth {depth} exceeds maximum of {max}")]
+    MetadataTooDeep { depth: u32, max: u32 },
+
     // Conflict (409)
     #[error("invalid status transition: {from} -> {to}")]
     InvalidStatusTransition { from: String, to: String },

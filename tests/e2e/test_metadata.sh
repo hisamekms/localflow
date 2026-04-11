@@ -86,5 +86,40 @@ assert_json_field "$GET4_OUT" '.metadata.completely' "new" "edit: replaced metad
 OLD_KEY="$(echo "$GET4_OUT" | jq -r '.metadata.key // "absent"')"
 assert_eq "absent" "$OLD_KEY" "edit: old key removed"
 
+# [12] metadata size limit on add (>64KB)
+echo "[12] metadata size limit on add"
+LARGE_META=$(python3 -c "import json; print(json.dumps({'big': 'x' * 70000}))")
+if run_lf add --title "Large Meta" --metadata "$LARGE_META" 2>/dev/null; then
+    echo "FAIL: should reject metadata >64KB"
+    exit 1
+else
+    echo "  PASS: large metadata rejected on add"
+fi
+
+# [13] metadata nesting depth limit on add (>10 levels)
+echo "[13] metadata nesting depth limit on add"
+DEEP_META='{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":1}}}}}}}}}}}'
+if run_lf add --title "Deep Meta" --metadata "$DEEP_META" 2>/dev/null; then
+    echo "FAIL: should reject metadata with depth > 10"
+    exit 1
+else
+    echo "  PASS: deeply nested metadata rejected on add"
+fi
+
+# [14] metadata at exactly the depth limit passes (10 levels)
+echo "[14] metadata at exactly depth limit"
+EXACT_META='{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":1}}}}}}}}}}'
+EXACT_OUT="$(run_lf add --title "Exact Depth" --metadata "$EXACT_META")"
+assert_json_field "$EXACT_OUT" '.metadata.a.a.a.a.a.a.a.a.a.a' "1" "depth=10: accepted"
+
+# [15] metadata size limit on edit (>64KB)
+echo "[15] metadata size limit on edit"
+if run_lf edit "$TASK_ID" --metadata "$LARGE_META" 2>/dev/null; then
+    echo "FAIL: should reject large metadata on edit"
+    exit 1
+else
+    echo "  PASS: large metadata rejected on edit"
+fi
+
 echo ""
 echo "All metadata tests passed!"
