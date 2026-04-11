@@ -126,6 +126,69 @@ senko config --init       # Generate a template .senko/config.toml
 
 Shows current configuration values (including defaults for missing settings). Use `--init` to generate a commented template file.
 
+## `auth` – Authentication commands
+
+Manage OIDC authentication sessions. Requires `[server]` and OIDC configuration on the server.
+
+### `auth login`
+
+```bash
+senko auth login
+senko auth login --device-name "my-laptop"
+```
+
+Opens a browser for OIDC login via OAuth PKCE flow. After authentication, the CLI receives an API token that is stored in the OS keychain.
+
+| Option | Description |
+|--------|-------------|
+| `--device-name <NAME>` | Optional device name for the session |
+
+### `auth token`
+
+```bash
+senko auth token
+```
+
+Prints the stored API token to stdout. Useful for passing the token to environments without keychain access (e.g., containers).
+
+### `auth status`
+
+```bash
+senko auth status
+```
+
+Shows login status and current session info by querying `GET /auth/me`.
+
+### `auth logout`
+
+```bash
+senko auth logout
+```
+
+Revokes the current session on the server and removes the token from the OS keychain.
+
+### `auth sessions`
+
+```bash
+senko auth sessions
+```
+
+Lists active sessions via `GET /auth/sessions`.
+
+### `auth revoke`
+
+```bash
+senko auth revoke --id <session-id>
+senko auth revoke --all
+```
+
+Revokes a specific session by ID, or all sessions.
+
+| Option | Description |
+|--------|-------------|
+| `--id <ID>` | Revoke a specific session |
+| `--all` | Revoke all sessions |
+
 ## `skill-install` – Claude Code integration
 
 ```bash
@@ -408,11 +471,12 @@ All settings follow the precedence: **CLI flag > environment variable > config.t
 | `SENKO_MERGE_VIA` | `direct` or `pr` | `direct` |
 | `SENKO_AUTO_MERGE` | `true` or `false` | `true` |
 
-### Backend
+### Connection
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SENKO_API_URL` | API server URL (enables HTTP backend instead of SQLite) | _(unset = SQLite)_ |
+| `SENKO_SERVER_URL` | API server URL (enables HTTP backend instead of SQLite) | _(unset = SQLite)_ |
+| `SENKO_TOKEN` | API token for server authentication | _(unset)_ |
 
 ### Log
 
