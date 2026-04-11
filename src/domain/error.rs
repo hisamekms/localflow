@@ -64,6 +64,9 @@ pub enum DomainError {
     #[error("cannot delete project with {count} existing task(s)")]
     CannotDeleteProjectWithTasks { count: i64 },
 
+    #[error("session limit exceeded: maximum {max} active sessions per user")]
+    SessionLimitExceeded { max: u32 },
+
     // Not Implemented (501)
     #[error("operation not supported: {operation}")]
     UnsupportedOperation { operation: String },

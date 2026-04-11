@@ -3,6 +3,13 @@ use async_trait::async_trait;
 
 use crate::domain::user::User;
 
+/// Result of API key authentication, including key metadata for expiry checks.
+pub struct ApiKeyAuthResult {
+    pub user: User,
+    pub key_created_at: String,
+    pub key_last_used_at: Option<String>,
+}
+
 /// Port for API key authentication (lookup user by key hash).
 ///
 /// Separated from `ApiKeyRepository` (which handles CRUD) to keep
@@ -14,5 +21,5 @@ pub trait AuthenticationPort: Send + Sync {
         true
     }
 
-    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<User>;
+    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<ApiKeyAuthResult>;
 }

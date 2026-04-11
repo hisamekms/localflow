@@ -10,7 +10,9 @@ use zeroize::Zeroizing;
 
 use crate::application::port::auth::{AuthError, AuthProvider};
 use crate::application::port::TaskBackend;
-use crate::domain::user::hash_api_key;
+use crate::domain::duration::parse_duration;
+use crate::domain::user::{hash_api_key, CreateUserParams};
+use crate::infra::config::TokenConfig;
 
 fn constant_time_key_eq(a: &str, b: &str) -> bool {
     let hash_a = Sha256::digest(a.as_bytes());
@@ -21,13 +23,15 @@ fn constant_time_key_eq(a: &str, b: &str) -> bool {
 pub struct ApiKeyProvider {
     backend: Arc<dyn TaskBackend>,
     master_api_key: Option<Zeroizing<String>>,
+    token_config: TokenConfig,
 }
 
 impl ApiKeyProvider {
-    pub fn new(backend: Arc<dyn TaskBackend>, master_api_key: Option<String>) -> Self {
+    pub fn new(backend: Arc<dyn TaskBackend>, master_api_key: Option<String>, token_config: TokenConfig) -> Self {
         Self {
             backend,
             master_api_key: master_api_key.map(Zeroizing::new),
+            token_config,
         }
     }
 }
@@ -48,10 +52,40 @@ impl AuthProvider for ApiKeyProvider {
         }
 
         let key_hash = hash_api_key(token);
-        self.backend
+        let auth_result = self.backend
             .get_user_by_api_key(&key_hash)
             .await
-            .map_err(|_| AuthError::InvalidToken)
+            .map_err(|_| AuthError::InvalidToken)?;
+
+        // Check absolute TTL
+        if let Some(ref ttl_str) = self.token_config.ttl {
+            if let Ok(ttl) = parse_duration(ttl_str) {
+                if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&auth_result.key_created_at) {
+                    let elapsed = chrono::Utc::now().signed_duration_since(created);
+                    if elapsed > chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::MAX) {
+                        tracing::debug!(key_created_at = %auth_result.key_created_at, "API key expired (TTL)");
+                        return Err(AuthError::InvalidToken);
+                    }
+                }
+            }
+        }
+
+        // Check inactive TTL
+        if let Some(ref inactive_ttl_str) = self.token_config.inactive_ttl {
+            if let Ok(inactive_ttl) = parse_duration(inactive_ttl_str) {
+                if let Some(ref last_used) = auth_result.key_last_used_at {
+                    if let Ok(last) = chrono::DateTime::parse_from_rfc3339(last_used) {
+                        let elapsed = chrono::Utc::now().signed_duration_since(last);
+                        if elapsed > chrono::Duration::from_std(inactive_ttl).unwrap_or(chrono::Duration::MAX) {
+                            tracing::debug!(last_used_at = %last_used, "API key expired (inactive TTL)");
+                            return Err(AuthError::InvalidToken);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(auth_result.user)
     }
 }
 
@@ -254,10 +288,27 @@ impl AuthProvider for JwtAuthProvider {
             .get("sub")
             .and_then(|v| v.as_str())
             .ok_or(AuthError::InvalidToken)?;
-        self.backend
-            .get_user_by_username(sub)
-            .await
-            .map_err(|_| AuthError::InvalidToken)
+
+        // Try to find existing user; auto-create if not found (standard OIDC provisioning)
+        match self.backend.get_user_by_username(sub).await {
+            Ok(user) => Ok(user),
+            Err(_) => {
+                let display_name = token_data.claims.get("name").and_then(|v| v.as_str()).map(String::from);
+                let email = token_data.claims.get("email").and_then(|v| v.as_str()).map(String::from);
+                tracing::info!(username = %sub, "auto-provisioning user from OIDC claims");
+                self.backend
+                    .create_user(&CreateUserParams {
+                        username: sub.to_string(),
+                        display_name,
+                        email,
+                    })
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(error = %e, "failed to auto-provision OIDC user");
+                        AuthError::InvalidToken
+                    })
+            }
+        }
     }
 }
 
@@ -309,7 +360,7 @@ mod tests {
         let new_key = NewApiKey::generate();
         let raw_key = new_key.raw_key.clone();
         backend
-            .create_api_key(user.id(), "test-key", &new_key)
+            .create_api_key(user.id(), "test-key", None, &new_key)
             .await
             .unwrap();
         (Arc::new(backend), raw_key)
@@ -319,7 +370,7 @@ mod tests {
     async fn master_key_match() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider =
-            ApiKeyProvider::new(backend, Some("master-secret".to_string()));
+            ApiKeyProvider::new(backend, Some("master-secret".to_string()), TokenConfig::default());
 
         let user = provider.authenticate("master-secret").await.unwrap();
 
@@ -331,7 +382,7 @@ mod tests {
     async fn master_key_mismatch_valid_user_key() {
         let (backend, raw_key) = setup_backend_with_api_key().await;
         let provider =
-            ApiKeyProvider::new(backend, Some("master-secret".to_string()));
+            ApiKeyProvider::new(backend, Some("master-secret".to_string()), TokenConfig::default());
 
         let user = provider.authenticate(&raw_key).await.unwrap();
 
@@ -342,7 +393,7 @@ mod tests {
     async fn master_key_mismatch_invalid() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider =
-            ApiKeyProvider::new(backend, Some("master-secret".to_string()));
+            ApiKeyProvider::new(backend, Some("master-secret".to_string()), TokenConfig::default());
 
         let result = provider.authenticate("wrong-key").await;
 
@@ -352,7 +403,7 @@ mod tests {
     #[tokio::test]
     async fn no_master_key_valid_user_key() {
         let (backend, raw_key) = setup_backend_with_api_key().await;
-        let provider = ApiKeyProvider::new(backend, None);
+        let provider = ApiKeyProvider::new(backend, None, TokenConfig::default());
 
         let user = provider.authenticate(&raw_key).await.unwrap();
 
@@ -362,7 +413,7 @@ mod tests {
     #[tokio::test]
     async fn no_master_key_invalid() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
-        let provider = ApiKeyProvider::new(backend, None);
+        let provider = ApiKeyProvider::new(backend, None, TokenConfig::default());
 
         let result = provider.authenticate("garbage").await;
 
@@ -454,7 +505,7 @@ mod tests {
         let (backend, raw_key) = setup_backend_with_api_key().await;
         let chain = ChainAuthProvider::new(vec![
             Arc::new(FixedAuthProvider::err()),  // Simulates JWT failure
-            Arc::new(ApiKeyProvider::new(backend, None)),
+            Arc::new(ApiKeyProvider::new(backend, None, TokenConfig::default())),
         ]);
 
         let user = chain.authenticate(&raw_key).await.unwrap();
@@ -466,7 +517,7 @@ mod tests {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let chain = ChainAuthProvider::new(vec![
             Arc::new(FixedAuthProvider::err()),  // Simulates JWT failure
-            Arc::new(ApiKeyProvider::new(backend, None)),
+            Arc::new(ApiKeyProvider::new(backend, None, TokenConfig::default())),
         ]);
 
         let result = chain.authenticate("invalid-token").await;
@@ -716,7 +767,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn jwt_provider_rejects_unknown_user() {
+    async fn jwt_provider_auto_provisions_unknown_user() {
         let encoding_key = make_test_encoding_key();
         let jwk = make_test_jwk();
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
@@ -736,14 +787,18 @@ mod tests {
         }
 
         let claims = serde_json::json!({
-            "sub": "nonexistent-user",
+            "sub": "new-oidc-user",
+            "name": "New User",
+            "email": "new@example.com",
             "iss": "https://issuer.example.com",
             "aud": "test-client-id",
             "exp": (chrono::Utc::now().timestamp() + 3600),
         });
         let token = make_jwt(&encoding_key, &claims);
 
-        let result = provider.authenticate(&token).await;
-        assert!(matches!(result, Err(AuthError::InvalidToken)));
+        let user = provider.authenticate(&token).await.unwrap();
+        assert_eq!(user.username(), "new-oidc-user");
+        assert_eq!(user.display_name(), Some("New User"));
+        assert_eq!(user.email(), Some("new@example.com"));
     }
 }
