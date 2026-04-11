@@ -182,14 +182,6 @@ fn render_graph_page(tasks: &[TaskViewModel], query: &ListQuery, all_tags: &[Str
         }
     }
 
-    // Click handlers
-    for task in tasks {
-        mermaid.push_str(&format!(
-            "    click node_{} \"/tasks/{}\"\n",
-            task.id, task.id
-        ));
-    }
-
     // Modern status-based styles with rounded corners
     let mut completed = Vec::new();
     let mut in_progress = Vec::new();
@@ -251,7 +243,7 @@ fn render_graph_page(tasks: &[TaskViewModel], query: &ListQuery, all_tags: &[Str
 <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom/dist/svg-pan-zoom.min.js"></script>
 <script>
-mermaid.initialize({{ startOnLoad: false, securityLevel: 'loose' }});
+mermaid.initialize({{ startOnLoad: false, securityLevel: 'strict' }});
 mermaid.run().then(function() {{
     var svg = document.querySelector('.mermaid svg');
     if (!svg) return;
@@ -273,6 +265,15 @@ mermaid.run().then(function() {{
     document.getElementById('zoom-out').addEventListener('click', function() {{ panZoom.zoomOut(); }});
     document.getElementById('zoom-reset').addEventListener('click', function() {{ panZoom.resetZoom(); panZoom.center(); }});
     document.getElementById('zoom-fit').addEventListener('click', function() {{ panZoom.fit(); panZoom.center(); }});
+    svg.querySelectorAll('.node').forEach(function(node) {{
+        var match = node.id.match(/node_(\d+)/);
+        if (match) {{
+            node.style.cursor = 'pointer';
+            node.addEventListener('click', function() {{
+                window.location.href = '/tasks/' + match[1];
+            }});
+        }}
+    }});
 }});
 </script>"#
     )
