@@ -540,6 +540,23 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 [user]
 # name = "default"  # user name to operate as (overrides with --user flag or SENKO_USER env)
 
+# [auth]
+# enabled = false                        # enable server-side authentication (default: false, env: SENKO_AUTH_ENABLED)
+#
+# [auth.oidc]
+# issuer_url = "https://accounts.example.com"  # OIDC issuer URL (env: SENKO_OIDC_ISSUER_URL)
+# client_id = "senko-cli"                      # OIDC client ID for PKCE (env: SENKO_OIDC_CLIENT_ID)
+# scopes = ["openid", "profile"]               # OIDC scopes (default: ["openid", "profile"])
+#
+# [auth.oidc.cli]
+# callback_port = 8400                   # local port for OIDC callback (default: auto-assign)
+# browser = true                         # auto-open browser for OIDC login (default: true)
+#
+# [auth.token]
+# ttl = "24h"                            # token time-to-live (env: SENKO_AUTH_TOKEN_TTL)
+# inactive_ttl = "7d"                    # token inactive timeout (env: SENKO_AUTH_TOKEN_INACTIVE_TTL)
+# max_per_user = 10                      # max tokens per user (env: SENKO_AUTH_TOKEN_MAX_PER_USER)
+
 [web]
 # host = "127.0.0.1"  # bind address for `senko web` / `senko serve` (default: 127.0.0.1, env: SENKO_HOST)
 

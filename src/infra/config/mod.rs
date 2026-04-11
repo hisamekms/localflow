@@ -72,11 +72,43 @@ pub struct WebConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct OidcCliConfig {
+    pub callback_port: Option<u16>,
+    #[serde(default = "default_true")]
+    pub browser: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct OidcConfig {
+    pub issuer_url: Option<String>,
+    pub client_id: Option<String>,
+    #[serde(default = "default_oidc_scopes")]
+    pub scopes: Vec<String>,
+    #[serde(default)]
+    pub cli: OidcCliConfig,
+}
+
+fn default_oidc_scopes() -> Vec<String> {
+    vec!["openid".to_string(), "profile".to_string()]
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct TokenConfig {
+    pub ttl: Option<String>,
+    pub inactive_ttl: Option<String>,
+    pub max_per_user: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct AuthConfig {
     #[serde(default)]
     pub enabled: bool,
     pub master_api_key: Option<String>,
     pub master_api_key_arn: Option<String>,
+    #[serde(default)]
+    pub oidc: OidcConfig,
+    #[serde(default)]
+    pub token: TokenConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -321,10 +353,36 @@ pub struct RawLogConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawOidcCliConfig {
+    pub callback_port: Option<u16>,
+    pub browser: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawOidcConfig {
+    pub issuer_url: Option<String>,
+    pub client_id: Option<String>,
+    pub scopes: Option<Vec<String>>,
+    #[serde(default)]
+    pub cli: RawOidcCliConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawTokenConfig {
+    pub ttl: Option<String>,
+    pub inactive_ttl: Option<String>,
+    pub max_per_user: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawAuthConfig {
     pub enabled: Option<bool>,
     pub master_api_key: Option<String>,
     pub master_api_key_arn: Option<String>,
+    #[serde(default)]
+    pub oidc: RawOidcConfig,
+    #[serde(default)]
+    pub token: RawTokenConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -368,6 +426,38 @@ impl RawConfig {
                 enabled: overlay.auth.enabled.or(self.auth.enabled),
                 master_api_key: overlay.auth.master_api_key.or(self.auth.master_api_key),
                 master_api_key_arn: overlay.auth.master_api_key_arn.or(self.auth.master_api_key_arn),
+                oidc: RawOidcConfig {
+                    issuer_url: overlay.auth.oidc.issuer_url.or(self.auth.oidc.issuer_url),
+                    client_id: overlay.auth.oidc.client_id.or(self.auth.oidc.client_id),
+                    scopes: overlay.auth.oidc.scopes.or(self.auth.oidc.scopes),
+                    cli: RawOidcCliConfig {
+                        callback_port: overlay
+                            .auth
+                            .oidc
+                            .cli
+                            .callback_port
+                            .or(self.auth.oidc.cli.callback_port),
+                        browser: overlay
+                            .auth
+                            .oidc
+                            .cli
+                            .browser
+                            .or(self.auth.oidc.cli.browser),
+                    },
+                },
+                token: RawTokenConfig {
+                    ttl: overlay.auth.token.ttl.or(self.auth.token.ttl),
+                    inactive_ttl: overlay
+                        .auth
+                        .token
+                        .inactive_ttl
+                        .or(self.auth.token.inactive_ttl),
+                    max_per_user: overlay
+                        .auth
+                        .token
+                        .max_per_user
+                        .or(self.auth.token.max_per_user),
+                },
             },
             storage: StorageConfig {
                 db_path: overlay.storage.db_path.or(self.storage.db_path),
@@ -410,6 +500,20 @@ impl RawConfig {
                 enabled: self.auth.enabled.unwrap_or(false),
                 master_api_key: self.auth.master_api_key,
                 master_api_key_arn: self.auth.master_api_key_arn,
+                oidc: OidcConfig {
+                    issuer_url: self.auth.oidc.issuer_url,
+                    client_id: self.auth.oidc.client_id,
+                    scopes: self.auth.oidc.scopes.unwrap_or_else(default_oidc_scopes),
+                    cli: OidcCliConfig {
+                        callback_port: self.auth.oidc.cli.callback_port,
+                        browser: self.auth.oidc.cli.browser.unwrap_or(true),
+                    },
+                },
+                token: TokenConfig {
+                    ttl: self.auth.token.ttl,
+                    inactive_ttl: self.auth.token.inactive_ttl,
+                    max_per_user: self.auth.token.max_per_user,
+                },
             },
             storage: self.storage,
             web: WebConfig {
@@ -516,6 +620,11 @@ impl Config {
             && !val.is_empty() {
                 self.backend.api_key = Some(val);
             }
+        // SENKO_TOKEN takes priority over SENKO_API_KEY
+        if let Ok(val) = std::env::var("SENKO_TOKEN")
+            && !val.is_empty() {
+                self.backend.api_key = Some(val);
+            }
         if let Ok(val) = std::env::var("SENKO_HOOKS_ENABLED") {
             match val.to_lowercase().as_str() {
                 "true" | "1" => self.hooks.enabled = true,
@@ -539,6 +648,31 @@ impl Config {
         if let Ok(val) = std::env::var("SENKO_MASTER_API_KEY_ARN")
             && !val.is_empty() {
                 self.auth.master_api_key_arn = Some(val);
+            }
+
+        // OIDC settings
+        if let Ok(val) = std::env::var("SENKO_OIDC_ISSUER_URL")
+            && !val.is_empty() {
+                self.auth.oidc.issuer_url = Some(val);
+            }
+        if let Ok(val) = std::env::var("SENKO_OIDC_CLIENT_ID")
+            && !val.is_empty() {
+                self.auth.oidc.client_id = Some(val);
+            }
+
+        // Token settings
+        if let Ok(val) = std::env::var("SENKO_AUTH_TOKEN_TTL")
+            && !val.is_empty() {
+                self.auth.token.ttl = Some(val);
+            }
+        if let Ok(val) = std::env::var("SENKO_AUTH_TOKEN_INACTIVE_TTL")
+            && !val.is_empty() {
+                self.auth.token.inactive_ttl = Some(val);
+            }
+        if let Ok(val) = std::env::var("SENKO_AUTH_TOKEN_MAX_PER_USER")
+            && !val.is_empty()
+            && let Ok(n) = val.parse::<u32>() {
+                self.auth.token.max_per_user = Some(n);
             }
 
         // DynamoDB settings (feature-gated)
