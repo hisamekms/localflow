@@ -747,7 +747,8 @@ async fn start_task(
     Json(body): Json<StartBody>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let updated = state.task_service.start_task(project_id, id, body.session_id, body.user_id, body.metadata).await.map_err(classify_error)?;
+    let user_id = body.user_id.or_else(|| auth.0.as_ref().map(|a| a.user.id()));
+    let updated = state.task_service.start_task(project_id, id, body.session_id, user_id, body.metadata).await.map_err(classify_error)?;
     Ok(Json(TaskResponse::from(updated)))
 }
 
@@ -788,6 +789,7 @@ async fn next_task(
     let (session_id, user_id, metadata) = body
         .map(|b| (b.0.session_id, b.0.user_id, b.0.metadata))
         .unwrap_or((None, None, None));
+    let user_id = user_id.or_else(|| auth.0.as_ref().map(|a| a.user.id()));
     let updated = state.task_service.next_task(project_id, session_id, user_id, metadata).await.map_err(classify_error)?;
     Ok(Json(TaskResponse::from(updated)))
 }
