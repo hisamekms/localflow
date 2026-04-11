@@ -20,6 +20,10 @@ use crate::domain::user::{
     Role, User,
 };
 
+tokio::task_local! {
+    pub static PASSTHROUGH_TOKEN: String;
+}
+
 pub struct HttpBackend {
     base_url: String,
     client: reqwest::Client,
@@ -54,14 +58,25 @@ impl HttpBackend {
     }
 
     fn auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match &self.api_key {
-            Some(key) => builder.bearer_auth(key),
-            None => builder,
+        if let Some(key) = &self.api_key {
+            return builder.bearer_auth(key);
         }
+        if let Ok(token) = PASSTHROUGH_TOKEN.try_with(|t| t.clone()) {
+            return builder.bearer_auth(token);
+        }
+        builder
     }
 
 }
 
+
+/// Error type representing a non-success HTTP response from the upstream server.
+#[derive(Debug, thiserror::Error)]
+#[error("upstream HTTP error {status}: {message}")]
+pub struct UpstreamHttpError {
+    pub status: reqwest::StatusCode,
+    pub message: String,
+}
 
 /// Extract error message from a JSON error response body.
 pub(crate) async fn extract_error(resp: reqwest::Response) -> String {
@@ -72,21 +87,25 @@ pub(crate) async fn extract_error(resp: reqwest::Response) -> String {
         .unwrap_or_else(|| "unknown error".into())
 }
 
-/// Read a successful JSON response, or bail with the error body on non-2xx.
+/// Read a successful JSON response, or return `UpstreamHttpError` on non-2xx.
 pub(crate) async fn read_json_or_error<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
     if resp.status().is_success() {
         Ok(resp.json().await?)
     } else {
-        bail!("{}", extract_error(resp).await);
+        let status = resp.status();
+        let message = extract_error(resp).await;
+        Err(UpstreamHttpError { status, message }.into())
     }
 }
 
-/// Check that a response is successful (2xx), ignoring the body. Bail on error.
+/// Check that a response is successful (2xx), ignoring the body. Return `UpstreamHttpError` on error.
 pub(crate) async fn check_success(resp: reqwest::Response) -> Result<()> {
     if resp.status().is_success() {
         Ok(())
     } else {
-        bail!("{}", extract_error(resp).await);
+        let status = resp.status();
+        let message = extract_error(resp).await;
+        Err(UpstreamHttpError { status, message }.into())
     }
 }
 
