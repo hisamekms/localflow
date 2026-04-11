@@ -291,6 +291,12 @@ pub async fn serve(
 ) -> Result<()> {
     bootstrap::init_tracing(&config.log);
 
+    if auth_provider.is_none() {
+        tracing::warn!(
+            "Authentication is disabled. All API endpoints are accessible without credentials."
+        );
+    }
+
     // Server always fires hooks (should_fire = true)
     let backend_info = bootstrap::resolve_backend_info(config, &project_root);
     let hook_executor = bootstrap::create_api_hook_executor(config.clone(), backend_info, backend.clone());
