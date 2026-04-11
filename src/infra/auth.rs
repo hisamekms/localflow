@@ -1,19 +1,31 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
+use zeroize::Zeroizing;
 
 use crate::application::port::auth::{AuthError, AuthProvider};
 use crate::application::port::TaskBackend;
 use crate::domain::user::hash_api_key;
 
+fn constant_time_key_eq(a: &str, b: &str) -> bool {
+    let hash_a = Sha256::digest(a.as_bytes());
+    let hash_b = Sha256::digest(b.as_bytes());
+    hash_a.ct_eq(&hash_b).into()
+}
+
 pub struct ApiKeyProvider {
     backend: Arc<dyn TaskBackend>,
-    master_api_key: Option<String>,
+    master_api_key: Option<Zeroizing<String>>,
 }
 
 impl ApiKeyProvider {
     pub fn new(backend: Arc<dyn TaskBackend>, master_api_key: Option<String>) -> Self {
-        Self { backend, master_api_key }
+        Self {
+            backend,
+            master_api_key: master_api_key.map(Zeroizing::new),
+        }
     }
 }
 
@@ -21,7 +33,7 @@ impl ApiKeyProvider {
 impl AuthProvider for ApiKeyProvider {
     async fn authenticate(&self, token: &str) -> std::result::Result<crate::domain::user::User, AuthError> {
         if let Some(ref master_key) = self.master_api_key
-            && token == master_key
+            && constant_time_key_eq(token, master_key)
         {
             return Ok(crate::domain::user::User::new(
                 0,
