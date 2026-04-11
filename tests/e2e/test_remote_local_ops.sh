@@ -32,7 +32,7 @@ cleanup_all() {
 trap cleanup_all EXIT
 
 run_http() {
-  SENKO_SERVER_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
+  SENKO_SERVER_URL="$API_URL" SENKO_TOKEN=test-key "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
 clear_hook_log() {
@@ -230,7 +230,7 @@ run_http start "$BLOCKER_ID" >/dev/null
 
 echo "[3.1] Complete via API returns unblocked_tasks"
 # Call the API directly with curl to get the full CompleteTaskResponse
-COMPLETE_RESP=$(curl -sf -X POST "$API_URL/api/v1/projects/$PROJECT_ID/tasks/$BLOCKER_ID/complete")
+COMPLETE_RESP=$(curl -sf -H "Authorization: Bearer test-key" -X POST "$API_URL/api/v1/projects/$PROJECT_ID/tasks/$BLOCKER_ID/complete")
 
 assert_json_field "$COMPLETE_RESP" '.task.status' "completed" "api complete: task status"
 
@@ -249,7 +249,7 @@ STANDALONE_ID=$(echo "$STANDALONE" | jq -r '.id')
 run_http ready "$STANDALONE_ID" >/dev/null
 run_http start "$STANDALONE_ID" >/dev/null
 
-COMPLETE_RESP2=$(curl -sf -X POST "$API_URL/api/v1/projects/$PROJECT_ID/tasks/$STANDALONE_ID/complete")
+COMPLETE_RESP2=$(curl -sf -H "Authorization: Bearer test-key" -X POST "$API_URL/api/v1/projects/$PROJECT_ID/tasks/$STANDALONE_ID/complete")
 UNBLOCKED_COUNT2=$(echo "$COMPLETE_RESP2" | jq '.unblocked_tasks | length')
 assert_eq "0" "$UNBLOCKED_COUNT2" "api complete: 0 unblocked for standalone task"
 

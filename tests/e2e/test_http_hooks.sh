@@ -59,7 +59,7 @@ cleanup_test_env_full() {
 trap cleanup_test_env_full EXIT
 
 run_http() {
-  SENKO_SERVER_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
+  SENKO_SERVER_URL="$API_URL" SENKO_TOKEN=test-key "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
 clear_hook_log() {

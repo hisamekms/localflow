@@ -65,6 +65,7 @@ impl AppState {
 }
 
 /// Check project-level authorization. No-op when auth is disabled.
+/// Master key users (id == 0) bypass project membership checks.
 async fn check_project_permission(
     state: &AppState,
     auth: &OptionalAuthUser,
@@ -72,6 +73,9 @@ async fn check_project_permission(
     permission: Permission,
 ) -> Result<(), ApiError> {
     if let Some(user) = require_auth_user(auth, state.auth_enabled())? {
+        if user.id() == 0 {
+            return Ok(());
+        }
         app_auth::require_project_role(state.backend.as_ref(), user.id(), project_id, permission)
             .await
             .map_err(ApiError::from)?;

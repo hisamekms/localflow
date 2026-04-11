@@ -21,15 +21,15 @@ wait_for "API server ready" 10 "curl -sf $BASE/health >/dev/null"
 # --- Helpers ---
 # GET request
 api_get() {
-  curl -sf "$@"
+  curl -sf -H "Authorization: Bearer test-key" "$@"
 }
 # POST/PUT/DELETE with JSON body
 api_json() {
-  curl -sf -H "Content-Type: application/json" "$@"
+  curl -sf -H "Content-Type: application/json" -H "Authorization: Bearer test-key" "$@"
 }
 # Get HTTP status code
 api_status() {
-  curl -s -o /dev/null -w '%{http_code}' -H "Content-Type: application/json" "$@"
+  curl -s -o /dev/null -w '%{http_code}' -H "Content-Type: application/json" -H "Authorization: Bearer test-key" "$@"
 }
 
 echo "=== Stats endpoint ==="

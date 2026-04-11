@@ -19,7 +19,7 @@ wait_for "API server ready" 10 "curl -sf $API_URL/api/v1/health >/dev/null"
 
 # Helper: run senko CLI in HTTP backend mode
 run_http() {
-  SENKO_SERVER_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
+  SENKO_SERVER_URL="$API_URL" SENKO_TOKEN=test-key "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
 echo "--- Test: HTTP Backend Mode ---"
