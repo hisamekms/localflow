@@ -853,7 +853,9 @@ async fn health_check() -> Json<serde_json::Value> {
 
 async fn get_config(
     State(state): State<AppState>,
+    auth: OptionalAuthUser,
 ) -> Result<Json<ConfigResponse>, ApiError> {
+    require_auth_user(&auth, state.auth_enabled())?;
     let config = crate::bootstrap::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
     Ok(Json(ConfigResponse::from(config)))
 }

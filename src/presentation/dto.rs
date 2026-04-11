@@ -339,8 +339,118 @@ impl From<ApiKeyWithSecret> for ApiKeyWithSecretResponse {
 #[derive(Serialize)]
 pub struct ConfigResponse(serde_json::Value);
 
+const MASKED: &str = "****";
+
+const SENSITIVE_PATHS: &[&[&str]] = &[
+    &["auth", "master_api_key"],
+    &["auth", "master_api_key_arn"],
+    &["backend", "api_key"],
+    &["backend", "postgres", "url"],
+    &["backend", "postgres", "url_arn"],
+    &["backend", "postgres", "rds_secrets_arn"],
+];
+
+impl ConfigResponse {
+    fn mask_sensitive(mut value: serde_json::Value) -> serde_json::Value {
+        for path in SENSITIVE_PATHS {
+            Self::mask_at_path(&mut value, path);
+        }
+        value
+    }
+
+    fn mask_at_path(value: &mut serde_json::Value, path: &[&str]) {
+        if path.len() == 1 {
+            if let Some(obj) = value.as_object_mut() {
+                if let Some(field) = obj.get(path[0]) {
+                    if !field.is_null() {
+                        obj.insert(path[0].to_string(), serde_json::Value::String(MASKED.to_string()));
+                    }
+                }
+            }
+            return;
+        }
+        if let Some(obj) = value.as_object_mut() {
+            if let Some(child) = obj.get_mut(path[0]) {
+                Self::mask_at_path(child, &path[1..]);
+            }
+        }
+    }
+}
+
 impl From<Config> for ConfigResponse {
     fn from(c: Config) -> Self {
-        Self(serde_json::to_value(c).unwrap_or_default())
+        let raw = serde_json::to_value(c).unwrap_or_default();
+        Self(Self::mask_sensitive(raw))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn mask_sensitive_replaces_string_values() {
+        let input = json!({
+            "auth": {
+                "enabled": true,
+                "master_api_key": "secret-key-123",
+                "master_api_key_arn": "arn:aws:secretsmanager:us-east-1:123:secret:key"
+            },
+            "backend": {
+                "api_key": "backend-secret",
+                "postgres": {
+                    "url": "postgres://user:pass@host/db",
+                    "url_arn": "arn:aws:secretsmanager:us-east-1:123:secret:url",
+                    "rds_secrets_arn": "arn:aws:secretsmanager:us-east-1:123:secret:rds",
+                    "max_connections": 10
+                }
+            },
+            "workflow": { "merge_via": "direct" }
+        });
+
+        let result = ConfigResponse::mask_sensitive(input);
+        let obj = result.as_object().unwrap();
+
+        assert_eq!(obj["auth"]["enabled"], json!(true));
+        assert_eq!(obj["auth"]["master_api_key"], json!("****"));
+        assert_eq!(obj["auth"]["master_api_key_arn"], json!("****"));
+        assert_eq!(obj["backend"]["api_key"], json!("****"));
+        assert_eq!(obj["backend"]["postgres"]["url"], json!("****"));
+        assert_eq!(obj["backend"]["postgres"]["url_arn"], json!("****"));
+        assert_eq!(obj["backend"]["postgres"]["rds_secrets_arn"], json!("****"));
+        assert_eq!(obj["backend"]["postgres"]["max_connections"], json!(10));
+        assert_eq!(obj["workflow"]["merge_via"], json!("direct"));
+    }
+
+    #[test]
+    fn mask_sensitive_preserves_null_fields() {
+        let input = json!({
+            "auth": {
+                "enabled": false,
+                "master_api_key": null,
+                "master_api_key_arn": null
+            }
+        });
+
+        let result = ConfigResponse::mask_sensitive(input);
+        let obj = result.as_object().unwrap();
+
+        assert_eq!(obj["auth"]["master_api_key"], json!(null));
+        assert_eq!(obj["auth"]["master_api_key_arn"], json!(null));
+    }
+
+    #[test]
+    fn mask_sensitive_handles_missing_intermediate_objects() {
+        let input = json!({
+            "auth": { "enabled": false },
+            "workflow": { "merge_via": "direct" }
+        });
+
+        let result = ConfigResponse::mask_sensitive(input);
+        let obj = result.as_object().unwrap();
+
+        assert_eq!(obj["workflow"]["merge_via"], json!("direct"));
+        assert!(obj.get("backend").is_none());
     }
 }
