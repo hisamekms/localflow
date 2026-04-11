@@ -234,7 +234,8 @@ fn classify_error(e: anyhow::Error) -> ApiError {
             | DomainError::MetadataTooLarge { .. }
             | DomainError::MetadataTooDeep { .. }
             | DomainError::InvalidMetadataFieldType { .. }
-            | DomainError::InvalidMetadataFieldName { .. } => ApiError::BadRequest(msg),
+            | DomainError::InvalidMetadataFieldName { .. }
+            | DomainError::ValidationError { .. } => ApiError::BadRequest(msg),
 
             DomainError::InvalidStatusTransition { .. }
             | DomainError::CannotCompleteTask { .. }

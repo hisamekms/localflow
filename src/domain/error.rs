@@ -60,6 +60,9 @@ pub enum DomainError {
     #[error("invalid metadata field name: {reason}")]
     InvalidMetadataFieldName { reason: String },
 
+    #[error("{message}")]
+    ValidationError { field: String, message: String },
+
     // Conflict (409)
     #[error("invalid status transition: {from} -> {to}")]
     InvalidStatusTransition { from: String, to: String },

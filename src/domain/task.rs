@@ -945,6 +945,22 @@ pub fn shallow_merge_metadata(
     }
 }
 
+impl CreateTaskParams {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        use super::validator::*;
+        validate_string_length("title", &self.title, MAX_TITLE_LEN)?;
+        validate_optional_string_length("background", &self.background, MAX_LONG_TEXT_LEN)?;
+        validate_optional_string_length("description", &self.description, MAX_LONG_TEXT_LEN)?;
+        validate_string_vec_items("tags", &self.tags, MAX_TAG_LEN, MAX_TAGS_COUNT)?;
+        validate_string_vec_items("definition_of_done", &self.definition_of_done, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+        validate_string_vec_items("in_scope", &self.in_scope, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+        validate_string_vec_items("out_of_scope", &self.out_of_scope, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+        validate_optional_string_length("branch", &self.branch, MAX_SHORT_TEXT_LEN)?;
+        validate_optional_string_length("pr_url", &self.pr_url, MAX_SHORT_TEXT_LEN)?;
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct UpdateTaskParams {
     pub title: Option<String>,
@@ -961,6 +977,25 @@ pub struct UpdateTaskParams {
     pub branch: Option<Option<String>>,
     pub pr_url: Option<Option<String>>,
     pub metadata: Option<MetadataUpdate>,
+}
+
+impl UpdateTaskParams {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        use super::validator::*;
+        if let Some(ref title) = self.title {
+            validate_string_length("title", title, MAX_TITLE_LEN)?;
+        }
+        validate_optional_nullable_string_length("background", &self.background, MAX_LONG_TEXT_LEN)?;
+        validate_optional_nullable_string_length("description", &self.description, MAX_LONG_TEXT_LEN)?;
+        validate_optional_nullable_string_length("plan", &self.plan, MAX_LONG_TEXT_LEN)?;
+        validate_optional_nullable_string_length("cancel_reason", &self.cancel_reason, MAX_LONG_TEXT_LEN)?;
+        validate_optional_nullable_string_length("branch", &self.branch, MAX_SHORT_TEXT_LEN)?;
+        validate_optional_nullable_string_length("pr_url", &self.pr_url, MAX_SHORT_TEXT_LEN)?;
+        if let Some(Some(ref session_id)) = self.assignee_session_id {
+            validate_string_length("assignee_session_id", session_id, MAX_SESSION_ID_LEN)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -989,6 +1024,29 @@ pub struct UpdateTaskArrayParams {
     pub set_out_of_scope: Option<Vec<String>>,
     pub add_out_of_scope: Vec<String>,
     pub remove_out_of_scope: Vec<String>,
+}
+
+impl UpdateTaskArrayParams {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        use super::validator::*;
+        if let Some(ref tags) = self.set_tags {
+            validate_string_vec_items("set_tags", tags, MAX_TAG_LEN, MAX_TAGS_COUNT)?;
+        }
+        validate_string_vec_items("add_tags", &self.add_tags, MAX_TAG_LEN, MAX_TAGS_COUNT)?;
+        if let Some(ref dod) = self.set_definition_of_done {
+            validate_string_vec_items("set_definition_of_done", dod, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+        }
+        validate_string_vec_items("add_definition_of_done", &self.add_definition_of_done, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+        if let Some(ref scope) = self.set_in_scope {
+            validate_string_vec_items("set_in_scope", scope, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+        }
+        validate_string_vec_items("add_in_scope", &self.add_in_scope, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+        if let Some(ref scope) = self.set_out_of_scope {
+            validate_string_vec_items("set_out_of_scope", scope, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+        }
+        validate_string_vec_items("add_out_of_scope", &self.add_out_of_scope, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+        Ok(())
+    }
 }
 
 
