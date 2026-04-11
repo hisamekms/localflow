@@ -47,6 +47,7 @@ struct AppState {
     project_service: Arc<ProjectService>,
     user_service: Arc<UserService>,
     auth_provider: Option<Arc<dyn AuthProvider>>,
+    master_key_configured: bool,
     session_config: crate::infra::config::SessionConfig,
     oidc_config: crate::infra::config::OidcConfig,
 }
@@ -85,6 +86,30 @@ fn require_auth_user(auth: &OptionalAuthUser, auth_enabled: bool) -> Result<Opti
     }
     match &auth.0 {
         Some(a) => Ok(Some(&a.user)),
+        None => Err(ApiError::Unauthorized("authentication required".into())),
+    }
+}
+
+/// For endpoints restricted to master key holders.
+/// Returns 501 when auth is enabled but no master key is configured (OIDC-only),
+/// 403 when the caller is authenticated but not the master key user,
+/// and 401 when the caller is not authenticated at all.
+fn require_master_key(
+    auth: &OptionalAuthUser,
+    auth_enabled: bool,
+    master_key_configured: bool,
+) -> Result<(), ApiError> {
+    if !auth_enabled {
+        return Ok(());
+    }
+    if !master_key_configured {
+        return Err(ApiError::NotImplemented(
+            "user creation requires master key, but no master key is configured".into(),
+        ));
+    }
+    match &auth.0 {
+        Some(a) if a.user.id() == 0 => Ok(()),
+        Some(_) => Err(ApiError::Forbidden("master key required".into())),
         None => Err(ApiError::Unauthorized("authentication required".into())),
     }
 }
@@ -326,6 +351,7 @@ pub async fn serve(
         project_service,
         user_service,
         auth_provider,
+        master_key_configured: config.auth.api_key.master_key.is_some(),
         session_config: config.auth.oidc.session.clone(),
         oidc_config: config.auth.oidc.clone(),
     };
@@ -918,7 +944,7 @@ async fn create_user(
     auth: OptionalAuthUser,
     Json(params): Json<CreateUserParams>,
 ) -> Result<(StatusCode, Json<UserResponse>), ApiError> {
-    require_auth_user(&auth, state.auth_enabled())?;
+    require_master_key(&auth, state.auth_enabled(), state.master_key_configured)?;
     let user = state.user_service.create_user(&params).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(UserResponse::from(user))))
 }
