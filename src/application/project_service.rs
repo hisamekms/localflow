@@ -23,8 +23,13 @@ impl ProjectService {
         self.backend.list_projects().await
     }
 
-    pub async fn create_project(&self, params: &CreateProjectParams) -> Result<Project> {
-        self.backend.create_project(params).await
+    pub async fn create_project(&self, params: &CreateProjectParams, caller_user_id: Option<i64>) -> Result<Project> {
+        let project = self.backend.create_project(params).await?;
+        if let Some(uid) = caller_user_id {
+            let member_params = AddProjectMemberParams::new(uid, Some(Role::Owner));
+            self.backend.add_project_member(project.id(), &member_params).await?;
+        }
+        Ok(project)
     }
 
     pub async fn get_project(&self, id: i64) -> Result<Project> {

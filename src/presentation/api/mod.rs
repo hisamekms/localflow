@@ -513,7 +513,8 @@ async fn create_project(
     Json(params): Json<CreateProjectParams>,
 ) -> Result<(StatusCode, Json<ProjectResponse>), ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
-    let project = state.project_service.create_project(&params).await.map_err(classify_error)?;
+    let caller_user_id = auth.0.as_ref().map(|a| a.user.id());
+    let project = state.project_service.create_project(&params, caller_user_id).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(ProjectResponse::from(project))))
 }
 

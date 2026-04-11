@@ -1303,7 +1303,7 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                 name: name.clone(),
                 description: description.clone(),
             };
-            let project = project_service.create_project(&params).await?;
+            let project = project_service.create_project(&params, None).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&project)?);
