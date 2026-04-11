@@ -518,24 +518,62 @@ impl TaskQueryPort for HttpBackend {
     }
 }
 
-/// Stub implementation — transitions are handled by `RemoteTaskOperations`, not `HttpBackend`.
-/// This exists only to satisfy the `TaskBackend` supertrait requirement.
+/// Deserialization wrapper for the complete-task API response.
+/// The API returns `{ task, unblocked_tasks }` but we only need the task.
+#[derive(serde::Deserialize)]
+struct CompleteTaskApiResponse {
+    task: Task,
+}
+
 #[async_trait]
 impl TaskTransitionPort for HttpBackend {
-    async fn ready_task(&self, _project_id: i64, _id: i64) -> Result<Task> {
-        bail!("task transitions should use RemoteTaskOperations, not HttpBackend")
+    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
+        let resp = self.auth(self
+            .client
+            .post(self.project_url(project_id, &format!("/tasks/{id}/ready"))))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
     }
 
-    async fn start_task(&self, _project_id: i64, _id: i64, _session_id: Option<String>, _user_id: Option<i64>, _metadata: Option<serde_json::Value>) -> Result<Task> {
-        bail!("task transitions should use RemoteTaskOperations, not HttpBackend")
+    async fn start_task(&self, project_id: i64, id: i64, session_id: Option<String>, user_id: Option<i64>, metadata: Option<serde_json::Value>) -> Result<Task> {
+        let resp = self.auth(self
+            .client
+            .post(self.project_url(project_id, &format!("/tasks/{id}/start")))
+            .json(&json!({ "session_id": session_id, "user_id": user_id, "metadata": metadata })))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
     }
 
-    async fn complete_task(&self, _project_id: i64, _id: i64, _skip_pr_check: bool) -> Result<Task> {
-        bail!("task transitions should use RemoteTaskOperations, not HttpBackend")
+    async fn complete_task(&self, project_id: i64, id: i64, skip_pr_check: bool) -> Result<Task> {
+        let body = if skip_pr_check {
+            json!({ "skip_pr_check": true })
+        } else {
+            json!({})
+        };
+        let resp = self.auth(self
+            .client
+            .post(self.project_url(project_id, &format!("/tasks/{id}/complete")))
+            .json(&body))
+            .send()
+            .await?;
+        let api_resp: CompleteTaskApiResponse = read_json_or_error(resp).await?;
+        Ok(api_resp.task)
     }
 
-    async fn cancel_task(&self, _project_id: i64, _id: i64, _reason: Option<String>) -> Result<Task> {
-        bail!("task transitions should use RemoteTaskOperations, not HttpBackend")
+    async fn cancel_task(&self, project_id: i64, id: i64, reason: Option<String>) -> Result<Task> {
+        let body = match reason {
+            Some(ref r) => json!({ "reason": r }),
+            None => json!({}),
+        };
+        let resp = self.auth(self
+            .client
+            .post(self.project_url(project_id, &format!("/tasks/{id}/cancel")))
+            .json(&body))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
     }
 }
 
