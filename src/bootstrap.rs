@@ -15,7 +15,7 @@ use crate::infra::http::remote_task_ops::RemoteTaskOperations;
 use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::hook::test_executor::ShellHookTestExecutor;
 use crate::infra::hook::{RuntimeMode, BackendInfo};
-use crate::infra::auth::ApiKeyProvider;
+use crate::infra::auth::{ApiKeyProvider, ChainAuthProvider, JwtAuthProvider};
 use crate::infra::pr_verifier::GhCliPrVerifier;
 
 // Re-exports for presentation layer (avoid direct infra dependency)
@@ -126,19 +126,44 @@ pub fn create_auth_provider(
     config: &Config,
     backend: Arc<dyn TaskBackend>,
 ) -> Option<Arc<dyn AuthProvider>> {
-    if config.auth.enabled {
-        if backend.supports_api_key_auth() {
-            tracing::info!("authentication enabled");
-            Some(Arc::new(ApiKeyProvider::new(backend, config.auth.master_api_key.clone())))
-        } else {
-            tracing::warn!(
-                "authentication requested but backend does not support API key auth; disabling"
-            );
-            None
-        }
-    } else {
+    if !config.auth.enabled {
         tracing::info!("authentication disabled");
-        None
+        return None;
+    }
+
+    let mut providers: Vec<Arc<dyn AuthProvider>> = Vec::new();
+
+    if config.auth.oidc.is_configured() {
+        let issuer_url = config.auth.oidc.issuer_url.clone().unwrap();
+        let client_id = config.auth.oidc.client_id.clone().unwrap();
+        tracing::info!(issuer = %issuer_url, "OIDC JWT authentication enabled");
+        providers.push(Arc::new(JwtAuthProvider::new(
+            issuer_url,
+            client_id,
+            backend.clone(),
+        )));
+    }
+
+    if backend.supports_api_key_auth() {
+        tracing::info!("API key authentication enabled");
+        providers.push(Arc::new(ApiKeyProvider::new(
+            backend,
+            config.auth.master_api_key.clone(),
+        )));
+    }
+
+    if providers.is_empty() {
+        tracing::warn!(
+            "authentication requested but no auth providers could be configured; disabling"
+        );
+        return None;
+    }
+
+    if providers.len() == 1 {
+        Some(providers.pop().unwrap())
+    } else {
+        tracing::info!("authentication chain: JWT -> API key");
+        Some(Arc::new(ChainAuthProvider::new(providers)))
     }
 }
 

@@ -88,6 +88,15 @@ pub struct OidcConfig {
     pub cli: OidcCliConfig,
 }
 
+impl OidcConfig {
+    /// Returns true when both issuer_url and client_id are set,
+    /// meaning OIDC JWT verification should be enabled.
+    pub fn is_configured(&self) -> bool {
+        self.issuer_url.is_some() && self.client_id.is_some()
+    }
+}
+
+
 fn default_oidc_scopes() -> Vec<String> {
     vec!["openid".to_string(), "profile".to_string()]
 }
