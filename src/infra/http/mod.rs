@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use anyhow::{bail, Result};
 use async_trait::async_trait;
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde_json::json;
 
 use crate::application::port::{ProjectQueryPort, TaskQueryPort, TaskTransitionPort, UserQueryPort};
@@ -428,7 +429,7 @@ impl TaskQueryPort for HttpBackend {
             params.push(format!("status={}", status.to_string().to_lowercase()));
         }
         for tag in &filter.tags {
-            params.push(format!("tag={tag}"));
+            params.push(format!("tag={}", utf8_percent_encode(tag, NON_ALPHANUMERIC)));
         }
         if let Some(dep) = filter.depends_on {
             params.push(format!("depends_on={dep}"));
