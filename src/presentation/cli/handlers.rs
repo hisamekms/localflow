@@ -540,6 +540,40 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                 Some(ref url) => println!("    api_url: {url}"),
                 None => println!("    api_url: (none, using SQLite)"),
             }
+            println!("  [auth]");
+            println!("    enabled: {}", config.auth.enabled);
+            println!("  [auth.oidc]");
+            match config.auth.oidc.issuer_url {
+                Some(ref url) => println!("    issuer_url: {url}"),
+                None => println!("    issuer_url: (none)"),
+            }
+            match config.auth.oidc.client_id {
+                Some(ref id) => println!("    client_id: {id}"),
+                None => println!("    client_id: (none)"),
+            }
+            println!(
+                "    scopes: [{}]",
+                config.auth.oidc.scopes.join(", ")
+            );
+            println!("  [auth.oidc.cli]");
+            match config.auth.oidc.cli.callback_port {
+                Some(port) => println!("    callback_port: {port}"),
+                None => println!("    callback_port: (auto)"),
+            }
+            println!("    browser: {}", config.auth.oidc.cli.browser);
+            println!("  [auth.token]");
+            match config.auth.token.ttl {
+                Some(ref ttl) => println!("    ttl: {ttl}"),
+                None => println!("    ttl: (none)"),
+            }
+            match config.auth.token.inactive_ttl {
+                Some(ref ttl) => println!("    inactive_ttl: {ttl}"),
+                None => println!("    inactive_ttl: (none)"),
+            }
+            match config.auth.token.max_per_user {
+                Some(n) => println!("    max_per_user: {n}"),
+                None => println!("    max_per_user: (none)"),
+            }
             println!("  [hooks]");
             println!("    enabled: {}", config.hooks.enabled);
             println!("  [project]");
