@@ -30,13 +30,25 @@ Walk through sections in this order:
    - `merge_strategy`: rebase or squash merge?
 4. **backend** — Remote backend settings (skip if local-only use):
    - `api_url`: remote API URL
-5. **storage** — Custom database path (skip if default is fine)
-6. **log** — Logging preferences:
+5. **backend.postgres** — PostgreSQL database settings (skip if not using PostgreSQL backend; requires `postgres` feature):
+   - `url`: direct connection URL (e.g., `postgres://user:pass@host/db`). Also settable via `--postgres-url` CLI flag
+   - `url_arn`: AWS Secrets Manager ARN for connection URL (alternative to direct `url`)
+   - `rds_secrets_arn`: AWS Secrets Manager ARN for RDS JSON secret (contains username, password, host, port, dbname)
+   - `sslrootcert`: path to SSL root certificate for TLS connections
+   - `max_connections`: maximum database pool connections
+   - Note: Sensitive values (`url`, `url_arn`, `rds_secrets_arn`) should preferably be set via environment variables (`SENKO_POSTGRES_URL`, `SENKO_POSTGRES_URL_ARN`, `SENKO_POSTGRES_RDS_SECRETS_ARN`) rather than stored in config.toml.
+6. **storage** — Custom database path (skip if default is fine)
+7. **log** — Logging preferences:
    - `level`: trace/debug/info/warn/error
    - `format`: json or text
    - `dir`: custom log directory
-7. **web** — Web server host (skip if default is fine)
-8. **hooks** — Task lifecycle hooks:
+8. **web** — Web server host (skip if default is fine)
+9. **auth** — API authentication settings (skip if not using authentication):
+   - `enabled`: enable/disable authentication (default: false)
+   - `master_api_key`: direct master API key value
+   - `master_api_key_arn`: AWS Secrets Manager ARN for master API key
+   - Note: Sensitive values (`master_api_key`, `master_api_key_arn`) should preferably be set via environment variables (`SENKO_MASTER_API_KEY`, `SENKO_MASTER_API_KEY_ARN`) rather than stored in config.toml.
+10. **hooks** — Task lifecycle hooks:
    - Which events to hook into (on_task_added, on_task_ready, on_task_started, on_task_completed, on_task_canceled, on_no_eligible_task)
    - For each: command, enabled state, required env vars
 
@@ -48,11 +60,13 @@ After all sections are covered, generate the TOML and write it to `.senko/config
 2. Use `AskUserQuestion` to ask which section(s) they want to modify. Present the sections as options:
    - `workflow` — Merge via, merge strategy, branch mode
    - `backend` — Remote API settings
+   - `backend.postgres` — PostgreSQL database settings (connection URL, RDS secrets, SSL, pool size)
    - `storage` — Database path
    - `log` — Logging configuration
    - `project` — Project name
    - `user` — User name (stored in config.local.toml or environment variable, not config.toml)
    - `web` — Web server settings
+   - `auth` — API authentication (enabled, master API key)
    - `hooks` — Task lifecycle hooks
 3. For the selected section(s), walk through the same questions as Create Mode, showing current values. For `user`, follow the same Option A / Option B flow as Create Mode (write to config.local.toml or advise on environment variable).
 4. Update only the modified sections in the appropriate config file using the Edit tool (config.toml for most sections, config.local.toml for user).
