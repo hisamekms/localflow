@@ -144,6 +144,8 @@ When `merge_via = "pr"`:
 
 A master API key lets you bootstrap the system — create users and issue per-user API keys — without an existing user account. When authentication is enabled, the master key is checked first; if it doesn't match, senko falls back to the normal per-user key lookup.
 
+> **Note**: `POST /users` is restricted to master key holders only.
+
 ### Generating a key
 
 ```bash
@@ -164,20 +166,19 @@ Set the key via environment variables:
 
 ```bash
 # Direct value
-export SENKO_MASTER_API_KEY="<your-key>"
+export SENKO_AUTH_API_KEY_MASTER_KEY="<your-key>"
 
 # Or via AWS Secrets Manager ARN (requires aws-secrets feature)
-export SENKO_MASTER_API_KEY_ARN="arn:aws:secretsmanager:us-east-1:123456789:secret:senko/master-api-key-AbCdEf"
+export SENKO_AUTH_API_KEY_MASTER_KEY_ARN="arn:aws:secretsmanager:us-east-1:123456789:secret:senko/master-api-key-AbCdEf"
 ```
 
 Or in `.senko/config.toml`:
 
 ```toml
-[auth]
-enabled = true
-master_api_key = "<your-key>"
+[auth.api_key]
+master_key = "<your-key>"
 # Or use an ARN (requires aws-secrets feature):
-# master_api_key_arn = "arn:aws:secretsmanager:..."
+# master_key_arn = "arn:aws:secretsmanager:..."
 ```
 
 ### Bootstrap flow
@@ -186,28 +187,27 @@ Once the master API key is configured:
 
 ```bash
 # 1. Generate and set the master key
-export SENKO_MASTER_API_KEY="$(openssl rand -base64 32)"
+export SENKO_AUTH_API_KEY_MASTER_KEY="$(openssl rand -base64 32)"
 
-# 2. Start the server with auth enabled
-export SENKO_AUTH_ENABLED=true
+# 2. Start the server
 senko serve
 
-# 3. Create a user
-curl -s -X POST http://localhost:3141/api/v1/users \
-  -H "Authorization: Bearer $SENKO_MASTER_API_KEY" \
+# 3. Create a user (POST /users requires master key)
+curl -s -X POST http://localhost:3142/api/v1/users \
+  -H "Authorization: Bearer $SENKO_AUTH_API_KEY_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{"username": "alice"}' | jq .
 
 # 4. Issue an API key for the user (replace 1 with the user ID from step 3)
-curl -s -X POST http://localhost:3141/api/v1/users/1/api-keys \
-  -H "Authorization: Bearer $SENKO_MASTER_API_KEY" \
+curl -s -X POST http://localhost:3142/api/v1/users/1/api-keys \
+  -H "Authorization: Bearer $SENKO_AUTH_API_KEY_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name": "default"}' | jq .
 
 # 5. Use the returned API key for subsequent requests
-export SENKO_API_KEY="<key from step 4>"
-curl -s http://localhost:3141/api/v1/projects \
-  -H "Authorization: Bearer $SENKO_API_KEY" | jq .
+export SENKO_TOKEN="<key from step 4>"
+curl -s http://localhost:3142/api/v1/projects \
+  -H "Authorization: Bearer $SENKO_TOKEN" | jq .
 ```
 
 ## Authentication
