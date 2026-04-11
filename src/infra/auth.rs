@@ -12,7 +12,7 @@ use crate::application::port::auth::{AuthError, AuthProvider};
 use crate::application::port::TaskBackend;
 use crate::domain::duration::parse_duration;
 use crate::domain::user::{hash_api_key, CreateUserParams};
-use crate::infra::config::TokenConfig;
+use crate::infra::config::SessionConfig;
 
 fn constant_time_key_eq(a: &str, b: &str) -> bool {
     let hash_a = Sha256::digest(a.as_bytes());
@@ -23,15 +23,15 @@ fn constant_time_key_eq(a: &str, b: &str) -> bool {
 pub struct ApiKeyProvider {
     backend: Arc<dyn TaskBackend>,
     master_api_key: Option<Zeroizing<String>>,
-    token_config: TokenConfig,
+    session_config: SessionConfig,
 }
 
 impl ApiKeyProvider {
-    pub fn new(backend: Arc<dyn TaskBackend>, master_api_key: Option<String>, token_config: TokenConfig) -> Self {
+    pub fn new(backend: Arc<dyn TaskBackend>, master_api_key: Option<String>, session_config: SessionConfig) -> Self {
         Self {
             backend,
             master_api_key: master_api_key.map(Zeroizing::new),
-            token_config,
+            session_config,
         }
     }
 }
@@ -58,7 +58,7 @@ impl AuthProvider for ApiKeyProvider {
             .map_err(|_| AuthError::InvalidToken)?;
 
         // Check absolute TTL
-        if let Some(ref ttl_str) = self.token_config.ttl {
+        if let Some(ref ttl_str) = self.session_config.ttl {
             if let Ok(ttl) = parse_duration(ttl_str) {
                 if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&auth_result.key_created_at) {
                     let elapsed = chrono::Utc::now().signed_duration_since(created);
@@ -71,7 +71,7 @@ impl AuthProvider for ApiKeyProvider {
         }
 
         // Check inactive TTL
-        if let Some(ref inactive_ttl_str) = self.token_config.inactive_ttl {
+        if let Some(ref inactive_ttl_str) = self.session_config.inactive_ttl {
             if let Ok(inactive_ttl) = parse_duration(inactive_ttl_str) {
                 if let Some(ref last_used) = auth_result.key_last_used_at {
                     if let Ok(last) = chrono::DateTime::parse_from_rfc3339(last_used) {
@@ -370,7 +370,7 @@ mod tests {
     async fn master_key_match() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider =
-            ApiKeyProvider::new(backend, Some("master-secret".to_string()), TokenConfig::default());
+            ApiKeyProvider::new(backend, Some("master-secret".to_string()), SessionConfig::default());
 
         let user = provider.authenticate("master-secret").await.unwrap();
 
@@ -382,7 +382,7 @@ mod tests {
     async fn master_key_mismatch_valid_user_key() {
         let (backend, raw_key) = setup_backend_with_api_key().await;
         let provider =
-            ApiKeyProvider::new(backend, Some("master-secret".to_string()), TokenConfig::default());
+            ApiKeyProvider::new(backend, Some("master-secret".to_string()), SessionConfig::default());
 
         let user = provider.authenticate(&raw_key).await.unwrap();
 
@@ -393,7 +393,7 @@ mod tests {
     async fn master_key_mismatch_invalid() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider =
-            ApiKeyProvider::new(backend, Some("master-secret".to_string()), TokenConfig::default());
+            ApiKeyProvider::new(backend, Some("master-secret".to_string()), SessionConfig::default());
 
         let result = provider.authenticate("wrong-key").await;
 
@@ -403,7 +403,7 @@ mod tests {
     #[tokio::test]
     async fn no_master_key_valid_user_key() {
         let (backend, raw_key) = setup_backend_with_api_key().await;
-        let provider = ApiKeyProvider::new(backend, None, TokenConfig::default());
+        let provider = ApiKeyProvider::new(backend, None, SessionConfig::default());
 
         let user = provider.authenticate(&raw_key).await.unwrap();
 
@@ -413,7 +413,7 @@ mod tests {
     #[tokio::test]
     async fn no_master_key_invalid() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
-        let provider = ApiKeyProvider::new(backend, None, TokenConfig::default());
+        let provider = ApiKeyProvider::new(backend, None, SessionConfig::default());
 
         let result = provider.authenticate("garbage").await;
 
@@ -505,7 +505,7 @@ mod tests {
         let (backend, raw_key) = setup_backend_with_api_key().await;
         let chain = ChainAuthProvider::new(vec![
             Arc::new(FixedAuthProvider::err()),  // Simulates JWT failure
-            Arc::new(ApiKeyProvider::new(backend, None, TokenConfig::default())),
+            Arc::new(ApiKeyProvider::new(backend, None, SessionConfig::default())),
         ]);
 
         let user = chain.authenticate(&raw_key).await.unwrap();
@@ -517,7 +517,7 @@ mod tests {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let chain = ChainAuthProvider::new(vec![
             Arc::new(FixedAuthProvider::err()),  // Simulates JWT failure
-            Arc::new(ApiKeyProvider::new(backend, None, TokenConfig::default())),
+            Arc::new(ApiKeyProvider::new(backend, None, SessionConfig::default())),
         ]);
 
         let result = chain.authenticate("invalid-token").await;

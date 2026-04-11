@@ -39,7 +39,7 @@ EOF
 start_server() {
   PORT=$((20000 + RANDOM % 40000))
   API_URL="http://127.0.0.1:$PORT"
-  "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT" >/dev/null 2>&1 &
+  SENKO_AUTH_API_KEY_MASTER_KEY=test-key "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT" >/dev/null 2>&1 &
   SERVER_PID=$!
   wait_for "API server ready" 10 "curl -sf $API_URL/api/v1/health >/dev/null"
 }
@@ -59,7 +59,7 @@ cleanup_test_env_full() {
 trap cleanup_test_env_full EXIT
 
 run_http() {
-  SENKO_API_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
+  SENKO_SERVER_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
 clear_hook_log() {

@@ -46,7 +46,7 @@ struct AppState {
     project_service: Arc<ProjectService>,
     user_service: Arc<UserService>,
     auth_provider: Option<Arc<dyn AuthProvider>>,
-    token_config: crate::infra::config::TokenConfig,
+    session_config: crate::infra::config::SessionConfig,
 }
 
 impl HasAuth for AppState {
@@ -324,7 +324,7 @@ pub async fn serve(
         project_service,
         user_service,
         auth_provider,
-        token_config: config.auth.token.clone(),
+        session_config: config.auth.oidc.session.clone(),
     };
 
     let app = Router::new()
@@ -1056,7 +1056,7 @@ async fn get_me(
 
     let sessions = state
         .user_service
-        .list_active_sessions(auth.user.id(), &state.token_config)
+        .list_active_sessions(auth.user.id(), &state.session_config)
         .await
         .map_err(classify_error)?;
 
@@ -1090,11 +1090,11 @@ async fn create_token(
         .map_err(classify_error)?;
 
     let key = state.user_service
-        .create_session_token(user.id(), device_name.as_deref(), &state.token_config)
+        .create_session_token(user.id(), device_name.as_deref(), &state.session_config)
         .await
         .map_err(classify_error)?;
 
-    let expires_at = compute_expires_at(key.created_at(), &state.token_config);
+    let expires_at = compute_expires_at(key.created_at(), &state.session_config);
 
     Ok((StatusCode::CREATED, Json(TokenResponse {
         token: key.key().to_owned(),
@@ -1104,8 +1104,8 @@ async fn create_token(
     })))
 }
 
-fn compute_expires_at(created_at: &str, token_config: &crate::infra::config::TokenConfig) -> Option<String> {
-    let ttl_str = token_config.ttl.as_ref()?;
+fn compute_expires_at(created_at: &str, session_config: &crate::infra::config::SessionConfig) -> Option<String> {
+    let ttl_str = session_config.ttl.as_ref()?;
     let ttl = crate::domain::duration::parse_duration(ttl_str).ok()?;
     let created = chrono::DateTime::parse_from_rfc3339(created_at).ok()?;
     let expires = created + chrono::Duration::from_std(ttl).ok()?;
@@ -1118,7 +1118,7 @@ async fn list_sessions(
     auth: AuthUser,
 ) -> Result<Json<Vec<SessionResponse>>, ApiError> {
     let sessions = state.user_service
-        .list_active_sessions(auth.user.id(), &state.token_config)
+        .list_active_sessions(auth.user.id(), &state.session_config)
         .await
         .map_err(classify_error)?;
     Ok(Json(sessions.into_iter().map(SessionResponse::from).collect()))

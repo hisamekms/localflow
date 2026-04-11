@@ -535,13 +535,11 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                     }
                 }
             }
-            println!("  [backend]");
-            match config.backend.api_url {
-                Some(ref url) => println!("    api_url: {url}"),
-                None => println!("    api_url: (none, using SQLite)"),
+            println!("  [server]");
+            match config.server.url {
+                Some(ref url) => println!("    url: {url}"),
+                None => println!("    url: (none, using local backend)"),
             }
-            println!("  [auth]");
-            println!("    enabled: {}", config.auth.enabled);
             println!("  [auth.oidc]");
             match config.auth.oidc.issuer_url {
                 Some(ref url) => println!("    issuer_url: {url}"),
@@ -561,16 +559,16 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                 None => println!("    callback_port: (auto)"),
             }
             println!("    browser: {}", config.auth.oidc.cli.browser);
-            println!("  [auth.token]");
-            match config.auth.token.ttl {
+            println!("  [auth.oidc.session]");
+            match config.auth.oidc.session.ttl {
                 Some(ref ttl) => println!("    ttl: {ttl}"),
                 None => println!("    ttl: (none)"),
             }
-            match config.auth.token.inactive_ttl {
+            match config.auth.oidc.session.inactive_ttl {
                 Some(ref ttl) => println!("    inactive_ttl: {ttl}"),
                 None => println!("    inactive_ttl: (none)"),
             }
-            match config.auth.token.max_per_user {
+            match config.auth.oidc.session.max_per_user {
                 Some(n) => println!("    max_per_user: {n}"),
                 None => println!("    max_per_user: (none)"),
             }
@@ -1472,8 +1470,8 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
         );
     }
 
-    let api_url = config.backend.api_url.as_deref().context(
-        "backend.api_url is not configured. Set it in config to point to the senko API server.",
+    let api_url = config.server.url.as_deref().context(
+        "server.url is not configured. Set it in config to point to the senko API server.",
     )?;
 
     let result = super::oidc_login::perform_login(
@@ -1511,10 +1509,10 @@ fn require_api_url_and_token(cli: &Cli) -> Result<(String, String)> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let api_url = config
-        .backend
-        .api_url
+        .server
+        .url
         .as_deref()
-        .context("backend.api_url is not configured. Set it in config to point to the senko API server.")?
+        .context("server.url is not configured. Set it in config to point to the senko API server.")?
         .to_string();
     let token = super::keychain::load(&api_url)
         .context("Not logged in. Run `senko auth login` first.")?;
@@ -1558,10 +1556,10 @@ pub async fn cmd_auth_token(cli: &Cli) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let api_url = config
-        .backend
-        .api_url
+        .server
+        .url
         .as_deref()
-        .context("backend.api_url is not configured. Set it in config to point to the senko API server.")?;
+        .context("server.url is not configured. Set it in config to point to the senko API server.")?;
     let token = super::keychain::load(api_url)
         .context("Not logged in. Run `senko auth login` first.")?;
     match cli.output {

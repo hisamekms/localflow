@@ -20,9 +20,9 @@ echo "[3] SENKO_HOOKS_ENABLED overrides default"
 JSON_OUT="$(SENKO_HOOKS_ENABLED=false run_lf config)"
 assert_json_field "$JSON_OUT" '.hooks.enabled' "false" "env overrides hooks.enabled"
 
-echo "[4] SENKO_API_URL overrides default"
-JSON_OUT="$(SENKO_API_URL=http://remote:9999 run_lf config)"
-assert_json_field "$JSON_OUT" '.backend.api_url' "http://remote:9999" "env overrides api_url"
+echo "[4] SENKO_SERVER_URL overrides default"
+JSON_OUT="$(SENKO_SERVER_URL=http://remote:9999 run_lf config)"
+assert_json_field "$JSON_OUT" '.server.url' "http://remote:9999" "env overrides server.url"
 
 echo "[5] Env vars override config.toml values"
 mkdir -p "$TEST_PROJECT_ROOT/.senko"
@@ -85,7 +85,7 @@ rm -rf "$ALT_PROJECT"
 
 echo "[10] SENKO_PORT sets serve port"
 PORT=$((20000 + RANDOM % 40000))
-SENKO_PORT=$PORT "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve &
+SENKO_PORT=$PORT SENKO_AUTH_API_KEY_MASTER_KEY=test-key "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null || true; cleanup_test_env' EXIT
 wait_for "serve with SENKO_PORT" 10 "curl -sf http://127.0.0.1:$PORT/api/v1/health >/dev/null"
@@ -96,7 +96,7 @@ wait $SERVER_PID 2>/dev/null || true
 
 echo "[11] SENKO_HOST sets bind address"
 PORT2=$((20000 + RANDOM % 40000))
-SENKO_HOST=127.0.0.1 "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT2" &
+SENKO_HOST=127.0.0.1 SENKO_AUTH_API_KEY_MASTER_KEY=test-key "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT2" &
 SERVER_PID2=$!
 trap 'kill $SERVER_PID2 2>/dev/null || true; cleanup_test_env' EXIT
 wait_for "serve with SENKO_HOST" 10 "curl -sf http://127.0.0.1:$PORT2/api/v1/health >/dev/null"
@@ -119,7 +119,7 @@ PORT_CLI=$((20000 + RANDOM % 40000))
 while [[ "$PORT_CLI" == "$PORT3" ]]; do
   PORT_CLI=$((20000 + RANDOM % 40000))
 done
-SENKO_PORT=$PORT3 "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT_CLI" &
+SENKO_PORT=$PORT3 SENKO_AUTH_API_KEY_MASTER_KEY=test-key "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT_CLI" &
 SERVER_PID3=$!
 trap 'kill $SERVER_PID3 2>/dev/null || true; cleanup_test_env' EXIT
 wait_for "serve with CLI port override" 10 "curl -sf http://127.0.0.1:$PORT_CLI/api/v1/health >/dev/null"

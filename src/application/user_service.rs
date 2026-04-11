@@ -7,7 +7,7 @@ use crate::domain::duration::parse_duration;
 use crate::domain::user::{
     ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, User,
 };
-use crate::infra::config::TokenConfig;
+use crate::infra::config::SessionConfig;
 
 pub struct UserService {
     backend: Arc<dyn TaskBackend>,
@@ -86,9 +86,9 @@ impl UserService {
         &self,
         user_id: i64,
         device_name: Option<&str>,
-        token_config: &TokenConfig,
+        session_config: &SessionConfig,
     ) -> Result<ApiKeyWithSecret> {
-        if let Some(max) = token_config.max_per_user {
+        if let Some(max) = session_config.max_per_user {
             let keys = self.backend.list_api_keys(user_id).await?;
             if keys.len() as u32 >= max {
                 // Revoke oldest keys to make room
@@ -109,13 +109,13 @@ impl UserService {
     pub async fn list_active_sessions(
         &self,
         user_id: i64,
-        token_config: &TokenConfig,
+        session_config: &SessionConfig,
     ) -> Result<Vec<ApiKey>> {
         let keys = self.backend.list_api_keys(user_id).await?;
         let now = chrono::Utc::now();
         let filtered = keys
             .into_iter()
-            .filter(|k| !is_key_expired(k, token_config, now))
+            .filter(|k| !is_key_expired(k, session_config, now))
             .collect();
         Ok(filtered)
     }
@@ -134,11 +134,11 @@ impl UserService {
 /// Check whether an API key is expired based on token config.
 pub fn is_key_expired(
     key: &ApiKey,
-    token_config: &TokenConfig,
+    session_config: &SessionConfig,
     now: chrono::DateTime<chrono::Utc>,
 ) -> bool {
     // Check absolute TTL
-    if let Some(ref ttl_str) = token_config.ttl {
+    if let Some(ref ttl_str) = session_config.ttl {
         if let Ok(ttl) = parse_duration(ttl_str) {
             if let Ok(created) = chrono::DateTime::parse_from_rfc3339(key.created_at()) {
                 let elapsed = now.signed_duration_since(created);
@@ -150,7 +150,7 @@ pub fn is_key_expired(
     }
 
     // Check inactive TTL
-    if let Some(ref inactive_ttl_str) = token_config.inactive_ttl {
+    if let Some(ref inactive_ttl_str) = session_config.inactive_ttl {
         if let Ok(inactive_ttl) = parse_duration(inactive_ttl_str) {
             if let Some(last_used) = key.last_used_at() {
                 if let Ok(last) = chrono::DateTime::parse_from_rfc3339(last_used) {
