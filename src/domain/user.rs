@@ -83,6 +83,15 @@ pub struct CreateUserParams {
     pub email: Option<String>,
 }
 
+impl CreateUserParams {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        use super::validator::*;
+        validate_string_length("username", &self.username, MAX_USERNAME_LEN)?;
+        validate_optional_string_length("display_name", &self.display_name, MAX_DISPLAY_NAME_LEN)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectMember {
     id: i64,

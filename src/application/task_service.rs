@@ -87,6 +87,7 @@ impl TaskOperations for LocalTaskOperations {
         project_id: i64,
         params: &CreateTaskParams,
     ) -> Result<Task> {
+        params.validate()?;
         let task = self.backend.create_task(project_id, params).await?;
 
         self.hooks
@@ -125,6 +126,9 @@ impl TaskOperations for LocalTaskOperations {
         user_id: Option<i64>,
         metadata: Option<serde_json::Value>,
     ) -> Result<Task> {
+        if let Some(ref sid) = session_id {
+            crate::domain::validator::validate_string_length("session_id", sid, crate::domain::validator::MAX_SESSION_ID_LEN)?;
+        }
         let prev_status = self.backend.get_task(project_id, id).await?.status();
         let task = self.backend.start_task(project_id, id, session_id, user_id, metadata).await?;
 
@@ -147,6 +151,9 @@ impl TaskOperations for LocalTaskOperations {
         user_id: Option<i64>,
         metadata: Option<serde_json::Value>,
     ) -> Result<Task> {
+        if let Some(ref sid) = session_id {
+            crate::domain::validator::validate_string_length("session_id", sid, crate::domain::validator::MAX_SESSION_ID_LEN)?;
+        }
         let task = match self.backend.next_task(project_id).await? {
             Some(t) => t,
             None => {
@@ -246,6 +253,9 @@ impl TaskOperations for LocalTaskOperations {
         id: i64,
         reason: Option<String>,
     ) -> Result<Task> {
+        if let Some(ref r) = reason {
+            crate::domain::validator::validate_string_length("reason", r, crate::domain::validator::MAX_LONG_TEXT_LEN)?;
+        }
         let prev_status = self.backend.get_task(project_id, id).await?.status();
         let task = self.backend.cancel_task(project_id, id, reason).await?;
 
@@ -420,6 +430,7 @@ impl TaskOperations for LocalTaskOperations {
         id: i64,
         params: &UpdateTaskParams,
     ) -> Result<Task> {
+        params.validate()?;
         self.backend.update_task(project_id, id, params).await
     }
 
@@ -429,6 +440,7 @@ impl TaskOperations for LocalTaskOperations {
         id: i64,
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
+        params.validate()?;
         self.backend.update_task_arrays(project_id, id, params).await
     }
 

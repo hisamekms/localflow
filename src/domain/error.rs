@@ -45,6 +45,9 @@ pub enum DomainError {
         count: usize,
     },
 
+    #[error("{message}")]
+    ValidationError { field: String, message: String },
+
     // Conflict (409)
     #[error("invalid status transition: {from} -> {to}")]
     InvalidStatusTransition { from: String, to: String },
