@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -93,6 +93,8 @@ pub struct OidcConfig {
     pub client_id: Option<String>,
     #[serde(default = "default_oidc_scopes")]
     pub scopes: Vec<String>,
+    #[serde(default)]
+    pub required_claims: HashMap<String, String>,
     #[serde(default)]
     pub cli: OidcCliConfig,
     #[serde(default)]
@@ -390,6 +392,7 @@ pub struct RawOidcConfig {
     pub issuer_url: Option<String>,
     pub client_id: Option<String>,
     pub scopes: Option<Vec<String>>,
+    pub required_claims: Option<HashMap<String, String>>,
     #[serde(default)]
     pub cli: RawOidcCliConfig,
     #[serde(default)]
@@ -466,6 +469,11 @@ impl RawConfig {
                     issuer_url: overlay.auth.oidc.issuer_url.or(self.auth.oidc.issuer_url),
                     client_id: overlay.auth.oidc.client_id.or(self.auth.oidc.client_id),
                     scopes: overlay.auth.oidc.scopes.or(self.auth.oidc.scopes),
+                    required_claims: overlay
+                        .auth
+                        .oidc
+                        .required_claims
+                        .or(self.auth.oidc.required_claims),
                     cli: RawOidcCliConfig {
                         callback_port: overlay
                             .auth
@@ -544,6 +552,7 @@ impl RawConfig {
                     issuer_url: self.auth.oidc.issuer_url,
                     client_id: self.auth.oidc.client_id,
                     scopes: self.auth.oidc.scopes.unwrap_or_else(default_oidc_scopes),
+                    required_claims: self.auth.oidc.required_claims.unwrap_or_default(),
                     cli: OidcCliConfig {
                         callback_port: self.auth.oidc.cli.callback_port,
                         browser: self.auth.oidc.cli.browser.unwrap_or(true),

@@ -148,10 +148,12 @@ pub fn create_auth_provider(
     if config.auth.oidc.is_configured() {
         let issuer_url = config.auth.oidc.issuer_url.clone().unwrap();
         let client_id = config.auth.oidc.client_id.clone().unwrap();
+        let required_claims = config.auth.oidc.required_claims.clone();
         tracing::info!(issuer = %issuer_url, "OIDC JWT authentication enabled");
         providers.push(Arc::new(JwtAuthProvider::new(
             issuer_url,
             client_id,
+            required_claims,
             backend.clone(),
         )));
     }
