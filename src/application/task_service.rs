@@ -11,7 +11,7 @@ use crate::domain::task::{
     self, CompletionPolicy, CreateTaskParams, ListTasksFilter, Task, TaskEvent, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
-use crate::domain::validator::{has_cycle_async, validate_metadata};
+use crate::domain::validator::{has_cycle_async, validate_metadata, validate_metadata_on_complete};
 
 use super::HookTrigger;
 use super::port::{CompleteResult, HookExecutor, PreviewResult, PrVerifier, TaskOperations};
@@ -214,6 +214,10 @@ impl TaskOperations for LocalTaskOperations {
                 })?;
         }
 
+        // Metadata field validation
+        let metadata_fields = self.backend.list_metadata_fields(project_id).await?;
+        validate_metadata_on_complete(task.metadata(), &metadata_fields, id)?;
+
         // Capture ready tasks before completion for unblocked detection
         let prev_ready_ids: HashSet<i64> = self
             .backend
@@ -337,6 +341,19 @@ impl TaskOperations for LocalTaskOperations {
                     operations.push(format!("Verify PR status: {}", pr_url));
                 }
                 Ok(None) => {}
+            }
+
+            // Check metadata field requirements
+            let metadata_fields = self.backend.list_metadata_fields(project_id).await?;
+            if let Err(e) = validate_metadata_on_complete(task.metadata(), &metadata_fields, task_id) {
+                return Ok(PreviewResult {
+                    allowed: false,
+                    reason: Some(e.to_string()),
+                    task,
+                    target_status: target,
+                    operations,
+                    unblocked_tasks: vec![],
+                });
             }
         }
 

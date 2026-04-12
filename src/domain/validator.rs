@@ -1,6 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use super::error::DomainError;
+use super::metadata_field::{MetadataField, MetadataFieldType};
 
 /// Check if adding dep_id as a dependency of task_id would create a cycle.
 /// Performs BFS from dep_id following its dependencies; if task_id is reachable, it's a cycle.
@@ -77,6 +78,82 @@ pub fn validate_metadata(value: &serde_json::Value) -> Result<(), DomainError> {
         });
     }
     Ok(())
+}
+
+/// Validate that task metadata satisfies required metadata field definitions.
+///
+/// Checks that all `required_on_complete` fields are present and have the correct type.
+/// Returns `Ok(())` if no required fields exist or all are satisfied.
+pub fn validate_metadata_on_complete(
+    task_metadata: Option<&serde_json::Value>,
+    fields: &[MetadataField],
+    task_id: i64,
+) -> Result<(), DomainError> {
+    let required: Vec<&MetadataField> = fields
+        .iter()
+        .filter(|f| f.required_on_complete())
+        .collect();
+
+    if required.is_empty() {
+        return Ok(());
+    }
+
+    let obj = task_metadata.and_then(|v| v.as_object());
+
+    let mut missing = Vec::new();
+    let mut type_errors = Vec::new();
+
+    for field in &required {
+        let name = field.name();
+        match obj.and_then(|m| m.get(name)) {
+            None | Some(serde_json::Value::Null) => {
+                missing.push(name.to_string());
+            }
+            Some(value) => {
+                let ok = match field.field_type() {
+                    MetadataFieldType::String => value.is_string(),
+                    MetadataFieldType::Number => value.is_number(),
+                    MetadataFieldType::Boolean => value.is_boolean(),
+                };
+                if !ok {
+                    type_errors.push(format!(
+                        "{} (expected {}, got {})",
+                        name,
+                        field.field_type(),
+                        json_type_name(value),
+                    ));
+                }
+            }
+        }
+    }
+
+    if missing.is_empty() && type_errors.is_empty() {
+        return Ok(());
+    }
+
+    let mut parts = Vec::new();
+    if !missing.is_empty() {
+        parts.push(format!("missing required field(s): {}", missing.join(", ")));
+    }
+    if !type_errors.is_empty() {
+        parts.push(format!("type mismatch: {}", type_errors.join(", ")));
+    }
+
+    Err(DomainError::CannotCompleteTask {
+        task_id,
+        reason: parts.join("; "),
+    })
+}
+
+fn json_type_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+        serde_json::Value::Null => "null",
+    }
 }
 
 fn json_depth(value: &serde_json::Value) -> u32 {
@@ -211,5 +288,124 @@ mod tests {
         assert_eq!(json_depth(&serde_json::json!(42)), 0);
         assert_eq!(json_depth(&serde_json::json!("hello")), 0);
         assert_eq!(json_depth(&serde_json::Value::Null), 0);
+    }
+
+    // --- validate_metadata_on_complete tests ---
+
+    fn make_field(name: &str, ft: MetadataFieldType, required: bool) -> MetadataField {
+        MetadataField::new(1, 1, name.to_string(), ft, required, None, "2026-01-01T00:00:00Z".to_string())
+    }
+
+    #[test]
+    fn complete_no_required_fields() {
+        assert!(validate_metadata_on_complete(None, &[], 1).is_ok());
+    }
+
+    #[test]
+    fn complete_no_required_fields_with_optional() {
+        let fields = vec![make_field("notes", MetadataFieldType::String, false)];
+        assert!(validate_metadata_on_complete(None, &fields, 1).is_ok());
+    }
+
+    #[test]
+    fn complete_required_fields_present_correct_types() {
+        let fields = vec![
+            make_field("sprint", MetadataFieldType::String, true),
+            make_field("points", MetadataFieldType::Number, true),
+            make_field("reviewed", MetadataFieldType::Boolean, true),
+        ];
+        let meta = serde_json::json!({"sprint": "v1", "points": 5, "reviewed": true});
+        assert!(validate_metadata_on_complete(Some(&meta), &fields, 1).is_ok());
+    }
+
+    #[test]
+    fn complete_required_field_missing_no_metadata() {
+        let fields = vec![make_field("sprint", MetadataFieldType::String, true)];
+        let err = validate_metadata_on_complete(None, &fields, 1).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("sprint"), "error should mention field name: {msg}");
+    }
+
+    #[test]
+    fn complete_required_field_missing_empty_metadata() {
+        let fields = vec![make_field("sprint", MetadataFieldType::String, true)];
+        let meta = serde_json::json!({});
+        let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("sprint"), "error should mention field name: {msg}");
+    }
+
+    #[test]
+    fn complete_multiple_required_fields_missing() {
+        let fields = vec![
+            make_field("sprint", MetadataFieldType::String, true),
+            make_field("points", MetadataFieldType::Number, true),
+        ];
+        let err = validate_metadata_on_complete(None, &fields, 1).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("sprint"), "should mention sprint: {msg}");
+        assert!(msg.contains("points"), "should mention points: {msg}");
+    }
+
+    #[test]
+    fn complete_type_mismatch_string_got_number() {
+        let fields = vec![make_field("sprint", MetadataFieldType::String, true)];
+        let meta = serde_json::json!({"sprint": 42});
+        let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("sprint"), "should mention field name: {msg}");
+        assert!(msg.contains("string"), "should mention expected type: {msg}");
+    }
+
+    #[test]
+    fn complete_type_mismatch_number_got_string() {
+        let fields = vec![make_field("points", MetadataFieldType::Number, true)];
+        let meta = serde_json::json!({"points": "five"});
+        let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("points"), "should mention field name: {msg}");
+        assert!(msg.contains("number"), "should mention expected type: {msg}");
+    }
+
+    #[test]
+    fn complete_type_mismatch_boolean_got_string() {
+        let fields = vec![make_field("done", MetadataFieldType::Boolean, true)];
+        let meta = serde_json::json!({"done": "yes"});
+        let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("done"), "should mention field name: {msg}");
+        assert!(msg.contains("boolean"), "should mention expected type: {msg}");
+    }
+
+    #[test]
+    fn complete_non_required_field_absent_ok() {
+        let fields = vec![
+            make_field("sprint", MetadataFieldType::String, true),
+            make_field("notes", MetadataFieldType::String, false),
+        ];
+        let meta = serde_json::json!({"sprint": "v1"});
+        assert!(validate_metadata_on_complete(Some(&meta), &fields, 1).is_ok());
+    }
+
+    #[test]
+    fn complete_null_value_treated_as_missing() {
+        let fields = vec![make_field("sprint", MetadataFieldType::String, true)];
+        let meta = serde_json::json!({"sprint": null});
+        let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("sprint"), "null value should be treated as missing: {msg}");
+    }
+
+    #[test]
+    fn complete_mixed_missing_and_type_error() {
+        let fields = vec![
+            make_field("sprint", MetadataFieldType::String, true),
+            make_field("points", MetadataFieldType::Number, true),
+        ];
+        let meta = serde_json::json!({"points": "not a number"});
+        let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("sprint"), "should mention missing sprint: {msg}");
+        assert!(msg.contains("points"), "should mention type error for points: {msg}");
     }
 }
