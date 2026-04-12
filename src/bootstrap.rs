@@ -29,9 +29,9 @@ pub fn create_backend(
     project_root: &Path,
     config: &Config,
 ) -> Result<Arc<dyn TaskBackend>> {
-    // 1. HTTP backend (server.url from env or config.toml)
-    if let Some(ref url) = config.server.url {
-        let backend = match config.server.token.as_ref() {
+    // 1. HTTP backend (cli.remote.url from env or config.toml)
+    if let Some(ref url) = config.cli.remote.url {
+        let backend = match config.cli.remote.token.as_ref() {
             Some(key) => HttpBackend::with_api_key(url, key.clone()),
             None => HttpBackend::new(url),
         };
@@ -69,7 +69,7 @@ pub fn create_backend(
     let sqlite = crate::infra::sqlite::SqliteBackend::new(
         project_root,
         None,
-        config.storage.db_path.as_deref(),
+        config.backend.sqlite.db_path.as_deref(),
     )?;
     sqlite.sync_config_defaults(config)?;
     Ok(Arc::new(sqlite))
@@ -82,7 +82,7 @@ pub fn should_fire_client_hooks(config: &Config) -> bool {
 /// Resolve the backend info from config for hook envelope metadata.
 /// Mirrors the priority logic of `create_backend`.
 pub fn resolve_backend_info(config: &Config, project_root: &Path) -> BackendInfo {
-    if let Some(ref url) = config.server.url {
+    if let Some(ref url) = config.cli.remote.url {
         return BackendInfo::Http { api_url: url.clone() };
     }
     #[cfg(feature = "dynamodb")]
@@ -93,7 +93,7 @@ pub fn resolve_backend_info(config: &Config, project_root: &Path) -> BackendInfo
     if config.backend.postgres.as_ref().and_then(|p| p.url.as_ref()).is_some() {
         return BackendInfo::Postgresql;
     }
-    let db_path = crate::infra::sqlite::resolve_db_path_preview(project_root, config.storage.db_path.as_deref())
+    let db_path = crate::infra::sqlite::resolve_db_path_preview(project_root, config.backend.sqlite.db_path.as_deref())
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "<unknown>".to_string());
     BackendInfo::Sqlite { db_file_path: db_path }
@@ -125,10 +125,10 @@ pub fn create_pr_verifier() -> Arc<dyn crate::application::port::PrVerifier> {
 /// Validate that `senko serve` has at least one authentication method configured.
 /// Call before `create_auth_provider`.
 pub fn validate_serve_auth(config: &Config) -> Result<()> {
-    if !config.auth.is_configured() {
+    if !config.server.auth.is_configured() {
         bail!(
             "senko serve requires at least one authentication method. \
-             Set auth.oidc (issuer_url + client_id) or auth.api_key.master_key."
+             Set server.auth.oidc (issuer_url + client_id) or server.auth.api_key.master_key."
         );
     }
     Ok(())
@@ -138,18 +138,18 @@ pub fn create_auth_provider(
     config: &Config,
     backend: Arc<dyn TaskBackend>,
 ) -> Result<Option<Arc<dyn AuthProvider>>> {
-    if !config.auth.oidc.is_configured() && config.auth.api_key.master_key.is_none() {
+    if !config.server.auth.oidc.is_configured() && config.server.auth.api_key.master_key.is_none() {
         tracing::info!("no authentication method configured");
         return Ok(None);
     }
 
     let mut providers: Vec<Arc<dyn AuthProvider>> = Vec::new();
 
-    if config.auth.oidc.is_configured() {
-        let issuer_url = config.auth.oidc.issuer_url.clone().unwrap();
-        let client_id = config.auth.oidc.client_id.clone().unwrap();
-        let username_claim = config.auth.oidc.username_claim.clone();
-        let required_claims = config.auth.oidc.required_claims.clone();
+    if config.server.auth.oidc.is_configured() {
+        let issuer_url = config.server.auth.oidc.issuer_url.clone().unwrap();
+        let client_id = config.server.auth.oidc.client_id.clone().unwrap();
+        let username_claim = config.server.auth.oidc.username_claim.clone();
+        let required_claims = config.server.auth.oidc.required_claims.clone();
         tracing::info!(issuer = %issuer_url, "OIDC JWT authentication enabled");
         providers.push(Arc::new(JwtAuthProvider::new(
             issuer_url,
@@ -164,8 +164,8 @@ pub fn create_auth_provider(
         tracing::info!("API key authentication enabled");
         providers.push(Arc::new(ApiKeyProvider::new(
             backend,
-            config.auth.api_key.master_key.clone(),
-            config.auth.oidc.session.clone(),
+            config.server.auth.api_key.master_key.clone(),
+            config.server.auth.oidc.session.clone(),
         )));
     }
 
@@ -198,8 +198,8 @@ pub fn create_remote_task_operations(
     project_root: &Path,
     backend: Arc<dyn TaskBackend>,
 ) -> RemoteTaskOperations {
-    let url = config.server.url.as_ref().expect("server.url required for remote operations");
-    let api_key = config.server.token.clone();
+    let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
+    let api_key = config.cli.remote.token.clone();
 
     let backend_info = resolve_backend_info(config, project_root);
     let hooks = create_hook_executor(
@@ -219,7 +219,7 @@ pub fn create_task_operations(
     config: &Config,
 ) -> Result<(Arc<dyn TaskOperations>, Arc<dyn TaskBackend>)> {
     let backend = create_backend(project_root, config)?;
-    let using_http = config.server.url.is_some();
+    let using_http = config.cli.remote.url.is_some();
     let task_ops: Arc<dyn TaskOperations> = if using_http {
         Arc::new(create_remote_task_operations(config, project_root, backend.clone()))
     } else {
@@ -688,24 +688,24 @@ name = "project-local"
     #[test]
     fn validate_serve_auth_with_oidc_ok() {
         let mut config = Config::default();
-        config.auth.oidc.issuer_url = Some("https://example.com".to_string());
-        config.auth.oidc.client_id = Some("my-client".to_string());
+        config.server.auth.oidc.issuer_url = Some("https://example.com".to_string());
+        config.server.auth.oidc.client_id = Some("my-client".to_string());
         validate_serve_auth(&config).unwrap();
     }
 
     #[test]
     fn validate_serve_auth_with_master_key_ok() {
         let mut config = Config::default();
-        config.auth.api_key.master_key = Some("secret".to_string());
+        config.server.auth.api_key.master_key = Some("secret".to_string());
         validate_serve_auth(&config).unwrap();
     }
 
     #[test]
     fn validate_serve_auth_with_both_ok() {
         let mut config = Config::default();
-        config.auth.oidc.issuer_url = Some("https://example.com".to_string());
-        config.auth.oidc.client_id = Some("my-client".to_string());
-        config.auth.api_key.master_key = Some("secret".to_string());
+        config.server.auth.oidc.issuer_url = Some("https://example.com".to_string());
+        config.server.auth.oidc.client_id = Some("my-client".to_string());
+        config.server.auth.api_key.master_key = Some("secret".to_string());
         validate_serve_auth(&config).unwrap();
     }
 

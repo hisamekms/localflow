@@ -779,8 +779,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             config.resolve_secrets().await?;
             let (task_ops, backend) = crate::bootstrap::create_task_operations(&root, &config)?;
             let project_id = crate::bootstrap::resolve_project_id(&*backend, &config).await?;
-            let port_is_explicit = config.serve_port_is_explicit();
-            let effective_port = config.serve_port_or(3141);
+            let port_is_explicit = config.web_port_is_explicit();
+            let effective_port = config.web_port_or(3141);
             crate::presentation::web::serve(root, effective_port, port_is_explicit, &config, task_ops, project_id).await?;
             Ok(())
         }
@@ -795,13 +795,13 @@ pub async fn run(cli: Cli) -> Result<()> {
             });
             #[cfg(feature = "aws-secrets")]
             config.resolve_secrets().await?;
-            let is_proxy = config.server.url.is_some();
+            let is_proxy = config.cli.remote.url.is_some();
             if !is_proxy {
                 crate::bootstrap::validate_serve_auth(&config)?;
             }
             let backend = create_backend(&root, &config)?;
-            let port_is_explicit = config.serve_port_is_explicit();
-            let effective_port = config.serve_port_or(3142);
+            let port_is_explicit = config.web_port_is_explicit();
+            let effective_port = config.web_port_or(3142);
             let auth_provider = if is_proxy {
                 None
             } else {

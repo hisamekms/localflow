@@ -399,10 +399,10 @@ pub async fn serve(
         project_service,
         user_service,
         auth_provider,
-        master_key_configured: config.auth.api_key.master_key.is_some(),
-        proxy_mode: config.server.url.is_some(),
-        session_config: config.auth.oidc.session.clone(),
-        oidc_config: config.auth.oidc.clone(),
+        master_key_configured: config.server.auth.api_key.master_key.is_some(),
+        proxy_mode: config.cli.remote.url.is_some(),
+        session_config: config.server.auth.oidc.session.clone(),
+        oidc_config: config.server.auth.oidc.clone(),
     };
 
     let app = Router::new()

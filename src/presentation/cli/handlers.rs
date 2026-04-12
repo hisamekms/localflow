@@ -489,22 +489,6 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
             println!("    auto_merge: {}", config.workflow.auto_merge);
             println!("    branch_mode: {}", config.workflow.branch_mode);
             println!("    merge_strategy: {}", config.workflow.merge_strategy);
-            if config.workflow.events.is_empty() {
-                println!("    events: (none)");
-            } else {
-                println!("    events:");
-                for event in &config.workflow.events {
-                    use crate::infra::config::WorkflowEventType;
-                    match &event.event_type {
-                        WorkflowEventType::Command { command } => {
-                            println!("      - [{}] command: {}", event.point, command);
-                        }
-                        WorkflowEventType::Prompt { content } => {
-                            println!("      - [{}] prompt: {}", event.point, content);
-                        }
-                    }
-                }
-            }
             println!("  [hooks]");
             for (event, hooks) in [
                 ("on_task_added", &config.hooks.on_task_added),
@@ -524,40 +508,40 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                     }
                 }
             }
-            println!("  [server]");
-            match config.server.url {
+            println!("  [cli.remote]");
+            match config.cli.remote.url {
                 Some(ref url) => println!("    url: {url}"),
                 None => println!("    url: (none, using local backend)"),
             }
-            println!("  [auth.oidc]");
-            match config.auth.oidc.issuer_url {
+            println!("  [server.auth.oidc]");
+            match config.server.auth.oidc.issuer_url {
                 Some(ref url) => println!("    issuer_url: {url}"),
                 None => println!("    issuer_url: (none)"),
             }
-            match config.auth.oidc.client_id {
+            match config.server.auth.oidc.client_id {
                 Some(ref id) => println!("    client_id: {id}"),
                 None => println!("    client_id: (none)"),
             }
             println!(
                 "    scopes: [{}]",
-                config.auth.oidc.scopes.join(", ")
+                config.server.auth.oidc.scopes.join(", ")
             );
-            println!("  [auth.oidc.cli]");
-            match config.auth.oidc.cli.callback_port {
+            println!("  [server.auth.oidc.cli]");
+            match config.server.auth.oidc.cli.callback_port {
                 Some(port) => println!("    callback_port: {port}"),
                 None => println!("    callback_port: (auto)"),
             }
-            println!("    browser: {}", config.auth.oidc.cli.browser);
-            println!("  [auth.oidc.session]");
-            match config.auth.oidc.session.ttl {
+            println!("    browser: {}", config.server.auth.oidc.cli.browser);
+            println!("  [server.auth.oidc.session]");
+            match config.server.auth.oidc.session.ttl {
                 Some(ref ttl) => println!("    ttl: {ttl}"),
                 None => println!("    ttl: (none)"),
             }
-            match config.auth.oidc.session.inactive_ttl {
+            match config.server.auth.oidc.session.inactive_ttl {
                 Some(ref ttl) => println!("    inactive_ttl: {ttl}"),
                 None => println!("    inactive_ttl: (none)"),
             }
-            match config.auth.oidc.session.max_per_user {
+            match config.server.auth.oidc.session.max_per_user {
                 Some(n) => println!("    max_per_user: {n}"),
                 None => println!("    max_per_user: (none)"),
             }
@@ -1539,8 +1523,8 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
 
-    let api_url = config.server.url.as_deref().context(
-        "server.url is not configured. Set it in config to point to the senko API server.",
+    let api_url = config.cli.remote.url.as_deref().context(
+        "cli.remote.url is not configured. Set it in config to point to the senko API server.",
     )?;
 
     // Fetch OIDC config from server
@@ -1586,7 +1570,7 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
             .unwrap_or_default(),
         username_claim: None,
         required_claims: Default::default(),
-        cli: config.auth.oidc.cli.clone(),
+        cli: config.server.auth.oidc.cli.clone(),
         session: Default::default(),
     };
 
@@ -1625,10 +1609,11 @@ fn require_api_url_and_token(cli: &Cli) -> Result<(String, String)> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let api_url = config
-        .server
+        .cli
+        .remote
         .url
         .as_deref()
-        .context("server.url is not configured. Set it in config to point to the senko API server.")?
+        .context("cli.remote.url is not configured. Set it in config to point to the senko API server.")?
         .to_string();
     let token = super::keychain::load(&api_url)
         .context("Not logged in. Run `senko auth login` first.")?;
@@ -1672,10 +1657,11 @@ pub async fn cmd_auth_token(cli: &Cli) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let api_url = config
-        .server
+        .cli
+        .remote
         .url
         .as_deref()
-        .context("server.url is not configured. Set it in config to point to the senko API server.")?;
+        .context("cli.remote.url is not configured. Set it in config to point to the senko API server.")?;
     let token = super::keychain::load(api_url)
         .context("Not logged in. Run `senko auth login` first.")?;
     match cli.output {

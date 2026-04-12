@@ -1705,7 +1705,7 @@ on_task_added = "echo added"
             std::env::set_var("SENKO_SERVER_URL", "http://remote:3142");
             let mut config = Config::default();
             config.apply_env();
-            assert_eq!(config.server.url, Some("http://remote:3142".to_string()));
+            assert_eq!(config.cli.remote.url, Some("http://remote:3142".to_string()));
             match orig {
                 Some(v) => std::env::set_var("SENKO_SERVER_URL", v),
                 None => std::env::remove_var("SENKO_SERVER_URL"),
@@ -1746,7 +1746,7 @@ on_task_added = "echo added"
             std::env::set_var("SENKO_HOOK_ON_TASK_ADDED", "");
             let mut config = Config::default();
             config.apply_env();
-            assert_eq!(config.server.url, None);
+            assert_eq!(config.cli.remote.url, None);
             assert!(config.hooks.on_task_added.is_empty());
             match orig_url {
                 Some(v) => std::env::set_var("SENKO_SERVER_URL", v),
