@@ -5,9 +5,13 @@ use async_trait::async_trait;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
 
+use crate::domain::error::DomainError;
+use crate::domain::metadata_field::{
+    CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
+};
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::application::port::{AuthenticationPort, ProjectQueryPort, TaskQueryPort, UserQueryPort};
-use crate::domain::{ApiKeyRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::{ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
     self, CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
@@ -70,6 +74,16 @@ const MIGRATIONS: &[Migration] = &[
         version: 2,
         description: "add_task_number",
         sql: include_str!("migrations/20260409000000_add_task_number.sql"),
+    },
+    Migration {
+        version: 3,
+        description: "add_api_key_device_name",
+        sql: include_str!("migrations/20260411000000_add_api_key_device_name.sql"),
+    },
+    Migration {
+        version: 4,
+        description: "add_metadata_fields",
+        sql: include_str!("migrations/20260412000000_add_metadata_fields.sql"),
     },
 ];
 
@@ -1317,6 +1331,154 @@ async fn update_content_array(
     Ok(())
 }
 
+#[async_trait]
+impl MetadataFieldRepository for PostgresBackend {
+    async fn create_metadata_field(
+        &self,
+        project_id: i64,
+        params: &CreateMetadataFieldParams,
+    ) -> Result<MetadataField> {
+        let pool = self.pool().await?;
+        let result = sqlx::query(
+            "INSERT INTO metadata_fields (project_id, name, field_type, required_on_complete, description)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING id, created_at",
+        )
+        .bind(project_id)
+        .bind(&params.name)
+        .bind(params.field_type.to_string())
+        .bind(params.required_on_complete)
+        .bind(&params.description)
+        .fetch_one(pool)
+        .await;
+
+        match result {
+            Ok(row) => Ok(MetadataField::new(
+                row.get("id"),
+                project_id,
+                params.name.clone(),
+                params.field_type,
+                params.required_on_complete,
+                params.description.clone(),
+                row.get("created_at"),
+            )),
+            Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
+                Err(DomainError::MetadataFieldNameConflict {
+                    name: params.name.clone(),
+                }
+                .into())
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn get_metadata_field(
+        &self,
+        project_id: i64,
+        field_id: i64,
+    ) -> Result<MetadataField> {
+        let pool = self.pool().await?;
+        let row = sqlx::query(
+            "SELECT id, project_id, name, field_type, required_on_complete, description, created_at
+             FROM metadata_fields WHERE id = $1 AND project_id = $2",
+        )
+        .bind(field_id)
+        .bind(project_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(DomainError::MetadataFieldNotFound)?;
+
+        let field_type_str: String = row.get("field_type");
+        let field_type: MetadataFieldType = field_type_str.parse()?;
+        Ok(MetadataField::new(
+            row.get("id"),
+            row.get("project_id"),
+            row.get("name"),
+            field_type,
+            row.get("required_on_complete"),
+            row.get("description"),
+            row.get("created_at"),
+        ))
+    }
+
+    async fn list_metadata_fields(&self, project_id: i64) -> Result<Vec<MetadataField>> {
+        let pool = self.pool().await?;
+        let rows = sqlx::query(
+            "SELECT id, project_id, name, field_type, required_on_complete, description, created_at
+             FROM metadata_fields WHERE project_id = $1 ORDER BY id",
+        )
+        .bind(project_id)
+        .fetch_all(pool)
+        .await?;
+
+        rows.iter()
+            .map(|row| {
+                let field_type_str: String = row.get("field_type");
+                let field_type: MetadataFieldType = field_type_str.parse()?;
+                Ok(MetadataField::new(
+                    row.get("id"),
+                    row.get("project_id"),
+                    row.get("name"),
+                    field_type,
+                    row.get("required_on_complete"),
+                    row.get("description"),
+                    row.get("created_at"),
+                ))
+            })
+            .collect()
+    }
+
+    async fn update_metadata_field(
+        &self,
+        project_id: i64,
+        field_id: i64,
+        params: &UpdateMetadataFieldParams,
+    ) -> Result<MetadataField> {
+        let pool = self.pool().await?;
+
+        // Verify exists
+        let _existing = self.get_metadata_field(project_id, field_id).await?;
+
+        if let Some(req) = params.required_on_complete {
+            sqlx::query(
+                "UPDATE metadata_fields SET required_on_complete = $1 WHERE id = $2 AND project_id = $3",
+            )
+            .bind(req)
+            .bind(field_id)
+            .bind(project_id)
+            .execute(pool)
+            .await?;
+        }
+        if let Some(ref desc) = params.description {
+            sqlx::query(
+                "UPDATE metadata_fields SET description = $1 WHERE id = $2 AND project_id = $3",
+            )
+            .bind(desc.as_deref())
+            .bind(field_id)
+            .bind(project_id)
+            .execute(pool)
+            .await?;
+        }
+
+        self.get_metadata_field(project_id, field_id).await
+    }
+
+    async fn delete_metadata_field(&self, project_id: i64, field_id: i64) -> Result<()> {
+        let pool = self.pool().await?;
+        let result = sqlx::query(
+            "DELETE FROM metadata_fields WHERE id = $1 AND project_id = $2",
+        )
+        .bind(field_id)
+        .bind(project_id)
+        .execute(pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(DomainError::MetadataFieldNotFound.into());
+        }
+        Ok(())
+    }
+}
+
 crate::impl_task_transition_default!(PostgresBackend);
 
 #[cfg(test)]
@@ -1333,6 +1495,7 @@ mod tests {
         let pool = backend.pool().await.unwrap();
 
         // Clean all data for test isolation (reverse FK order)
+        sqlx::query("DELETE FROM metadata_fields").execute(pool).await.unwrap();
         sqlx::query("DELETE FROM task_dependencies").execute(pool).await.unwrap();
         sqlx::query("DELETE FROM task_definition_of_done").execute(pool).await.unwrap();
         sqlx::query("DELETE FROM task_in_scope").execute(pool).await.unwrap();
@@ -1649,5 +1812,152 @@ mod tests {
 
         let stats = backend.task_stats(1).await.unwrap();
         assert_eq!(*stats.get("draft").unwrap_or(&0), 2);
+    }
+
+    // --- MetadataField tests ---
+
+    #[tokio::test]
+    async fn test_create_and_get_metadata_field() {
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+        let params = CreateMetadataFieldParams {
+            name: "sprint".to_string(),
+            field_type: MetadataFieldType::String,
+            required_on_complete: false,
+            description: Some("Sprint name".to_string()),
+        };
+        let field = backend.create_metadata_field(1, &params).await.unwrap();
+        assert_eq!(field.name(), "sprint");
+        assert_eq!(field.field_type(), MetadataFieldType::String);
+        assert!(!field.required_on_complete());
+        assert_eq!(field.description(), Some("Sprint name"));
+
+        let fetched = backend.get_metadata_field(1, field.id()).await.unwrap();
+        assert_eq!(fetched.id(), field.id());
+    }
+
+    #[tokio::test]
+    async fn test_list_metadata_fields() {
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+        backend
+            .create_metadata_field(
+                1,
+                &CreateMetadataFieldParams {
+                    name: "sprint".to_string(),
+                    field_type: MetadataFieldType::String,
+                    required_on_complete: false,
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+        backend
+            .create_metadata_field(
+                1,
+                &CreateMetadataFieldParams {
+                    name: "points".to_string(),
+                    field_type: MetadataFieldType::Number,
+                    required_on_complete: true,
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let fields = backend.list_metadata_fields(1).await.unwrap();
+        assert_eq!(fields.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_update_metadata_field_description() {
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+        let field = backend
+            .create_metadata_field(
+                1,
+                &CreateMetadataFieldParams {
+                    name: "sprint".to_string(),
+                    field_type: MetadataFieldType::String,
+                    required_on_complete: false,
+                    description: Some("old".to_string()),
+                },
+            )
+            .await
+            .unwrap();
+
+        // Clear description
+        let updated = backend
+            .update_metadata_field(
+                1,
+                field.id(),
+                &UpdateMetadataFieldParams {
+                    required_on_complete: None,
+                    description: Some(None),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.description(), None);
+
+        // Set description
+        let updated = backend
+            .update_metadata_field(
+                1,
+                field.id(),
+                &UpdateMetadataFieldParams {
+                    required_on_complete: None,
+                    description: Some(Some("new desc".to_string())),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.description(), Some("new desc"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_metadata_field() {
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+        let field = backend
+            .create_metadata_field(
+                1,
+                &CreateMetadataFieldParams {
+                    name: "sprint".to_string(),
+                    field_type: MetadataFieldType::String,
+                    required_on_complete: false,
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+        backend.delete_metadata_field(1, field.id()).await.unwrap();
+        let result = backend.get_metadata_field(1, field.id()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata_field_name_conflict() {
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+        let params = CreateMetadataFieldParams {
+            name: "sprint".to_string(),
+            field_type: MetadataFieldType::String,
+            required_on_complete: false,
+            description: None,
+        };
+        backend.create_metadata_field(1, &params).await.unwrap();
+        let result = backend.create_metadata_field(1, &params).await;
+        assert!(result.is_err());
     }
 }

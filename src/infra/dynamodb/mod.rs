@@ -7,10 +7,13 @@ use aws_sdk_dynamodb::Client;
 use chrono::Utc;
 use tokio::sync::OnceCell;
 
+use crate::domain::metadata_field::{
+    CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
+};
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::application::port::{AuthenticationPort, ProjectQueryPort, TaskQueryPort, UserQueryPort};
 use crate::domain::error::DomainError;
-use crate::domain::{ApiKeyRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::{ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
     self, CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
@@ -615,6 +618,53 @@ fn item_to_member(item: &HashMap<String, AttributeValue>) -> Result<ProjectMembe
     ))
 }
 
+fn metafield_to_item(field: &MetadataField) -> HashMap<String, AttributeValue> {
+    let mut item = HashMap::new();
+    let pk = format!("METAFIELD#{}#{}", field.project_id(), field.id());
+    item.insert("PK".into(), AttributeValue::S(pk.clone()));
+    item.insert("SK".into(), AttributeValue::S(pk));
+    item.insert("id".into(), AttributeValue::N(field.id().to_string()));
+    item.insert(
+        "project_id".into(),
+        AttributeValue::N(field.project_id().to_string()),
+    );
+    item.insert("name".into(), AttributeValue::S(field.name().to_string()));
+    item.insert(
+        "field_type".into(),
+        AttributeValue::S(field.field_type().to_string()),
+    );
+    item.insert(
+        "required_on_complete".into(),
+        AttributeValue::Bool(field.required_on_complete()),
+    );
+    if let Some(desc) = field.description() {
+        item.insert("description".into(), AttributeValue::S(desc.to_string()));
+    }
+    item.insert(
+        "created_at".into(),
+        AttributeValue::S(field.created_at().to_string()),
+    );
+    item
+}
+
+fn item_to_metafield(item: &HashMap<String, AttributeValue>) -> Result<MetadataField> {
+    let field_type_str = req_s(item, "field_type")?;
+    let field_type: MetadataFieldType = field_type_str.parse()?;
+    let required = item
+        .get("required_on_complete")
+        .and_then(|v| get_bool(v))
+        .unwrap_or(false);
+    Ok(MetadataField::new(
+        opt_n(item, "id").context("missing id")?,
+        opt_n(item, "project_id").context("missing project_id")?,
+        req_s(item, "name")?,
+        field_type,
+        required,
+        opt_s(item, "description"),
+        req_s(item, "created_at")?,
+    ))
+}
+
 #[async_trait]
 impl ProjectRepository for DynamoDbBackend {
     // Project management
@@ -1051,6 +1101,114 @@ impl TaskQueryPort for DynamoDbBackend {
             ready: true,
             ..Default::default()
         }).await
+    }
+}
+
+#[async_trait]
+impl MetadataFieldRepository for DynamoDbBackend {
+    async fn create_metadata_field(
+        &self,
+        project_id: i64,
+        params: &CreateMetadataFieldParams,
+    ) -> Result<MetadataField> {
+        // Check for name uniqueness by scanning existing fields
+        let existing = self.list_metadata_fields(project_id).await?;
+        if existing.iter().any(|f| f.name() == params.name) {
+            return Err(DomainError::MetadataFieldNameConflict {
+                name: params.name.clone(),
+            }
+            .into());
+        }
+
+        let id = self.next_id("METAFIELD").await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let field = MetadataField::new(
+            id,
+            project_id,
+            params.name.clone(),
+            params.field_type,
+            params.required_on_complete,
+            params.description.clone(),
+            now,
+        );
+        self.put_item(metafield_to_item(&field)).await?;
+        Ok(field)
+    }
+
+    async fn get_metadata_field(
+        &self,
+        project_id: i64,
+        field_id: i64,
+    ) -> Result<MetadataField> {
+        let client = self.client().await?;
+        let pk = format!("METAFIELD#{project_id}#{field_id}");
+        let resp = client
+            .get_item()
+            .table_name(&self.table_name)
+            .key("PK", AttributeValue::S(pk.clone()))
+            .key("SK", AttributeValue::S(pk))
+            .send()
+            .await
+            .context("failed to get metadata field")?;
+        let item = resp.item().ok_or(DomainError::MetadataFieldNotFound)?;
+        item_to_metafield(item)
+    }
+
+    async fn list_metadata_fields(&self, project_id: i64) -> Result<Vec<MetadataField>> {
+        let prefix = format!("METAFIELD#{project_id}#");
+        let items = self.scan_items_by_prefix(&prefix).await?;
+        let mut fields: Vec<MetadataField> = items
+            .iter()
+            .map(|i| item_to_metafield(i))
+            .collect::<Result<_>>()?;
+        fields.sort_by_key(|f| f.id());
+        Ok(fields)
+    }
+
+    async fn update_metadata_field(
+        &self,
+        project_id: i64,
+        field_id: i64,
+        params: &UpdateMetadataFieldParams,
+    ) -> Result<MetadataField> {
+        let existing = self.get_metadata_field(project_id, field_id).await?;
+
+        let required = params
+            .required_on_complete
+            .unwrap_or(existing.required_on_complete());
+        let description = match &params.description {
+            None => existing.description().map(|s| s.to_string()),
+            Some(d) => d.clone(),
+        };
+
+        let updated = MetadataField::new(
+            existing.id(),
+            existing.project_id(),
+            existing.name().to_string(),
+            existing.field_type(),
+            required,
+            description,
+            existing.created_at().to_string(),
+        );
+        self.put_item(metafield_to_item(&updated)).await?;
+        Ok(updated)
+    }
+
+    async fn delete_metadata_field(&self, project_id: i64, field_id: i64) -> Result<()> {
+        // Verify it exists first
+        let _existing = self.get_metadata_field(project_id, field_id).await?;
+
+        let client = self.client().await?;
+        let pk = format!("METAFIELD#{project_id}#{field_id}");
+        client
+            .delete_item()
+            .table_name(&self.table_name)
+            .key("PK", AttributeValue::S(pk.clone()))
+            .key("SK", AttributeValue::S(pk))
+            .send()
+            .await
+            .context("failed to delete metadata field")?;
+        Ok(())
     }
 }
 

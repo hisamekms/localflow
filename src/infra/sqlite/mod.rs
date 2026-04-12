@@ -4,6 +4,9 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use crate::domain::error::DomainError;
+use crate::domain::metadata_field::{
+    CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
+};
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
     self, CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus,
@@ -176,6 +179,25 @@ const MIGRATIONS: &[Migration] = &[
         name: "add_api_key_device_name",
         sql: "
             ALTER TABLE api_keys ADD COLUMN device_name TEXT;
+        ",
+    },
+    Migration {
+        version: 8,
+        name: "add_metadata_fields",
+        sql: "
+            CREATE TABLE metadata_fields (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                field_type TEXT NOT NULL,
+                required_on_complete INTEGER NOT NULL DEFAULT 0,
+                description TEXT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                UNIQUE(project_id, name),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX idx_metadata_fields_project_id ON metadata_fields(project_id);
         ",
     },
 ];
@@ -1432,6 +1454,153 @@ fn update_user_username(conn: &Connection, id: i64, username: &str) -> Result<()
     Ok(())
 }
 
+// --- MetadataField CRUD ---
+
+fn create_metadata_field(
+    conn: &Connection,
+    project_id: i64,
+    params: &CreateMetadataFieldParams,
+) -> Result<MetadataField> {
+    let result = conn.execute(
+        "INSERT INTO metadata_fields (project_id, name, field_type, required_on_complete, description)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![
+            project_id,
+            params.name,
+            params.field_type.to_string(),
+            params.required_on_complete as i32,
+            params.description,
+        ],
+    );
+    match result {
+        Ok(_) => {}
+        Err(rusqlite::Error::SqliteFailure(err, _))
+            if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+        {
+            return Err(DomainError::MetadataFieldNameConflict {
+                name: params.name.clone(),
+            }
+            .into());
+        }
+        Err(e) => return Err(e.into()),
+    }
+    let id = conn.last_insert_rowid();
+    get_metadata_field(conn, project_id, id)
+}
+
+fn get_metadata_field(
+    conn: &Connection,
+    project_id: i64,
+    field_id: i64,
+) -> Result<MetadataField> {
+    let row: (i64, i64, String, String, i32, Option<String>, String) = conn
+        .query_row(
+            "SELECT id, project_id, name, field_type, required_on_complete, description, created_at
+             FROM metadata_fields WHERE id = ?1 AND project_id = ?2",
+            params![field_id, project_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(DomainError::MetadataFieldNotFound)?;
+    let field_type: MetadataFieldType = row.3.parse()?;
+    Ok(MetadataField::new(
+        row.0,
+        row.1,
+        row.2,
+        field_type,
+        row.4 != 0,
+        row.5,
+        row.6,
+    ))
+}
+
+fn list_metadata_fields(conn: &Connection, project_id: i64) -> Result<Vec<MetadataField>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, name, field_type, required_on_complete, description, created_at
+         FROM metadata_fields WHERE project_id = ?1 ORDER BY id",
+    )?;
+    let rows = stmt
+        .query_map(params![project_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i32>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(6)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(|r| {
+            let field_type: MetadataFieldType = r.3.parse()?;
+            Ok(MetadataField::new(
+                r.0, r.1, r.2, field_type, r.4 != 0, r.5, r.6,
+            ))
+        })
+        .collect()
+}
+
+fn update_metadata_field(
+    conn: &Connection,
+    project_id: i64,
+    field_id: i64,
+    params: &UpdateMetadataFieldParams,
+) -> Result<MetadataField> {
+    // Verify it exists
+    let _existing = get_metadata_field(conn, project_id, field_id)?;
+
+    let mut sets = Vec::new();
+    let mut values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if let Some(req) = params.required_on_complete {
+        sets.push("required_on_complete = ?");
+        values.push(Box::new(req as i32));
+    }
+    if let Some(ref desc) = params.description {
+        sets.push("description = ?");
+        values.push(Box::new(desc.clone()));
+    }
+
+    if sets.is_empty() {
+        return get_metadata_field(conn, project_id, field_id);
+    }
+
+    let set_clause = sets.join(", ");
+    let sql = format!(
+        "UPDATE metadata_fields SET {} WHERE id = ? AND project_id = ?",
+        set_clause
+    );
+    values.push(Box::new(field_id));
+    values.push(Box::new(project_id));
+
+    let param_refs: Vec<&dyn rusqlite::ToSql> = values.iter().map(|v| v.as_ref()).collect();
+    conn.execute(&sql, param_refs.as_slice())?;
+    get_metadata_field(conn, project_id, field_id)
+}
+
+fn delete_metadata_field(conn: &Connection, project_id: i64, field_id: i64) -> Result<()> {
+    let affected = conn.execute(
+        "DELETE FROM metadata_fields WHERE id = ?1 AND project_id = ?2",
+        params![field_id, project_id],
+    )?;
+    if affected == 0 {
+        return Err(DomainError::MetadataFieldNotFound.into());
+    }
+    Ok(())
+}
+
 // --- SqliteBackend implementation ---
 
 use std::sync::Arc;
@@ -1440,7 +1609,7 @@ use async_trait::async_trait;
 
 use crate::application::port::{AuthenticationPort, ProjectQueryPort, TaskQueryPort, UserQueryPort};
 use crate::infra::config::Config;
-use crate::domain::{ApiKeyRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::{ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 
 pub struct SqliteBackend {
     conn: Arc<std::sync::Mutex<Connection>>,
@@ -1684,6 +1853,54 @@ impl TaskQueryPort for SqliteBackend {
 
     async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
         blocking!(self, |conn: &Connection| list_ready_tasks(conn, project_id))
+    }
+}
+
+#[async_trait]
+impl MetadataFieldRepository for SqliteBackend {
+    async fn create_metadata_field(
+        &self,
+        project_id: i64,
+        params: &CreateMetadataFieldParams,
+    ) -> Result<MetadataField> {
+        let params = params.clone();
+        blocking!(self, |conn: &Connection| create_metadata_field(
+            conn, project_id, &params
+        ))
+    }
+
+    async fn get_metadata_field(
+        &self,
+        project_id: i64,
+        field_id: i64,
+    ) -> Result<MetadataField> {
+        blocking!(self, |conn: &Connection| get_metadata_field(
+            conn, project_id, field_id
+        ))
+    }
+
+    async fn list_metadata_fields(&self, project_id: i64) -> Result<Vec<MetadataField>> {
+        blocking!(self, |conn: &Connection| list_metadata_fields(
+            conn, project_id
+        ))
+    }
+
+    async fn update_metadata_field(
+        &self,
+        project_id: i64,
+        field_id: i64,
+        params: &UpdateMetadataFieldParams,
+    ) -> Result<MetadataField> {
+        let params = params.clone();
+        blocking!(self, |conn: &Connection| update_metadata_field(
+            conn, project_id, field_id, &params
+        ))
+    }
+
+    async fn delete_metadata_field(&self, project_id: i64, field_id: i64) -> Result<()> {
+        blocking!(self, |conn: &Connection| delete_metadata_field(
+            conn, project_id, field_id
+        ))
     }
 }
 
@@ -2635,7 +2852,7 @@ mod tests {
     fn fresh_db_records_migration_version() {
         let (_tmp, conn) = setup();
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
     }
 
     #[test]
@@ -2730,7 +2947,7 @@ mod tests {
 
         // Version should include all migrations
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
 
         // Legacy columns should have been migrated
         let has_description: bool = conn.prepare("SELECT description FROM tasks LIMIT 0").is_ok();
@@ -2774,7 +2991,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 7);
+        assert_eq!(count, 8);
     }
 
     #[test]
@@ -3239,5 +3456,265 @@ mod tests {
             crate::domain::task::filter_ready(todo_tasks, &dep_statuses).len() as i64;
 
         assert_eq!(sql_count, domain_count);
+    }
+
+    // --- MetadataField tests ---
+
+    #[test]
+    fn create_and_get_metadata_field() {
+        let (_tmp, conn) = setup();
+        let params = CreateMetadataFieldParams {
+            name: "sprint".to_string(),
+            field_type: MetadataFieldType::String,
+            required_on_complete: false,
+            description: Some("Sprint name".to_string()),
+        };
+        let field = create_metadata_field(&conn, 1, &params).unwrap();
+        assert_eq!(field.name(), "sprint");
+        assert_eq!(field.field_type(), MetadataFieldType::String);
+        assert!(!field.required_on_complete());
+        assert_eq!(field.description(), Some("Sprint name"));
+        assert_eq!(field.project_id(), 1);
+
+        let fetched = get_metadata_field(&conn, 1, field.id()).unwrap();
+        assert_eq!(fetched.id(), field.id());
+        assert_eq!(fetched.name(), "sprint");
+    }
+
+    #[test]
+    fn list_metadata_fields_by_project() {
+        let (_tmp, conn) = setup();
+        create_metadata_field(
+            &conn,
+            1,
+            &CreateMetadataFieldParams {
+                name: "sprint".to_string(),
+                field_type: MetadataFieldType::String,
+                required_on_complete: false,
+                description: None,
+            },
+        )
+        .unwrap();
+        create_metadata_field(
+            &conn,
+            1,
+            &CreateMetadataFieldParams {
+                name: "points".to_string(),
+                field_type: MetadataFieldType::Number,
+                required_on_complete: true,
+                description: None,
+            },
+        )
+        .unwrap();
+
+        let fields = list_metadata_fields(&conn, 1).unwrap();
+        assert_eq!(fields.len(), 2);
+
+        // Different project should be empty
+        create_project(
+            &conn,
+            &CreateProjectParams {
+                name: "other".to_string(),
+                description: None,
+            },
+        )
+        .unwrap();
+        let other_fields = list_metadata_fields(&conn, 2).unwrap();
+        assert!(other_fields.is_empty());
+    }
+
+    #[test]
+    fn update_metadata_field_required_only() {
+        let (_tmp, conn) = setup();
+        let field = create_metadata_field(
+            &conn,
+            1,
+            &CreateMetadataFieldParams {
+                name: "sprint".to_string(),
+                field_type: MetadataFieldType::String,
+                required_on_complete: false,
+                description: Some("original".to_string()),
+            },
+        )
+        .unwrap();
+
+        let updated = update_metadata_field(
+            &conn,
+            1,
+            field.id(),
+            &UpdateMetadataFieldParams {
+                required_on_complete: Some(true),
+                description: None,
+            },
+        )
+        .unwrap();
+        assert!(updated.required_on_complete());
+        assert_eq!(updated.description(), Some("original"));
+    }
+
+    #[test]
+    fn update_metadata_field_clear_description() {
+        let (_tmp, conn) = setup();
+        let field = create_metadata_field(
+            &conn,
+            1,
+            &CreateMetadataFieldParams {
+                name: "sprint".to_string(),
+                field_type: MetadataFieldType::String,
+                required_on_complete: false,
+                description: Some("has desc".to_string()),
+            },
+        )
+        .unwrap();
+
+        let updated = update_metadata_field(
+            &conn,
+            1,
+            field.id(),
+            &UpdateMetadataFieldParams {
+                required_on_complete: None,
+                description: Some(None),
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.description(), None);
+    }
+
+    #[test]
+    fn update_metadata_field_set_description() {
+        let (_tmp, conn) = setup();
+        let field = create_metadata_field(
+            &conn,
+            1,
+            &CreateMetadataFieldParams {
+                name: "sprint".to_string(),
+                field_type: MetadataFieldType::String,
+                required_on_complete: false,
+                description: None,
+            },
+        )
+        .unwrap();
+
+        let updated = update_metadata_field(
+            &conn,
+            1,
+            field.id(),
+            &UpdateMetadataFieldParams {
+                required_on_complete: None,
+                description: Some(Some("new desc".to_string())),
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.description(), Some("new desc"));
+    }
+
+    #[test]
+    fn delete_metadata_field_success() {
+        let (_tmp, conn) = setup();
+        let field = create_metadata_field(
+            &conn,
+            1,
+            &CreateMetadataFieldParams {
+                name: "sprint".to_string(),
+                field_type: MetadataFieldType::String,
+                required_on_complete: false,
+                description: None,
+            },
+        )
+        .unwrap();
+
+        delete_metadata_field(&conn, 1, field.id()).unwrap();
+        let result = get_metadata_field(&conn, 1, field.id());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn delete_metadata_field_not_found() {
+        let (_tmp, conn) = setup();
+        let result = delete_metadata_field(&conn, 1, 999);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn create_metadata_field_name_conflict() {
+        let (_tmp, conn) = setup();
+        let params = CreateMetadataFieldParams {
+            name: "sprint".to_string(),
+            field_type: MetadataFieldType::String,
+            required_on_complete: false,
+            description: None,
+        };
+        create_metadata_field(&conn, 1, &params).unwrap();
+        let result = create_metadata_field(&conn, 1, &params);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err
+            .downcast_ref::<DomainError>()
+            .map_or(false, |e| matches!(
+                e,
+                DomainError::MetadataFieldNameConflict { .. }
+            )));
+    }
+
+    #[test]
+    fn create_metadata_field_same_name_different_project() {
+        let (_tmp, conn) = setup();
+        create_project(
+            &conn,
+            &CreateProjectParams {
+                name: "other".to_string(),
+                description: None,
+            },
+        )
+        .unwrap();
+        let params = CreateMetadataFieldParams {
+            name: "sprint".to_string(),
+            field_type: MetadataFieldType::String,
+            required_on_complete: false,
+            description: None,
+        };
+        create_metadata_field(&conn, 1, &params).unwrap();
+        let result = create_metadata_field(&conn, 2, &params);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn get_metadata_field_wrong_project() {
+        let (_tmp, conn) = setup();
+        let field = create_metadata_field(
+            &conn,
+            1,
+            &CreateMetadataFieldParams {
+                name: "sprint".to_string(),
+                field_type: MetadataFieldType::String,
+                required_on_complete: false,
+                description: None,
+            },
+        )
+        .unwrap();
+
+        create_project(
+            &conn,
+            &CreateProjectParams {
+                name: "other".to_string(),
+                description: None,
+            },
+        )
+        .unwrap();
+        let result = get_metadata_field(&conn, 2, field.id());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn metadata_fields_table_exists() {
+        let (_tmp, conn) = setup();
+        let tables: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(tables.contains(&"metadata_fields".to_string()));
     }
 }

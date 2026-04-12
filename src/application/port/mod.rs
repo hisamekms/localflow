@@ -20,10 +20,10 @@ pub use task_query::TaskQueryPort;
 pub use task_transition::TaskTransitionPort;
 pub use user_query::UserQueryPort;
 
-use crate::domain::{ApiKeyRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::{ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 
 /// Combined trait for backends that implement all repository traits, query ports, and TaskTransitionPort.
 /// Backends automatically implement TaskBackend via the blanket impl.
-pub trait TaskBackend: TaskRepository + ProjectRepository + ProjectMemberRepository + UserRepository + ApiKeyRepository + AuthenticationPort + TaskQueryPort + TaskTransitionPort + ProjectQueryPort + UserQueryPort {}
+pub trait TaskBackend: TaskRepository + ProjectRepository + ProjectMemberRepository + UserRepository + ApiKeyRepository + MetadataFieldRepository + AuthenticationPort + TaskQueryPort + TaskTransitionPort + ProjectQueryPort + UserQueryPort {}
 
-impl<T: TaskRepository + ProjectRepository + ProjectMemberRepository + UserRepository + ApiKeyRepository + AuthenticationPort + TaskQueryPort + TaskTransitionPort + ProjectQueryPort + UserQueryPort> TaskBackend for T {}
+impl<T: TaskRepository + ProjectRepository + ProjectMemberRepository + UserRepository + ApiKeyRepository + MetadataFieldRepository + AuthenticationPort + TaskQueryPort + TaskTransitionPort + ProjectQueryPort + UserQueryPort> TaskBackend for T {}

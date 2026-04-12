@@ -10,7 +10,10 @@ use serde_json::json;
 use crate::application::port::{ProjectQueryPort, TaskQueryPort, TaskTransitionPort, UserQueryPort};
 use crate::domain::error::DomainError;
 use crate::application::port::AuthenticationPort;
-use crate::domain::{ApiKeyRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::{ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::metadata_field::{
+    CreateMetadataFieldParams, MetadataField, UpdateMetadataFieldParams,
+};
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, Task, UpdateTaskArrayParams, UpdateTaskParams,
@@ -574,6 +577,57 @@ impl TaskTransitionPort for HttpBackend {
             .send()
             .await?;
         read_json_or_error(resp).await
+    }
+}
+
+#[async_trait]
+impl MetadataFieldRepository for HttpBackend {
+    async fn create_metadata_field(
+        &self,
+        _project_id: i64,
+        _params: &CreateMetadataFieldParams,
+    ) -> Result<MetadataField> {
+        Err(DomainError::UnsupportedOperation {
+            operation: "create_metadata_field".into(),
+        }
+        .into())
+    }
+
+    async fn get_metadata_field(
+        &self,
+        _project_id: i64,
+        _field_id: i64,
+    ) -> Result<MetadataField> {
+        Err(DomainError::UnsupportedOperation {
+            operation: "get_metadata_field".into(),
+        }
+        .into())
+    }
+
+    async fn list_metadata_fields(&self, _project_id: i64) -> Result<Vec<MetadataField>> {
+        Err(DomainError::UnsupportedOperation {
+            operation: "list_metadata_fields".into(),
+        }
+        .into())
+    }
+
+    async fn update_metadata_field(
+        &self,
+        _project_id: i64,
+        _field_id: i64,
+        _params: &UpdateMetadataFieldParams,
+    ) -> Result<MetadataField> {
+        Err(DomainError::UnsupportedOperation {
+            operation: "update_metadata_field".into(),
+        }
+        .into())
+    }
+
+    async fn delete_metadata_field(&self, _project_id: i64, _field_id: i64) -> Result<()> {
+        Err(DomainError::UnsupportedOperation {
+            operation: "delete_metadata_field".into(),
+        }
+        .into())
     }
 }
 
