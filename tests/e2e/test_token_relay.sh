@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# E2E tests for SENKO_TOKEN relay: forwarding, auth failures, and token leak prevention
+source "$(dirname "$0")/helpers.sh"
+
+setup_test_env
+trap cleanup_test_env EXIT
+
+PORT=$((20000 + RANDOM % 40000))
+API_URL="http://127.0.0.1:$PORT"
+MASTER_KEY=test-key
+SERVER_LOG="$TEST_DIR/server.log"
+
+# Start server with logging captured to file
+RUST_LOG=info SENKO_AUTH_API_KEY_MASTER_KEY="$MASTER_KEY" \
+  "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
+  --db-path "$TEST_PROJECT_ROOT/.senko/data.db" \
+  serve --port "$PORT" >"$SERVER_LOG" 2>&1 &
+SERVER_PID=$!
+trap 'kill $SERVER_PID 2>/dev/null; cleanup_test_env' EXIT
+
+wait_for "API server ready" 10 "curl -sf $API_URL/api/v1/health >/dev/null"
+
+TEST_TOKEN=$(create_test_user_key "$API_URL" "$MASTER_KEY")
+
+# Helper: run CLI with SENKO_TOKEN
+run_with_token() {
+  SENKO_SERVER_URL="$API_URL" SENKO_TOKEN="$TEST_TOKEN" \
+    "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
+}
+
+# Helper: run CLI without SENKO_TOKEN
+run_without_token() {
+  SENKO_SERVER_URL="$API_URL" \
+    "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
+}
+
+echo "=== Section 1: SENKO_TOKEN forwarded to upstream ==="
+
+echo "[1] list with SENKO_TOKEN succeeds"
+LIST=$(run_with_token list)
+assert_eq "0" "$(echo "$LIST" | jq 'length')" "list: empty initially"
+
+echo "[2] add with SENKO_TOKEN succeeds"
+TASK=$(run_with_token add --title "Token Relay Task")
+TASK_ID=$(echo "$TASK" | jq -r '.id')
+assert_json_field "$TASK" '.title' "Token Relay Task" "add: title"
+
+echo "[3] get with SENKO_TOKEN succeeds"
+GOT=$(run_with_token get "$TASK_ID")
+assert_json_field "$GOT" '.title' "Token Relay Task" "get: title matches"
+
+echo ""
+echo "=== Section 2: Without SENKO_TOKEN, operations fail ==="
+
+echo "[4] list without SENKO_TOKEN fails"
+OUTPUT=$(run_without_token list 2>&1 || true)
+assert_contains "$OUTPUT" "authentication required" "list without token: auth error"
+
+echo "[5] empty SENKO_TOKEN fails"
+OUTPUT=$(SENKO_SERVER_URL="$API_URL" SENKO_TOKEN="" \
+  "$SENKO" --project-root "$TEST_PROJECT_ROOT" list 2>&1 || true)
+assert_contains "$OUTPUT" "authentication required" "list with empty token: auth error"
+
+echo "[6] invalid SENKO_TOKEN fails"
+OUTPUT=$(SENKO_SERVER_URL="$API_URL" SENKO_TOKEN="invalid-token-xxxxx" \
+  "$SENKO" --project-root "$TEST_PROJECT_ROOT" list 2>&1 || true)
+assert_contains "$OUTPUT" "authentication required" "list with invalid token: auth error"
+
+echo ""
+echo "=== Section 3: Token not leaked in logs ==="
+
+# Generate additional log entries with the valid token
+run_with_token list >/dev/null 2>&1
+run_with_token get "$TASK_ID" >/dev/null 2>&1
+
+# Give server a moment to flush logs
+sleep 0.5
+
+SERVER_LOGS=$(cat "$SERVER_LOG")
+
+echo "[7] Server logs do not contain raw token"
+assert_not_contains "$SERVER_LOGS" "$TEST_TOKEN" "logs: no raw token"
+
+echo "[8] Server logs do not contain Bearer header value"
+assert_not_contains "$SERVER_LOGS" "Bearer $TEST_TOKEN" "logs: no Bearer token"
+
+echo "[9] Server logs contain expected entries (sanity check)"
+assert_contains "$SERVER_LOGS" "response" "logs: contain response entries"
+
+test_summary

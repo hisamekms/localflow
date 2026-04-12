@@ -17,6 +17,7 @@ RUN apt-get update \
     fish \
     build-essential \
     unzip \
+    keyutils \
     zsh \
     sudo \
     # Playwright browsers dependencies

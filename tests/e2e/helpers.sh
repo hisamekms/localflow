@@ -110,6 +110,22 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local message="${3:-assert_not_contains}"
+
+  if [[ "$haystack" != *"$needle"* ]]; then
+    echo "  PASS: $message"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    echo "  FAIL: $message"
+    echo "    haystack should NOT contain needle"
+    echo "    needle: $needle"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+}
+
 assert_exit_code() {
   local expected="$1"
   shift
