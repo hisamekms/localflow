@@ -17,11 +17,6 @@ for arg in "$@"; do
   esac
 done
 
-echo "=== Building senko ==="
-cd "$PROJECT_ROOT"
-cargo build 2>&1
-echo ""
-
 export SENKO="$PROJECT_ROOT/target/debug/senko"
 
 # Collect test files
