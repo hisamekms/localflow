@@ -166,8 +166,6 @@ pub enum Command {
     Next {
         #[arg(long)]
         session_id: Option<String>,
-        #[arg(long)]
-        user_id: Option<i64>,
         /// JSON string to set as task metadata
         #[arg(long)]
         metadata: Option<String>,
@@ -183,8 +181,6 @@ pub enum Command {
         id: i64,
         #[arg(long)]
         session_id: Option<String>,
-        #[arg(long)]
-        user_id: Option<i64>,
         /// JSON string to set as task metadata
         #[arg(long)]
         metadata: Option<String>,
@@ -667,9 +663,9 @@ pub async fn run(cli: Cli) -> Result<()> {
             ready,
         } => handlers::cmd_list(&cli, status.clone(), tag.clone(), *depends_on, ready).await,
         Command::Get { task_id } => handlers::cmd_get(&cli, task_id).await,
-        Command::Next { ref session_id, user_id, ref metadata } => handlers::cmd_next(&cli, session_id.clone(), user_id, metadata.clone()).await,
+        Command::Next { ref session_id, ref metadata } => handlers::cmd_next(&cli, session_id.clone(), metadata.clone()).await,
         Command::Ready { id } => handlers::cmd_ready(&cli, id).await,
-        Command::Start { id, ref session_id, user_id, ref metadata } => handlers::cmd_start(&cli, id, session_id.clone(), user_id, metadata.clone()).await,
+        Command::Start { id, ref session_id, ref metadata } => handlers::cmd_start(&cli, id, session_id.clone(), metadata.clone()).await,
         Command::Edit {
             id,
             ref title,
@@ -766,11 +762,18 @@ pub async fn run(cli: Cli) -> Result<()> {
             });
             #[cfg(feature = "aws-secrets")]
             config.resolve_secrets().await?;
-            crate::bootstrap::validate_serve_auth(&config)?;
+            let is_proxy = config.server.url.is_some();
+            if !is_proxy {
+                crate::bootstrap::validate_serve_auth(&config)?;
+            }
             let backend = create_backend(&root, &config)?;
             let port_is_explicit = config.serve_port_is_explicit();
             let effective_port = config.serve_port_or(3142);
-            let auth_provider = crate::bootstrap::create_auth_provider(&config, backend.clone())?;
+            let auth_provider = if is_proxy {
+                None
+            } else {
+                crate::bootstrap::create_auth_provider(&config, backend.clone())?
+            };
             crate::presentation::api::serve(root, effective_port, port_is_explicit, &config, cli.config.clone(), backend, auth_provider).await?;
             Ok(())
         }

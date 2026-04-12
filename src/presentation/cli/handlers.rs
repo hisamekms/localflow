@@ -10,7 +10,7 @@ use super::{
 use crate::bootstrap::{
     create_backend, create_hook_test_service, create_project_service,
     create_task_operations, create_user_service,
-    resolve_project_id, resolve_user_id, DEFAULT_PROJECT_ID,
+    resolve_project_id, DEFAULT_PROJECT_ID,
 };
 use crate::bootstrap::hook as hooks;
 use crate::application::HookTrigger;
@@ -310,15 +310,12 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     Ok(())
 }
 
-pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Option<i64>, metadata: Option<String>) -> Result<()> {
+pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, metadata: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, backend) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let user_id = match user_id {
-        Some(id) => Some(id),
-        None => Some(resolve_user_id(&*backend, &config).await?),
-    };
+    let user_id = None;
     let metadata: Option<serde_json::Value> = metadata
         .map(|s| serde_json::from_str(&s))
         .transpose()
@@ -331,9 +328,6 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
         }
         if let Some(ref sid) = session_id {
             result.operations.push(format!("Set assignee_session_id to \"{}\"", sid));
-        }
-        if let Some(uid) = user_id {
-            result.operations.push(format!("Set assignee_user_id to {}", uid));
         }
         if metadata.is_some() {
             result.operations.push("Set metadata".to_string());
@@ -355,15 +349,12 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
     Ok(())
 }
 
-pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>, metadata: Option<String>) -> Result<()> {
+pub async fn cmd_next(cli: &Cli, session_id: Option<String>, metadata: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, backend) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let user_id = match user_id {
-        Some(id) => Some(id),
-        None => Some(resolve_user_id(&*backend, &config).await?),
-    };
+    let user_id = None;
     let metadata: Option<serde_json::Value> = metadata
         .map(|s| serde_json::from_str(&s))
         .transpose()
@@ -374,9 +365,6 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
         let mut operations = result.operations;
         if let Some(ref sid) = session_id {
             operations.push(format!("Set assignee_session_id to \"{}\"", sid));
-        }
-        if let Some(uid) = user_id {
-            operations.push(format!("Set assignee_user_id to {}", uid));
         }
         if metadata.is_some() {
             operations.push("Set metadata".to_string());
