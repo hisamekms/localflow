@@ -249,6 +249,8 @@ pub struct TrustedHeadersConfig {
     pub email_header: Option<String>,
     pub groups_header: Option<String>,
     pub scope_header: Option<String>,
+    pub oidc_issuer_url: Option<String>,
+    pub oidc_client_id: Option<String>,
 }
 
 impl TrustedHeadersConfig {
@@ -646,6 +648,8 @@ pub struct RawTrustedHeadersConfig {
     pub email_header: Option<String>,
     pub groups_header: Option<String>,
     pub scope_header: Option<String>,
+    pub oidc_issuer_url: Option<String>,
+    pub oidc_client_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -761,6 +765,18 @@ impl RawConfig {
                             .trusted_headers
                             .scope_header
                             .or(self.server.auth.trusted_headers.scope_header),
+                        oidc_issuer_url: overlay
+                            .server
+                            .auth
+                            .trusted_headers
+                            .oidc_issuer_url
+                            .or(self.server.auth.trusted_headers.oidc_issuer_url),
+                        oidc_client_id: overlay
+                            .server
+                            .auth
+                            .trusted_headers
+                            .oidc_client_id
+                            .or(self.server.auth.trusted_headers.oidc_client_id),
                     },
                     oidc: RawOidcConfig {
                         issuer_url: overlay
@@ -924,6 +940,8 @@ impl RawConfig {
                         email_header: self.server.auth.trusted_headers.email_header,
                         groups_header: self.server.auth.trusted_headers.groups_header,
                         scope_header: self.server.auth.trusted_headers.scope_header,
+                        oidc_issuer_url: self.server.auth.trusted_headers.oidc_issuer_url,
+                        oidc_client_id: self.server.auth.trusted_headers.oidc_client_id,
                     },
                 },
             },
@@ -1090,6 +1108,14 @@ impl Config {
         if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_SCOPE_HEADER")
             && !val.is_empty() {
                 self.server.auth.trusted_headers.scope_header = Some(val);
+            }
+        if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_OIDC_ISSUER_URL")
+            && !val.is_empty() {
+                self.server.auth.trusted_headers.oidc_issuer_url = Some(val);
+            }
+        if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_OIDC_CLIENT_ID")
+            && !val.is_empty() {
+                self.server.auth.trusted_headers.oidc_client_id = Some(val);
             }
 
         // Server OIDC session settings

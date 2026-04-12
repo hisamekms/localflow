@@ -52,8 +52,10 @@ STATUS=$(status_no_auth "$AUTH_BASE/config")
 assert_eq "200" "$STATUS" "GET /auth/config without auth returns 200"
 
 echo ""
-echo "=== GET /auth/config returns JSON with oidc field ==="
+echo "=== GET /auth/config returns JSON with auth_mode and oidc fields ==="
 BODY=$(curl -sf "$AUTH_BASE/config")
+assert_contains "$BODY" '"auth_mode"' "GET /auth/config response contains auth_mode field"
+assert_contains "$BODY" '"auth_mode":"api_key"' "GET /auth/config returns auth_mode api_key"
 assert_contains "$BODY" '"oidc"' "GET /auth/config response contains oidc field"
 
 # =============================================

@@ -54,6 +54,7 @@ struct AppState {
     proxy_mode: bool,
     session_config: crate::infra::config::SessionConfig,
     oidc_config: crate::infra::config::OidcConfig,
+    trusted_headers_config: crate::infra::config::TrustedHeadersConfig,
 }
 
 impl HasAuth for AppState {
@@ -404,6 +405,7 @@ pub async fn serve(
         proxy_mode: config.cli.remote.url.is_some(),
         session_config: config.server.auth.oidc.session.clone(),
         oidc_config: config.server.auth.oidc.clone(),
+        trusted_headers_config: config.server.auth.trusted_headers.clone(),
     };
 
     let app = Router::new()
@@ -956,16 +958,33 @@ async fn uncheck_dod(
 
 // GET /auth/config (public, no auth required)
 async fn get_auth_config(State(state): State<AppState>) -> Json<AuthConfigResponse> {
-    let oidc = if state.oidc_config.is_configured() {
-        Some(AuthConfigOidc {
-            issuer_url: state.oidc_config.issuer_url.clone().unwrap(),
-            client_id: state.oidc_config.client_id.clone().unwrap(),
-            scopes: state.oidc_config.scopes.clone(),
-        })
-    } else {
-        None
+    let (auth_mode, oidc) = match state.auth_mode.as_deref() {
+        Some(AuthMode::Token(_)) if state.oidc_config.is_configured() => (
+            "oidc".to_string(),
+            Some(AuthConfigOidc {
+                issuer_url: state.oidc_config.issuer_url.clone().unwrap(),
+                client_id: state.oidc_config.client_id.clone().unwrap(),
+                scopes: state.oidc_config.scopes.clone(),
+            }),
+        ),
+        Some(AuthMode::Token(_)) => ("api_key".to_string(), None),
+        Some(AuthMode::TrustedHeaders(_)) => {
+            let oidc = match (
+                &state.trusted_headers_config.oidc_issuer_url,
+                &state.trusted_headers_config.oidc_client_id,
+            ) {
+                (Some(issuer_url), Some(client_id)) => Some(AuthConfigOidc {
+                    issuer_url: issuer_url.clone(),
+                    client_id: client_id.clone(),
+                    scopes: vec!["openid".to_string(), "profile".to_string()],
+                }),
+                _ => None,
+            };
+            ("trusted_headers".to_string(), oidc)
+        }
+        None => ("none".to_string(), None),
     };
-    Json(AuthConfigResponse { oidc })
+    Json(AuthConfigResponse { auth_mode, oidc })
 }
 
 // GET /api/v1/config

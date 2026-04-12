@@ -403,6 +403,7 @@ pub struct TokenResponse {
 
 #[derive(Serialize)]
 pub struct AuthConfigResponse {
+    pub auth_mode: String,
     pub oidc: Option<AuthConfigOidc>,
 }
 
