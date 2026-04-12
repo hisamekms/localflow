@@ -48,6 +48,33 @@ run_lf() {
   "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" "$@"
 }
 
+# Create a test user with API key and project membership, return the API key.
+# Usage: TEST_TOKEN=$(create_test_user_key "$API_URL" "master-key")
+create_test_user_key() {
+  local api_url="$1"
+  local master_key="$2"
+  local project_id="${3:-1}"
+  local username="test_user_$$_$(date +%s%N)"
+
+  local user_json
+  user_json=$(curl -sf -X POST "$api_url/api/v1/users" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $master_key" \
+    -d "{\"username\":\"$username\"}")
+  local user_id
+  user_id=$(echo "$user_json" | jq -r '.id')
+
+  # Add user to project as owner (via CLI to bypass API auth)
+  run_lf members add --user-id "$user_id" --role owner >/dev/null
+
+  local key_json
+  key_json=$(curl -sf -X POST "$api_url/api/v1/users/$user_id/api-keys" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $master_key" \
+    -d '{}')
+  echo "$key_json" | jq -r '.key'
+}
+
 # --- Assertion functions ---
 
 assert_eq() {

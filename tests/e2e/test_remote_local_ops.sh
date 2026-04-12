@@ -8,13 +8,15 @@ setup_test_env
 trap cleanup_test_env EXIT
 
 SERVER_PID=""
+MASTER_KEY=test-key
 
 start_server() {
   PORT=$((20000 + RANDOM % 40000))
   API_URL="http://127.0.0.1:$PORT"
-  SENKO_AUTH_API_KEY_MASTER_KEY=test-key "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT" >/dev/null 2>&1 &
+  SENKO_AUTH_API_KEY_MASTER_KEY="$MASTER_KEY" "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT" >/dev/null 2>&1 &
   SERVER_PID=$!
   wait_for "API server ready" 10 "curl -sf $API_URL/api/v1/health >/dev/null"
+  TEST_TOKEN=$(create_test_user_key "$API_URL" "$MASTER_KEY")
 }
 
 stop_server() {
@@ -32,7 +34,7 @@ cleanup_all() {
 trap cleanup_all EXIT
 
 run_http() {
-  SENKO_SERVER_URL="$API_URL" SENKO_TOKEN=test-key "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
+  SENKO_SERVER_URL="$API_URL" SENKO_TOKEN="$TEST_TOKEN" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
 clear_hook_log() {
@@ -230,7 +232,7 @@ run_http start "$BLOCKER_ID" >/dev/null
 
 echo "[3.1] Complete via API returns unblocked_tasks"
 # Call the API directly with curl to get the full CompleteTaskResponse
-COMPLETE_RESP=$(curl -sf -H "Authorization: Bearer test-key" -X POST "$API_URL/api/v1/projects/$PROJECT_ID/tasks/$BLOCKER_ID/complete")
+COMPLETE_RESP=$(curl -sf -H "Authorization: Bearer $TEST_TOKEN" -X POST "$API_URL/api/v1/projects/$PROJECT_ID/tasks/$BLOCKER_ID/complete")
 
 assert_json_field "$COMPLETE_RESP" '.task.status' "completed" "api complete: task status"
 
@@ -249,7 +251,7 @@ STANDALONE_ID=$(echo "$STANDALONE" | jq -r '.id')
 run_http ready "$STANDALONE_ID" >/dev/null
 run_http start "$STANDALONE_ID" >/dev/null
 
-COMPLETE_RESP2=$(curl -sf -H "Authorization: Bearer test-key" -X POST "$API_URL/api/v1/projects/$PROJECT_ID/tasks/$STANDALONE_ID/complete")
+COMPLETE_RESP2=$(curl -sf -H "Authorization: Bearer $TEST_TOKEN" -X POST "$API_URL/api/v1/projects/$PROJECT_ID/tasks/$STANDALONE_ID/complete")
 UNBLOCKED_COUNT2=$(echo "$COMPLETE_RESP2" | jq '.unblocked_tasks | length')
 assert_eq "0" "$UNBLOCKED_COUNT2" "api complete: 0 unblocked for standalone task"
 

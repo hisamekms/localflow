@@ -11,25 +11,29 @@ BASE="http://127.0.0.1:$PORT/api/v1"
 PBASE="$BASE/projects/1"
 
 # Start the API server in background
-SENKO_AUTH_API_KEY_MASTER_KEY=test-key "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT" &
+MASTER_KEY=test-key
+SENKO_AUTH_API_KEY_MASTER_KEY="$MASTER_KEY" "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT" &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null; cleanup_test_env' EXIT
 
 # Wait for server to be ready
 wait_for "API server ready" 10 "curl -sf $BASE/health >/dev/null"
 
+# Create a real user and API key (master key is only for user creation)
+TEST_TOKEN=$(create_test_user_key "http://127.0.0.1:$PORT" "$MASTER_KEY")
+
 # --- Helpers ---
 # GET request
 api_get() {
-  curl -sf -H "Authorization: Bearer test-key" "$@"
+  curl -sf -H "Authorization: Bearer $TEST_TOKEN" "$@"
 }
 # POST/PUT/DELETE with JSON body
 api_json() {
-  curl -sf -H "Content-Type: application/json" -H "Authorization: Bearer test-key" "$@"
+  curl -sf -H "Content-Type: application/json" -H "Authorization: Bearer $TEST_TOKEN" "$@"
 }
 # Get HTTP status code
 api_status() {
-  curl -s -o /dev/null -w '%{http_code}' -H "Content-Type: application/json" -H "Authorization: Bearer test-key" "$@"
+  curl -s -o /dev/null -w '%{http_code}' -H "Content-Type: application/json" -H "Authorization: Bearer $TEST_TOKEN" "$@"
 }
 
 echo "=== Stats endpoint ==="
