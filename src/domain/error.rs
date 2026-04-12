@@ -19,6 +19,9 @@ pub enum DomainError {
     #[error("dependency not found: task {task_id} does not depend on {dep_id}")]
     DependencyNotFound { task_id: i64, dep_id: i64 },
 
+    #[error("metadata field not found")]
+    MetadataFieldNotFound,
+
     #[error("no eligible task found")]
     NoEligibleTask,
 
@@ -51,6 +54,12 @@ pub enum DomainError {
     #[error("metadata nesting too deep: depth {depth} exceeds maximum of {max}")]
     MetadataTooDeep { depth: u32, max: u32 },
 
+    #[error("invalid metadata field type: {value}")]
+    InvalidMetadataFieldType { value: String },
+
+    #[error("invalid metadata field name: {reason}")]
+    InvalidMetadataFieldName { reason: String },
+
     // Conflict (409)
     #[error("invalid status transition: {from} -> {to}")]
     InvalidStatusTransition { from: String, to: String },
@@ -66,6 +75,9 @@ pub enum DomainError {
 
     #[error("session limit exceeded: maximum {max} active sessions per user")]
     SessionLimitExceeded { max: u32 },
+
+    #[error("metadata field name already exists in this project: {name}")]
+    MetadataFieldNameConflict { name: String },
 
     // Not Implemented (501)
     #[error("operation not supported: {operation}")]

@@ -199,7 +199,8 @@ fn classify_error(e: anyhow::Error) -> ApiError {
             | DomainError::ProjectMemberNotFound
             | DomainError::ApiKeyNotFound
             | DomainError::DependencyNotFound { .. }
-            | DomainError::NoEligibleTask => ApiError::NotFound(msg),
+            | DomainError::NoEligibleTask
+            | DomainError::MetadataFieldNotFound => ApiError::NotFound(msg),
 
             DomainError::InvalidTaskStatus { .. }
             | DomainError::InvalidPriority { .. }
@@ -208,13 +209,16 @@ fn classify_error(e: anyhow::Error) -> ApiError {
             | DomainError::DependencyCycle { .. }
             | DomainError::DodIndexOutOfRange { .. }
             | DomainError::MetadataTooLarge { .. }
-            | DomainError::MetadataTooDeep { .. } => ApiError::BadRequest(msg),
+            | DomainError::MetadataTooDeep { .. }
+            | DomainError::InvalidMetadataFieldType { .. }
+            | DomainError::InvalidMetadataFieldName { .. } => ApiError::BadRequest(msg),
 
             DomainError::InvalidStatusTransition { .. }
             | DomainError::CannotCompleteTask { .. }
             | DomainError::CannotDeleteDefaultProject
             | DomainError::CannotDeleteProjectWithTasks { .. }
-            | DomainError::SessionLimitExceeded { .. } => ApiError::Conflict(msg),
+            | DomainError::SessionLimitExceeded { .. }
+            | DomainError::MetadataFieldNameConflict { .. } => ApiError::Conflict(msg),
 
             DomainError::UnsupportedOperation { .. } => ApiError::NotImplemented(msg),
         };
