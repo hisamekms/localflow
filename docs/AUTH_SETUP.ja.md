@@ -2,13 +2,14 @@
 
 [English](AUTH_SETUP.md) | [READMEに戻る](README.ja.md)
 
-senkoは3つの認証モードをサポートしています。用途に応じて適切なモードを選択してください。
+senkoは4つの認証モードをサポートしています。用途に応じて適切なモードを選択してください。
 
 | モード | ユースケース | 必要なインフラ | 認証方法 |
 |--------|-------------|---------------|---------|
 | Local | 個人開発、単一ユーザー | なし | 認証なし |
 | Remote + API key | CI/CD、サービス間連携 | senkoサーバー | APIキー |
 | Remote + OIDC | チーム利用、エンタープライズSSO | senkoサーバー + OIDCプロバイダー | OAuth PKCE + APIキー |
+| Relay/Proxy | AIサンドボックス、マルチテナント中継 | senko中継サーバー + senkoリモートサーバー | トークン注入またはパススルー |
 
 ## Local モード
 
@@ -321,23 +322,147 @@ senko auth revoke --all
 senko auth logout
 ```
 
+## Relay/Proxy モード
+
+senkoインスタンスをリレー（中継）サーバーとして稼働させ、リモートのsenkoサーバーにリクエストを転送します。リレーではローカルでの認証を行わず、すべての認証はアップストリームのリモートサーバーに委任されます。クライアントが認証情報を保持すべきでないAIサンドボックス環境や、複数クライアントからのリクエストを集約するマルチテナント構成に適しています。
+
+> **補足**: リモートサーバーは事前に [Remote + API key](#remote--api-key-モード) または [Remote + OIDC](#remote--oidc-モード) モードでセットアップしておく必要があります。
+
+### アーキテクチャ
+
+```
+CLI ──→ 中継サーバー (senko serve) ──→ リモートサーバー
+         [backend.api_url 設定済み]       [認証有効]
+```
+
+`backend.api_url` が設定された状態で `senko serve` を実行すると、インスタンスはリレーモードで動作します:
+
+- ローカルでの認証はスキップされます（アップストリームサーバーに委任）
+- リレーはクライアントの `Authorization` ヘッダーから Bearer トークンを取得します
+- リクエストは以下のいずれかのトークンでリモートサーバーに転送されます:
+  - リレー自身の `backend.api_key`（設定されている場合）— 優先
+  - クライアントの元のトークン（パススルー）
+
+### パターンA: トークン注入（AIサンドボックス）
+
+リレーが自身のトークンを転送リクエストに付与します。クライアントは認証情報を必要としません。
+
+#### 中継サーバーの設定
+
+中継サーバーの `.senko/config.toml`:
+
+```toml
+[backend]
+api_url = "http://remote-senko:3142"
+api_key = "リモートサーバーで発行されたリレー用APIキー"
+```
+
+環境変数で設定する場合:
+
+```bash
+export SENKO_API_URL="http://remote-senko:3142"
+export SENKO_BACKEND_API_KEY="リモートサーバーで発行されたリレー用APIキー"
+```
+
+リレーを起動:
+
+```bash
+senko serve --host 0.0.0.0 --port 3142
+```
+
+#### 利用者の手順
+
+クライアントはリレーのURLのみ設定します（トークン不要）:
+
+```toml
+[backend]
+api_url = "http://relay-server:3142"
+```
+
+環境変数で設定する場合:
+
+```bash
+export SENKO_API_URL="http://relay-server:3142"
+```
+
+#### 接続確認
+
+```bash
+senko --output text list
+```
+
+### パターンB: トークンパススルー
+
+リレーはクライアントの元のトークンをそのままリモートサーバーに転送します。各クライアントが個別に認証を行います。
+
+#### 中継サーバーの設定
+
+中継サーバーの `.senko/config.toml`（`api_key` なし — `api_url` のみ）:
+
+```toml
+[backend]
+api_url = "http://remote-senko:3142"
+```
+
+環境変数で設定する場合:
+
+```bash
+export SENKO_API_URL="http://remote-senko:3142"
+```
+
+リレーを起動:
+
+```bash
+senko serve --host 0.0.0.0 --port 3142
+```
+
+#### 利用者の手順
+
+クライアントはリレーのURLと自身のトークン（APIキーまたはOIDC発行トークン）を設定します:
+
+```toml
+[backend]
+api_url = "http://relay-server:3142"
+api_key = "クライアント自身のAPIキー"
+```
+
+環境変数で設定する場合:
+
+```bash
+export SENKO_API_URL="http://relay-server:3142"
+export SENKO_BACKEND_API_KEY="クライアント自身のAPIキー"
+```
+
+#### リモートサーバー
+
+リモートサーバーはクライアントのトークンを直接検証します。既存の [Remote + API key](#remote--api-key-モード) または [Remote + OIDC](#remote--oidc-モード) のセットアップ以外に特別な設定は不要です。
+
+### まとめ
+
+| | パターンA（トークン注入） | パターンB（トークンパススルー） |
+|-|--------------------------|-------------------------------|
+| **ユースケース** | AIサンドボックス、共有サービスアカウント | リレー経由のユーザー個別認証 |
+| **クライアントトークン** | 不要 | 必要（APIキーまたはOIDCトークン） |
+| **中継サーバー設定** | `backend.api_url` + `backend.api_key` | `backend.api_url` のみ |
+| **リモートが検証するもの** | リレーのトークン | クライアントの元のトークン |
+
 ## config.toml リファレンス
 
 ### 認証関連の設定キー
 
-| セクション | キー | 型 | デフォルト | 説明 | Local | Remote+APIキー | Remote+OIDC |
-|-----------|------|------|----------|------|:-----:|:-------------:|:-----------:|
-| `[auth]` | `enabled` | bool | `false` | 認証を有効化 | - | 必須 | 必須 |
-| `[auth]` | `master_api_key` | string | - | マスターAPIキー | - | 必須 | 任意 |
-| `[auth]` | `master_api_key_arn` | string | - | AWS Secrets Manager ARN | - | 任意 | 任意 |
-| `[auth.oidc]` | `issuer_url` | string | - | OIDC発行者URL | - | - | 必須 |
-| `[auth.oidc]` | `client_id` | string | - | OIDCクライアントID | - | - | 必須 |
-| `[auth.oidc]` | `scopes` | array | `["openid", "profile"]` | OIDCスコープ | - | - | 任意 |
-| `[auth.oidc.cli]` | `callback_port` | integer | 自動割当 | コールバックポート | - | - | 任意 |
-| `[auth.oidc.cli]` | `browser` | bool | `true` | ブラウザ自動起動 | - | - | 任意 |
-| `[auth.token]` | `ttl` | string | 無期限 | トークン有効期限（例: `"24h"`, `"30d"`） | - | 任意 | 任意 |
-| `[auth.token]` | `inactive_ttl` | string | 無期限 | 非アクティブ時の有効期限 | - | 任意 | 任意 |
-| `[auth.token]` | `max_per_user` | integer | 無制限 | ユーザーあたりの最大セッション数 | - | 任意 | 任意 |
+| セクション | キー | 型 | デフォルト | 説明 | Local | Remote+APIキー | Remote+OIDC | Relay |
+|-----------|------|------|----------|------|:-----:|:-------------:|:-----------:|:-----:|
+| `[auth]` | `enabled` | bool | `false` | 認証を有効化 | - | 必須 | 必須 | - |
+| `[auth]` | `master_api_key` | string | - | マスターAPIキー | - | 必須 | 任意 | - |
+| `[auth]` | `master_api_key_arn` | string | - | AWS Secrets Manager ARN | - | 任意 | 任意 | - |
+| `[auth.oidc]` | `issuer_url` | string | - | OIDC発行者URL | - | - | 必須 | - |
+| `[auth.oidc]` | `client_id` | string | - | OIDCクライアントID | - | - | 必須 | - |
+| `[auth.oidc]` | `scopes` | array | `["openid", "profile"]` | OIDCスコープ | - | - | 任意 | - |
+| `[auth.oidc.cli]` | `callback_port` | integer | 自動割当 | コールバックポート | - | - | 任意 | - |
+| `[auth.oidc.cli]` | `browser` | bool | `true` | ブラウザ自動起動 | - | - | 任意 | - |
+| `[auth.token]` | `ttl` | string | 無期限 | トークン有効期限（例: `"24h"`, `"30d"`） | - | 任意 | 任意 | - |
+| `[auth.token]` | `inactive_ttl` | string | 無期限 | 非アクティブ時の有効期限 | - | 任意 | 任意 | - |
+| `[auth.token]` | `max_per_user` | integer | 無制限 | ユーザーあたりの最大セッション数 | - | 任意 | 任意 | - |
 
 ### 接続関連の設定キー
 
@@ -350,6 +475,8 @@ senko auth logout
 | `[project]` | `name` | string | `"default"` | プロジェクト名 |
 | `[user]` | `name` | string | `"default"` | ユーザー名 |
 | `[storage]` | `db_path` | string | `.senko/senko.db` | SQLiteデータベースパス |
+
+> **補足**: リレーモードでは、中継サーバーの `[backend]` セクションがアップストリームのリモートサーバーを指定します。`backend.api_url` を設定した状態で `senko serve` を実行するとリレーモードが有効になります。`backend.api_key`（設定されている場合）はクライアントのトークンの代わりに転送リクエストに付与されます。
 
 ### 認証関連の環境変数
 

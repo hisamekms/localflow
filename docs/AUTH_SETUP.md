@@ -2,13 +2,14 @@
 
 [Japanese](AUTH_SETUP.ja.md) | [Back to README](../README.md)
 
-senko supports three authentication modes. Choose the one that best fits your use case.
+senko supports four authentication modes. Choose the one that best fits your use case.
 
 | Mode | Use Case | Infrastructure | Auth Method |
 |------|----------|---------------|-------------|
 | Local | Personal development, single user | None | No auth |
 | Remote + API key | CI/CD, service-to-service | senko server | API key |
 | Remote + OIDC | Team use, enterprise SSO | senko server + OIDC provider | OAuth PKCE + API key |
+| Relay/Proxy | AI sandbox, multi-tenant relay | senko relay + senko remote server | Token injection or passthrough |
 
 ## Local Mode
 
@@ -317,23 +318,147 @@ senko auth revoke --all
 senko auth logout
 ```
 
+## Relay/Proxy Mode
+
+Run a senko instance as a relay that forwards requests to a remote senko server. The relay handles no authentication locally — all auth validation is delegated to the upstream remote server. This is useful for AI sandbox environments where clients should not hold credentials, or for multi-tenant setups where a relay aggregates requests from multiple clients.
+
+> **Note**: The remote server must be set up first using either [Remote + API Key](#remote--api-key-mode) or [Remote + OIDC](#remote--oidc-mode) mode.
+
+### Architecture
+
+```
+CLI ──→ Relay Server (senko serve) ──→ Remote Server
+         [server.url configured]        [auth enabled]
+```
+
+When `server.url` is configured and `senko serve` is run, the instance operates in relay mode:
+
+- Local authentication is skipped (delegated to the upstream server)
+- The relay captures the client's Bearer token from the `Authorization` header
+- Requests are forwarded to the remote server with either:
+  - The relay's own `server.token` (if configured) — takes priority
+  - The client's original token (passthrough)
+
+### Pattern A: Token Injection (AI Sandbox)
+
+The relay injects its own token into forwarded requests. Clients do not need any credentials.
+
+#### Relay Server Setup
+
+`.senko/config.toml` on the relay:
+
+```toml
+[server]
+url = "http://remote-senko:3142"
+token = "relay-api-key-issued-by-remote-server"
+```
+
+Using environment variables:
+
+```bash
+export SENKO_SERVER_URL="http://remote-senko:3142"
+export SENKO_TOKEN="relay-api-key-issued-by-remote-server"
+```
+
+Start the relay:
+
+```bash
+senko serve --host 0.0.0.0 --port 3142
+```
+
+#### Client Setup
+
+The client only needs the relay's URL — no token required:
+
+```toml
+[server]
+url = "http://relay-server:3142"
+```
+
+Using environment variables:
+
+```bash
+export SENKO_SERVER_URL="http://relay-server:3142"
+```
+
+#### Verify
+
+```bash
+senko --output text list
+```
+
+### Pattern B: Token Passthrough
+
+The relay forwards the client's original token to the remote server. Each client authenticates individually.
+
+#### Relay Server Setup
+
+`.senko/config.toml` on the relay (no `token` — only `url`):
+
+```toml
+[server]
+url = "http://remote-senko:3142"
+```
+
+Using environment variables:
+
+```bash
+export SENKO_SERVER_URL="http://remote-senko:3142"
+```
+
+Start the relay:
+
+```bash
+senko serve --host 0.0.0.0 --port 3142
+```
+
+#### Client Setup
+
+The client configures both the relay URL and its own token (API key or OIDC-issued token):
+
+```toml
+[server]
+url = "http://relay-server:3142"
+token = "client-own-api-key"
+```
+
+Using environment variables:
+
+```bash
+export SENKO_SERVER_URL="http://relay-server:3142"
+export SENKO_TOKEN="client-own-api-key"
+```
+
+#### Remote Server
+
+The remote server validates the client's token directly. No special configuration is needed beyond the existing [Remote + API Key](#remote--api-key-mode) or [Remote + OIDC](#remote--oidc-mode) setup.
+
+### Summary
+
+| | Pattern A (Token Injection) | Pattern B (Token Passthrough) |
+|-|----------------------------|-------------------------------|
+| **Use case** | AI sandbox, shared service account | Per-user auth via relay |
+| **Client token** | Not required | Required (API key or OIDC token) |
+| **Relay config** | `server.url` + `server.token` | `server.url` only |
+| **Remote validates** | Relay's token | Client's original token |
+
 ## config.toml Reference
 
 ### Authentication Configuration Keys
 
-| Section | Key | Type | Default | Description | Local | Remote+API Key | Remote+OIDC |
-|---------|-----|------|---------|-------------|:-----:|:--------------:|:-----------:|
-| `[auth.api_key]` | `master_key` | string | - | Master API key | - | Required | Optional |
-| `[auth.api_key]` | `master_key_arn` | string | - | AWS Secrets Manager ARN | - | Optional | Optional |
-| `[auth.oidc]` | `issuer_url` | string | - | OIDC issuer URL | - | - | Required |
-| `[auth.oidc]` | `client_id` | string | - | OIDC client ID | - | - | Required |
-| `[auth.oidc]` | `scopes` | array | `["openid", "profile"]` | OIDC scopes | - | - | Optional |
-| `[auth.oidc]` | `required_claims` | table | - | Required JWT claims (key-value pairs) | - | - | Optional |
-| `[auth.oidc.cli]` | `callback_port` | integer | Auto-assign | Callback port | - | - | Optional |
-| `[auth.oidc.cli]` | `browser` | bool | `true` | Auto-open browser | - | - | Optional |
-| `[auth.oidc.session]` | `ttl` | string | No expiration | Session lifetime (e.g., `"24h"`, `"30d"`) | - | Optional | Optional |
-| `[auth.oidc.session]` | `inactive_ttl` | string | No expiration | Inactivity timeout | - | Optional | Optional |
-| `[auth.oidc.session]` | `max_per_user` | integer | Unlimited | Max sessions per user | - | Optional | Optional |
+| Section | Key | Type | Default | Description | Local | Remote+API Key | Remote+OIDC | Relay |
+|---------|-----|------|---------|-------------|:-----:|:--------------:|:-----------:|:-----:|
+| `[auth.api_key]` | `master_key` | string | - | Master API key | - | Required | Optional | - |
+| `[auth.api_key]` | `master_key_arn` | string | - | AWS Secrets Manager ARN | - | Optional | Optional | - |
+| `[auth.oidc]` | `issuer_url` | string | - | OIDC issuer URL | - | - | Required | - |
+| `[auth.oidc]` | `client_id` | string | - | OIDC client ID | - | - | Required | - |
+| `[auth.oidc]` | `scopes` | array | `["openid", "profile"]` | OIDC scopes | - | - | Optional | - |
+| `[auth.oidc]` | `required_claims` | table | - | Required JWT claims (key-value pairs) | - | - | Optional | - |
+| `[auth.oidc.cli]` | `callback_port` | integer | Auto-assign | Callback port | - | - | Optional | - |
+| `[auth.oidc.cli]` | `browser` | bool | `true` | Auto-open browser | - | - | Optional | - |
+| `[auth.oidc.session]` | `ttl` | string | No expiration | Session lifetime (e.g., `"24h"`, `"30d"`) | - | Optional | Optional | - |
+| `[auth.oidc.session]` | `inactive_ttl` | string | No expiration | Inactivity timeout | - | Optional | Optional | - |
+| `[auth.oidc.session]` | `max_per_user` | integer | Unlimited | Max sessions per user | - | Optional | Optional | - |
 
 > **Note**: Authentication is implicitly enabled when any `[auth.*]` configuration is present. There is no explicit `auth.enabled` key.
 
@@ -348,6 +473,8 @@ senko auth logout
 | `[project]` | `name` | string | `"default"` | Project name |
 | `[user]` | `name` | string | `"default"` | User name |
 | `[storage]` | `db_path` | string | `.senko/senko.db` | SQLite database path |
+
+> **Note**: In relay mode, the `[server]` section on the relay server specifies the upstream remote server. `server.url` enables relay mode when `senko serve` is run; `server.token` (if set) is injected into forwarded requests instead of passing through the client's token.
 
 ### API Endpoints
 
