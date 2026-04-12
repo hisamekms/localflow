@@ -21,6 +21,7 @@ run = "cargo test"
 
 [tasks.test-e2e]
 description = "Run e2e tests"
+depends = ["build"]
 run = "bash tests/e2e/run.sh"
 
 [tasks.senko-dev]
