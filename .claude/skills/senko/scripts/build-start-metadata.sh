@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build metadata JSON from config.toml's [skill.start].metadata_fields.
+# Build metadata JSON from config.toml's [workflow.start].metadata_fields.
 # Resolves env/fixed sources, reports prompt sources for the caller to handle.
 #
 # Output (JSON):
@@ -9,7 +9,7 @@ set -euo pipefail
 
 SENKO_BIN="${SENKO_BIN:-senko}"
 CONFIG_JSON=$("$SENKO_BIN" config)
-FIELDS=$(echo "$CONFIG_JSON" | jq -c '.skill.start.metadata_fields // []')
+FIELDS=$(echo "$CONFIG_JSON" | jq -c '.workflow.start.metadata_fields // []')
 FIELD_COUNT=$(echo "$FIELDS" | jq 'length')
 
 if [ "$FIELD_COUNT" -eq 0 ]; then

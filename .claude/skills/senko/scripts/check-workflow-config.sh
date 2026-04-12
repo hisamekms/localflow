@@ -44,43 +44,44 @@ case "$AUTO_MERGE" in
   *) error "invalid auto_merge: $AUTO_MERGE (expected: true, false)" ;;
 esac
 
-# Validate workflow events
-VALID_POINTS="pre_start pre_merge post_merge pre_complete post_complete pre_pr post_pr"
-EVENT_COUNT=$(echo "$CONFIG_JSON" | jq '.workflow.events // [] | length')
+# Validate workflow stage hooks (instructions, pre_hooks, post_hooks)
+STAGES="add start branch plan implement merge pr complete branch_cleanup"
 
-for i in $(seq 0 $((EVENT_COUNT - 1))); do
-  EVENT=$(echo "$CONFIG_JSON" | jq -c ".workflow.events[$i]")
-  ETYPE=$(echo "$EVENT" | jq -r '.type')
-  POINT=$(echo "$EVENT" | jq -r '.point')
-
-  case "$ETYPE" in
-    command)
-      CMD=$(echo "$EVENT" | jq -r '.command // empty')
-      if [ -z "$CMD" ]; then
-        error "event #$((i+1)) at point '$POINT': command type requires 'command' field"
-      fi
-      ;;
-    prompt)
-      CONTENT=$(echo "$EVENT" | jq -r '.content // empty')
-      if [ -z "$CONTENT" ]; then
-        error "event #$((i+1)) at point '$POINT': prompt type requires 'content' field"
-      fi
-      ;;
-    *)
-      error "event #$((i+1)): invalid type '$ETYPE' (expected: command, prompt)"
-      ;;
-  esac
-
-  FOUND=0
-  for vp in $VALID_POINTS; do
-    if [ "$POINT" = "$vp" ]; then
-      FOUND=1
-      break
+validate_hook() {
+  local stage="$1" phase="$2" index="$3"
+  local hook
+  hook=$(echo "$CONFIG_JSON" | jq -c --arg s "$stage" --arg p "$phase" ".workflow[\$s][\$p][$index]")
+  local hook_type
+  hook_type=$(echo "$hook" | jq -r 'type')
+  if [ "$hook_type" = "string" ]; then
+    if [ -z "$(echo "$hook" | jq -r '.')" ]; then
+      error "workflow.${stage}.${phase}[${index}]: empty string hook"
     fi
-  done
-  if [ "$FOUND" = "0" ]; then
-    warn "event #$((i+1)): unrecognized point '$POINT'"
+  elif [ "$hook_type" = "object" ]; then
+    local cmd prompt
+    cmd=$(echo "$hook" | jq -r '.command // empty')
+    prompt=$(echo "$hook" | jq -r '.prompt // empty')
+    if [ -z "$cmd" ] && [ -z "$prompt" ]; then
+      error "workflow.${stage}.${phase}[${index}]: hook object requires 'command' or 'prompt' field"
+    fi
+    local on_failure
+    on_failure=$(echo "$hook" | jq -r '.on_failure // "abort"')
+    case "$on_failure" in
+      abort|warn|ignore) ;;
+      *) error "workflow.${stage}.${phase}[${index}]: invalid on_failure '${on_failure}' (expected: abort, warn, ignore)" ;;
+    esac
+  else
+    error "workflow.${stage}.${phase}[${index}]: invalid hook type '${hook_type}' (expected: string or object)"
   fi
+}
+
+for stage in $STAGES; do
+  for phase in pre_hooks post_hooks; do
+    local_count=$(echo "$CONFIG_JSON" | jq --arg s "$stage" --arg p "$phase" '.workflow[$s][$p] // [] | length')
+    for i in $(seq 0 $((local_count - 1))); do
+      validate_hook "$stage" "$phase" "$i"
+    done
+  done
 done
 
 # Validate referenced merge scripts exist

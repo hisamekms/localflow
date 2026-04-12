@@ -25,7 +25,24 @@ For each section, explain every item's **current value**, whether it's the **def
 | `auto_merge` | `true` | `true`, `false` | Applies only to `merge_via = "direct"`. Controls whether the branch is merged automatically or requires user confirmation. Has no effect when `merge_via = "pr"`. |
 | `branch_mode` | `worktree` | `worktree`, `branch` | How task branches are created. `worktree` uses git worktrees (parallel work), `branch` uses regular branches. |
 | `merge_strategy` | `rebase` | `rebase`, `squash` | Git merge strategy when merging task branches back to main. |
-| `events` | `[]` | list of event directives | Workflow event hooks (type: `command` or `prompt`) triggered at specific points (e.g., `pre_merge`, `post_pr`). |
+| `branch_template` | `null` | string | Template for branch names (e.g., `task/{{id}}-{{slug}}`). |
+
+**workflow stages** (`workflow.add`, `workflow.start`, `workflow.branch`, `workflow.plan`, `workflow.implement`, `workflow.merge`, `workflow.pr`, `workflow.complete`, `workflow.branch_cleanup`)
+
+Each stage supports:
+| Key | Default | Description |
+|---|---|---|
+| `instructions` | `[]` | Text instructions for the agent at this stage. |
+| `pre_hooks` | `[]` | Hooks to run before the stage. Each hook is a string (shell command) or `{command, prompt, on_failure}`. |
+| `post_hooks` | `[]` | Hooks to run after the stage. Same format as `pre_hooks`. |
+
+Stage-specific keys:
+| Stage | Extra Keys | Description |
+|---|---|---|
+| `workflow.add` | `default_dod`, `default_tags`, `default_priority` | Defaults applied when creating new tasks. |
+| `workflow.start` | `metadata_fields` | Metadata fields collected when starting a task. |
+| `workflow.plan` | `required_sections` | Required sections in the implementation plan. |
+| `workflow.complete` | `metadata_fields` | Metadata fields collected when completing a task. |
 
 **backend**
 | Key | Default | Options | Description |

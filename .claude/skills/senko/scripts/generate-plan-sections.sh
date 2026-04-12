@@ -10,25 +10,46 @@ MERGE_VIA=$(echo "$CONFIG_JSON" | jq -r '.workflow.merge_via')
 AUTO_MERGE=$(echo "$CONFIG_JSON" | jq -r '.workflow.auto_merge')
 BRANCH_MODE=$(echo "$CONFIG_JSON" | jq -r '.workflow.branch_mode')
 MERGE_STRATEGY=$(echo "$CONFIG_JSON" | jq -r '.workflow.merge_strategy')
-EVENTS=$(echo "$CONFIG_JSON" | jq -c '.workflow.events // []')
 
-emit_events() {
-  local point="$1"
-  echo "$EVENTS" | jq -c --arg p "$point" '.[] | select(.point == $p)' | while IFS= read -r event; do
-    local etype
-    etype=$(echo "$event" | jq -r '.type')
-    case "$etype" in
-      command)
-        local cmd
-        cmd=$(echo "$event" | jq -r '.command')
+# Emit instructions for a workflow stage as bullet points.
+# Usage: emit_instructions <stage>
+emit_instructions() {
+  local stage="$1"
+  local count
+  count=$(echo "$CONFIG_JSON" | jq --arg s "$stage" '.workflow[$s].instructions // [] | length')
+  for i in $(seq 0 $((count - 1))); do
+    local text
+    text=$(echo "$CONFIG_JSON" | jq -r --arg s "$stage" ".workflow[\$s].instructions[$i]")
+    echo "- ${text}"
+  done
+}
+
+# Emit hooks (pre_hooks or post_hooks) for a workflow stage.
+# Usage: emit_hooks <stage> <pre_hooks|post_hooks>
+# HookDef is either a simple string or {"command": ..., "prompt": ..., "on_failure": ...}
+emit_hooks() {
+  local stage="$1"
+  local phase="$2"
+  local count
+  count=$(echo "$CONFIG_JSON" | jq --arg s "$stage" --arg p "$phase" '.workflow[$s][$p] // [] | length')
+  for i in $(seq 0 $((count - 1))); do
+    local hook
+    hook=$(echo "$CONFIG_JSON" | jq -c --arg s "$stage" --arg p "$phase" ".workflow[\$s][\$p][$i]")
+    local hook_type
+    hook_type=$(echo "$hook" | jq -r 'type')
+    if [ "$hook_type" = "string" ]; then
+      echo "- Run: \`${hook//\"/}\`"
+    else
+      local cmd prompt
+      cmd=$(echo "$hook" | jq -r '.command // empty')
+      prompt=$(echo "$hook" | jq -r '.prompt // empty')
+      if [ -n "$cmd" ]; then
         echo "- Run: \`${cmd}\`"
-        ;;
-      prompt)
-        local content
-        content=$(echo "$event" | jq -r '.content')
-        echo "- ${content}"
-        ;;
-    esac
+      fi
+      if [ -n "$prompt" ]; then
+        echo "- ${prompt}"
+      fi
+    fi
   done
 }
 
@@ -42,7 +63,8 @@ cat <<EOF
 - This must be done before starting implementation.
 EOF
 
-emit_events "pre_start"
+emit_instructions "implement"
+emit_hooks "implement" "pre_hooks"
 
 # --- Post-completion ---
 cat <<'HEADER'
@@ -58,7 +80,8 @@ cat <<'HEADER'
   4. All DoD items must be checked before proceeding
 HEADER
 
-emit_events "pre_merge"
+emit_hooks "merge" "pre_hooks"
+emit_instructions "merge"
 
 # --- Merge/PR step ---
 if [ "$MERGE_VIA" = "direct" ]; then
@@ -86,15 +109,23 @@ elif [ "$MERGE_VIA" = "pr" ]; then
 PREOF
 fi
 
-emit_events "post_merge"
+emit_hooks "merge" "post_hooks"
 
-# --- Common tail ---
+# --- Complete step ---
+emit_hooks "complete" "pre_hooks"
+emit_instructions "complete"
+
 cat <<EOF
 - Use \`AskUserQuestion\` to ask the user for completion approval
 - Complete the task: \`senko complete ${TASK_ID}\`
 EOF
 
-# --- Worktree cleanup ---
+# --- Branch cleanup ---
+emit_hooks "branch_cleanup" "pre_hooks"
+emit_instructions "branch_cleanup"
+
 if [ "$BRANCH_MODE" = "worktree" ]; then
   echo "- Delete the worktree (using \`/wth\` skill)"
 fi
+
+emit_hooks "branch_cleanup" "post_hooks"

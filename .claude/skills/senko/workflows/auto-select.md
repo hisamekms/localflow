@@ -2,7 +2,7 @@
 
 ## Step 1: Build metadata
 
-Run the metadata builder script to read `[skill.start].metadata_fields` from config:
+Run the metadata builder script to read `[workflow.start].metadata_fields` from config:
 
 ```bash
 bash ${CLAUDE_SKILL_DIR}/scripts/build-start-metadata.sh
