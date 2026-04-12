@@ -44,11 +44,10 @@ Stage-specific keys:
 | `workflow.plan` | `required_sections` | Required sections in the implementation plan. |
 | `workflow.complete` | `metadata_fields` | Metadata fields collected when completing a task. |
 
-**backend**
+**backend.sqlite**
 | Key | Default | Options | Description |
 |---|---|---|---|
-| `api_url` | `null` | URL string | HTTP backend API URL. When set, senko operates in remote mode. |
-| `api_key` | `null` | string | API key for authenticating with the remote backend. |
+| `db_path` | auto (`$XDG_DATA_HOME/senko/projects/<hash>/data.db`) | file path | Path to the SQLite database file. |
 
 **backend.postgres** (requires `postgres` feature)
 | Key | Default | Options | Description |
@@ -59,24 +58,52 @@ Stage-specific keys:
 | `sslrootcert` | `null` | file path | Path to SSL root certificate for TLS connections. When used with `rds_secrets_arn`, appends `sslmode=verify-full` to the built URL. |
 | `max_connections` | `null` | positive integer | Maximum number of connections in the database pool. |
 
-**auth**
+**server**
 | Key | Default | Options | Description |
 |---|---|---|---|
-| `enabled` | `false` | `true`, `false` | Enable/disable API authentication. |
-| `master_api_key` | `null` | string | Direct master API key value for authentication. |
-| `master_api_key_arn` | `null` | ARN string | AWS Secrets Manager ARN for master API key. Resolved at startup (requires `aws-secrets` feature). |
+| `host` | `127.0.0.1` | IP address | Bind address for `senko serve`. |
+| `port` | `3142` | port number | Port for `senko serve`. |
 
-**storage**
+**server.auth.api_key**
 | Key | Default | Options | Description |
 |---|---|---|---|
-| `db_path` | auto (`$XDG_DATA_HOME/senko/projects/<dir-name>/data.db`) | file path | Path to the SQLite database file. |
+| `master_key` | `null` | string | Direct master API key value for authentication. |
+| `master_key_arn` | `null` | ARN string | AWS Secrets Manager ARN for master API key. Resolved at startup (requires `aws-secrets` feature). |
+
+**server.auth.oidc**
+| Key | Default | Options | Description |
+|---|---|---|---|
+| `issuer_url` | `null` | URL string | OIDC issuer URL for JWT verification. |
+| `client_id` | `null` | string | OIDC client ID for PKCE authentication. |
+| `scopes` | `["openid", "profile"]` | list of strings | OIDC scopes to request. |
+| `username_claim` | `null` | string | JWT claim to use as username. |
+| `required_claims` | `{}` | map of string to string | Required JWT claims (key-value pairs that must match). |
+
+**server.auth.oidc.cli**
+| Key | Default | Options | Description |
+|---|---|---|---|
+| `callback_port` | `null` (auto-assign) | port number | Local port for OIDC callback during CLI login. |
+| `browser` | `true` | `true`, `false` | Auto-open browser for OIDC login. |
+
+**server.auth.oidc.session**
+| Key | Default | Options | Description |
+|---|---|---|---|
+| `ttl` | `null` | duration string | Session time-to-live (e.g., `24h`). |
+| `inactive_ttl` | `null` | duration string | Session inactive timeout (e.g., `7d`). |
+| `max_per_user` | `null` | positive integer | Maximum number of sessions per user. |
+
+**cli.remote**
+| Key | Default | Options | Description |
+|---|---|---|---|
+| `url` | `null` | URL string | Remote server URL for CLI client mode. When set, CLI forwards commands to this server. |
+| `token` | `null` | string | API token for authentication with the remote server. |
 
 **log**
 | Key | Default | Options | Description |
 |---|---|---|---|
 | `dir` | auto (`$XDG_STATE_HOME/senko`) | directory path | Directory for log files. |
 | `level` | `info` | `trace`, `debug`, `info`, `warn`, `error` | Minimum log level. |
-| `format` | `json` | `json`, `text` | Log output format. |
+| `format` | `json` | `json`, `pretty` | Log output format. |
 
 **project**
 | Key | Default | Options | Description |
@@ -91,7 +118,8 @@ Stage-specific keys:
 **web**
 | Key | Default | Options | Description |
 |---|---|---|---|
-| `host` | `127.0.0.1` | IP address | Host address for the web server. |
+| `host` | `127.0.0.1` | IP address | Bind address for `senko web`. |
+| `port` | `null` (auto) | port number | Port for `senko web`. |
 
 **hooks**
 | Key | Default | Options | Description |
@@ -114,8 +142,9 @@ Each hook entry has: `command` (shell command), `enabled` (bool, default true), 
 Explain how configuration is resolved (highest priority first):
 1. **CLI flags** (`--config <path>`)
 2. **Environment variables** (`SENKO_*` — see table below)
-3. **Project config** (`.senko/config.toml` in the project root)
-4. **User config** (`~/.config/senko/config.toml`)
+3. **Local config** (`.senko/config.local.toml` — git-ignored, per-user overrides)
+4. **Project config** (`.senko/config.toml` in the project root)
+5. **User config** (`~/.config/senko/config.toml`)
 
 Higher-priority sources override lower ones. The `senko config` output shows the **merged** result.
 
@@ -127,16 +156,8 @@ Higher-priority sources override lower ones. The `senko config` output shows the
 | `SENKO_AUTO_MERGE` | `workflow.auto_merge` | |
 | `SENKO_BRANCH_MODE` | `workflow.branch_mode` | |
 | `SENKO_MERGE_STRATEGY` | `workflow.merge_strategy` | |
-| `SENKO_API_URL` | `backend.api_url` | |
-| `SENKO_API_KEY` | `backend.api_key` | |
-| `SENKO_POSTGRES_URL` | `backend.postgres.url` | |
-| `SENKO_POSTGRES_URL_ARN` | `backend.postgres.url_arn` | |
-| `SENKO_POSTGRES_RDS_SECRETS_ARN` | `backend.postgres.rds_secrets_arn` | |
-| `SENKO_POSTGRES_SSLROOTCERT` | `backend.postgres.sslrootcert` | |
-| `SENKO_POSTGRES_MAX_CONNECTIONS` | `backend.postgres.max_connections` | Parsed as u32 |
-| `SENKO_AUTH_ENABLED` | `auth.enabled` | Accepts `true`/`1`/`yes` or `false`/`0`/`no` (case-insensitive) |
-| `SENKO_MASTER_API_KEY` | `auth.master_api_key` | |
-| `SENKO_MASTER_API_KEY_ARN` | `auth.master_api_key_arn` | |
+| `SENKO_SERVER_URL` | `cli.remote.url` | |
+| `SENKO_TOKEN` | `cli.remote.token` | |
 | `SENKO_HOOKS_ENABLED` | `hooks.enabled` | |
 | `SENKO_HOOK_ON_TASK_ADDED` | `hooks.on_task_added` | Shell command |
 | `SENKO_HOOK_ON_TASK_READY` | `hooks.on_task_ready` | Shell command |
@@ -144,9 +165,24 @@ Higher-priority sources override lower ones. The `senko config` output shows the
 | `SENKO_HOOK_ON_TASK_COMPLETED` | `hooks.on_task_completed` | Shell command |
 | `SENKO_HOOK_ON_TASK_CANCELED` | `hooks.on_task_canceled` | Shell command |
 | `SENKO_HOOK_ON_NO_ELIGIBLE_TASK` | `hooks.on_no_eligible_task` | Shell command |
+| `SENKO_AUTH_API_KEY_MASTER_KEY` | `server.auth.api_key.master_key` | |
+| `SENKO_AUTH_API_KEY_MASTER_KEY_ARN` | `server.auth.api_key.master_key_arn` | |
+| `SENKO_OIDC_ISSUER_URL` | `server.auth.oidc.issuer_url` | |
+| `SENKO_OIDC_CLIENT_ID` | `server.auth.oidc.client_id` | |
+| `SENKO_OIDC_USERNAME_CLAIM` | `server.auth.oidc.username_claim` | |
+| `SENKO_AUTH_OIDC_SESSION_TTL` | `server.auth.oidc.session.ttl` | |
+| `SENKO_AUTH_OIDC_SESSION_INACTIVE_TTL` | `server.auth.oidc.session.inactive_ttl` | |
+| `SENKO_AUTH_OIDC_SESSION_MAX_PER_USER` | `server.auth.oidc.session.max_per_user` | Parsed as u32 |
+| `SENKO_SERVER_HOST` | `server.host` | |
+| `SENKO_SERVER_PORT` | `server.port` | Parsed as u16 |
+| `SENKO_POSTGRES_URL` | `backend.postgres.url` | |
+| `SENKO_POSTGRES_URL_ARN` | `backend.postgres.url_arn` | |
+| `SENKO_POSTGRES_RDS_SECRETS_ARN` | `backend.postgres.rds_secrets_arn` | |
+| `SENKO_POSTGRES_SSLROOTCERT` | `backend.postgres.sslrootcert` | |
+| `SENKO_POSTGRES_MAX_CONNECTIONS` | `backend.postgres.max_connections` | Parsed as u32 |
 | `SENKO_USER` | `user.name` | |
 | `SENKO_PROJECT` | `project.name` | |
-| `SENKO_DB_PATH` | `storage.db_path` | |
+| `SENKO_DB_PATH` | `backend.sqlite.db_path` | |
 | `SENKO_LOG_DIR` | `log.dir` | |
 | `SENKO_LOG_LEVEL` | `log.level` | |
 | `SENKO_LOG_FORMAT` | `log.format` | |
