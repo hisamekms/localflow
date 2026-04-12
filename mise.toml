@@ -5,12 +5,17 @@ _.file = ".env"
 [tools]
 rust = "latest"
 gh = "latest"
+"github:hisamekms/senko" = "0.21.0"
 
 [tasks.build]
 description = "Build senko binary"
 run = "cargo build -q --bin senko"
 
 [tasks.senko]
+description = "Run senko CLI"
+run = "senko"
+
+[tasks.senko-dev]
 description = "Run locally built senko binary"
 depends = ["build"]
 run = "./target/debug/senko"
