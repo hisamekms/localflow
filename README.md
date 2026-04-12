@@ -93,21 +93,20 @@ Mark task #3 as completed (checks DoD items first).
 
 ## Hooks
 
-Hooks are shell commands that run automatically when CLI commands change task state. No daemon required — they fire inline as fire-and-forget child processes. Configure in `.senko/config.toml`:
+Hooks are shell commands that run automatically when CLI commands change task state. No daemon required — they fire inline as fire-and-forget child processes. Each hook is a named entry, so you can enable/disable individual hooks independently. Configure in `.senko/config.toml`:
 
 ```toml
-[hooks]
-# Single command
-on_task_added = "echo 'New task' | notify-send -"
+[hooks.on_task_added.notify]
+command = "echo 'New task' | notify-send -"
 
-# Multiple commands per event
-on_task_completed = [
-  "curl -X POST https://example.com/webhook",
-  "echo 'Task done!' >> /tmp/tasks.log"
-]
+[hooks.on_task_completed.webhook]
+command = "curl -X POST https://example.com/webhook"
+
+[hooks.on_task_completed.log]
+command = "echo 'Task done!' >> /tmp/tasks.log"
 ```
 
-Hooks receive the event payload as JSON on stdin and are executed via `sh -c`. All five lifecycle events are supported: `on_task_added`, `on_task_ready`, `on_task_started`, `on_task_completed`, `on_task_canceled`.
+Hooks receive the event payload as JSON on stdin and are executed via `sh -c`. All lifecycle events are supported: `on_task_added`, `on_task_ready`, `on_task_started`, `on_task_completed`, `on_task_canceled`, `on_no_eligible_task`.
 
 For full details on event payloads, see [CLI Reference – Hooks](docs/CLI.md#hooks--automatic-actions-on-task-state-changes).
 
@@ -175,7 +174,7 @@ export SENKO_AUTH_API_KEY_MASTER_KEY_ARN="arn:aws:secretsmanager:us-east-1:12345
 Or in `.senko/config.toml`:
 
 ```toml
-[auth.api_key]
+[server.auth.api_key]
 master_key = "<your-key>"
 # Or use an ARN (requires aws-secrets feature):
 # master_key_arn = "arn:aws:secretsmanager:..."
