@@ -92,21 +92,20 @@ senko skill-install
 
 ## Hooks
 
-フックは、CLIコマンドがタスクの状態を変更した際に自動実行されるシェルコマンドです。デーモン不要 — fire-and-forgetの子プロセスとしてインラインで実行されます。`.senko/config.toml` で設定します:
+フックは、CLIコマンドがタスクの状態を変更した際に自動実行されるシェルコマンドです。デーモン不要 — fire-and-forgetの子プロセスとしてインラインで実行されます。各フックは名前付きエントリで、個別に有効/無効を切り替えられます。`.senko/config.toml` で設定します:
 
 ```toml
-[hooks]
-# 単一コマンド
-on_task_added = "echo '新しいタスク' | notify-send -"
+[hooks.on_task_added.notify]
+command = "echo '新しいタスク' | notify-send -"
 
-# イベントごとに複数コマンド
-on_task_completed = [
-  "curl -X POST https://example.com/webhook",
-  "echo 'タスク完了' >> /tmp/tasks.log"
-]
+[hooks.on_task_completed.webhook]
+command = "curl -X POST https://example.com/webhook"
+
+[hooks.on_task_completed.log]
+command = "echo 'タスク完了' >> /tmp/tasks.log"
 ```
 
-フックはstdinでイベントペイロード（JSON）を受け取り、`sh -c` で実行されます。5つのライフサイクルイベントすべてに対応しています: `on_task_added`, `on_task_ready`, `on_task_started`, `on_task_completed`, `on_task_canceled`。
+フックはstdinでイベントペイロード（JSON）を受け取り、`sh -c` で実行されます。すべてのライフサイクルイベントに対応しています: `on_task_added`, `on_task_ready`, `on_task_started`, `on_task_completed`, `on_task_canceled`, `on_no_eligible_task`。
 
 詳細は [CLIリファレンス – Hooks](CLI.ja.md#hooks--タスク状態変更時の自動アクション) を参照してください。
 
