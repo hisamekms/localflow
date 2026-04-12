@@ -19,10 +19,11 @@ use crate::domain::error::DomainError;
 use crate::application::{LocalTaskOperations, ProjectService, TaskOperations, UserService};
 use crate::application::auth as app_auth;
 use crate::application::auth::Permission;
-use crate::application::port::auth::{AuthError, AuthProvider};
+use crate::application::port::auth::AuthError;
 use crate::application::port::TaskBackend;
 use self::auth::{AuthUser, HasAuth, OptionalAuthUser};
 use crate::bootstrap;
+use crate::bootstrap::AuthMode;
 use crate::infra::config::Config;
 use crate::domain::metadata_field::{CreateMetadataFieldParams, validate_field_name};
 use crate::domain::project::CreateProjectParams;
@@ -48,7 +49,7 @@ struct AppState {
     task_service: Arc<LocalTaskOperations>,
     project_service: Arc<ProjectService>,
     user_service: Arc<UserService>,
-    auth_provider: Option<Arc<dyn AuthProvider>>,
+    auth_mode: Option<Arc<AuthMode>>,
     master_key_configured: bool,
     proxy_mode: bool,
     session_config: crate::infra::config::SessionConfig,
@@ -56,14 +57,14 @@ struct AppState {
 }
 
 impl HasAuth for AppState {
-    fn auth_provider(&self) -> Option<&dyn AuthProvider> {
-        self.auth_provider.as_deref()
+    fn auth_mode(&self) -> Option<&AuthMode> {
+        self.auth_mode.as_deref()
     }
 }
 
 impl AppState {
     fn auth_enabled(&self) -> bool {
-        self.auth_provider.is_some()
+        self.auth_mode.is_some()
     }
 }
 
@@ -367,11 +368,11 @@ pub async fn serve(
     config: &Config,
     config_path: Option<PathBuf>,
     backend: Arc<dyn TaskBackend>,
-    auth_provider: Option<Arc<dyn AuthProvider>>,
+    auth_mode: Option<AuthMode>,
 ) -> Result<()> {
     bootstrap::init_tracing(&config.log);
 
-    if auth_provider.is_none() {
+    if auth_mode.is_none() {
         tracing::warn!(
             "Authentication is disabled. All API endpoints are accessible without credentials."
         );
@@ -398,7 +399,7 @@ pub async fn serve(
         task_service,
         project_service,
         user_service,
-        auth_provider,
+        auth_mode: auth_mode.map(Arc::new),
         master_key_configured: config.server.auth.api_key.master_key.is_some(),
         proxy_mode: config.cli.remote.url.is_some(),
         session_config: config.server.auth.oidc.session.clone(),

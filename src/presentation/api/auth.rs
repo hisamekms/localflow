@@ -4,7 +4,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 
-use crate::application::port::auth::{AuthError, AuthProvider};
+use crate::application::port::auth::AuthError;
+use crate::bootstrap::AuthMode;
 use crate::domain::user::User;
 
 use super::ErrorBody;
@@ -12,7 +13,7 @@ use super::ErrorBody;
 // --- AppState trait for auth extraction ---
 
 pub trait HasAuth {
-    fn auth_provider(&self) -> Option<&dyn AuthProvider>;
+    fn auth_mode(&self) -> Option<&AuthMode>;
 }
 
 // --- AuthUser extractor ---
@@ -32,24 +33,32 @@ where
         parts: &mut Parts,
         state: &S,
     ) -> std::result::Result<Self, Self::Rejection> {
-        let provider = match state.auth_provider() {
-            Some(p) => p,
+        let mode = match state.auth_mode() {
+            Some(m) => m,
             None => {
                 return Err(AuthError::MissingToken);
             }
         };
 
-        let auth_header = parts
-            .headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .ok_or(AuthError::MissingToken)?;
+        let user = match mode {
+            AuthMode::Token(provider) => {
+                let auth_header = parts
+                    .headers
+                    .get("authorization")
+                    .and_then(|v| v.to_str().ok())
+                    .ok_or(AuthError::MissingToken)?;
 
-        let token = auth_header
-            .strip_prefix("Bearer ")
-            .ok_or(AuthError::InvalidToken)?;
+                let token = auth_header
+                    .strip_prefix("Bearer ")
+                    .ok_or(AuthError::InvalidToken)?;
 
-        let user = provider.authenticate(token).await?;
+                provider.authenticate(token).await?
+            }
+            AuthMode::TrustedHeaders(provider) => {
+                provider.authenticate_from_headers(&parts.headers).await?
+            }
+        };
+
         Ok(AuthUser { user })
     }
 }

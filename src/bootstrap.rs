@@ -15,7 +15,7 @@ use crate::infra::http::remote_task_ops::RemoteTaskOperations;
 use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::hook::test_executor::ShellHookTestExecutor;
 use crate::infra::hook::{RuntimeMode, BackendInfo};
-use crate::infra::auth::{ApiKeyProvider, ChainAuthProvider, JwtAuthProvider};
+use crate::infra::auth::{ApiKeyProvider, JwtAuthProvider, TrustedHeadersAuthProvider};
 use crate::infra::pr_verifier::GhCliPrVerifier;
 
 // Re-exports for presentation layer (avoid direct infra dependency)
@@ -122,63 +122,78 @@ pub fn create_pr_verifier() -> Arc<dyn crate::application::port::PrVerifier> {
     Arc::new(GhCliPrVerifier)
 }
 
-/// Validate that `senko serve` has at least one authentication method configured.
-/// Call before `create_auth_provider`.
+/// Active authentication mode. Exactly one mode is active at a time.
+pub enum AuthMode {
+    /// Token-based auth (api_key or oidc) — uses Bearer token from Authorization header.
+    Token(Arc<dyn AuthProvider>),
+    /// Trusted headers auth — reads user identity from proxy-set headers.
+    TrustedHeaders(Arc<TrustedHeadersAuthProvider>),
+}
+
+/// Validate that `senko serve` has exactly one authentication method configured.
+/// Call before `create_auth_mode`.
 pub fn validate_serve_auth(config: &Config) -> Result<()> {
     if !config.server.auth.is_configured() {
         bail!(
-            "senko serve requires at least one authentication method. \
-             Set server.auth.oidc (issuer_url + client_id) or server.auth.api_key.master_key."
+            "senko serve requires an authentication method. \
+             Set server.auth.oidc (issuer_url + client_id), \
+             server.auth.api_key.master_key, or \
+             server.auth.trusted_headers.username_header."
         );
     }
+    config
+        .server
+        .auth
+        .validate_exclusive()
+        .map_err(|msg| anyhow::anyhow!(msg))?;
     Ok(())
 }
 
-pub fn create_auth_provider(
+pub fn create_auth_mode(
     config: &Config,
     backend: Arc<dyn TaskBackend>,
-) -> Result<Option<Arc<dyn AuthProvider>>> {
-    if !config.server.auth.oidc.is_configured() && config.server.auth.api_key.master_key.is_none() {
-        tracing::info!("no authentication method configured");
-        return Ok(None);
-    }
+) -> Result<Option<AuthMode>> {
+    let auth = &config.server.auth;
 
-    let mut providers: Vec<Arc<dyn AuthProvider>> = Vec::new();
-
-    if config.server.auth.oidc.is_configured() {
-        let issuer_url = config.server.auth.oidc.issuer_url.clone().unwrap();
-        let client_id = config.server.auth.oidc.client_id.clone().unwrap();
-        let username_claim = config.server.auth.oidc.username_claim.clone();
-        let required_claims = config.server.auth.oidc.required_claims.clone();
+    if auth.oidc.is_configured() {
+        let issuer_url = auth.oidc.issuer_url.clone().unwrap();
+        let client_id = auth.oidc.client_id.clone().unwrap();
+        let username_claim = auth.oidc.username_claim.clone();
+        let required_claims = auth.oidc.required_claims.clone();
         tracing::info!(issuer = %issuer_url, "OIDC JWT authentication enabled");
-        providers.push(Arc::new(JwtAuthProvider::new(
+        return Ok(Some(AuthMode::Token(Arc::new(JwtAuthProvider::new(
             issuer_url,
             client_id,
             username_claim,
             required_claims,
-            backend.clone(),
-        )));
-    }
-
-    if backend.supports_api_key_auth() {
-        tracing::info!("API key authentication enabled");
-        providers.push(Arc::new(ApiKeyProvider::new(
             backend,
-            config.server.auth.api_key.master_key.clone(),
-            config.server.auth.oidc.session.clone(),
-        )));
+        )))));
     }
 
-    if providers.is_empty() {
-        return Ok(None);
+    if auth.api_key.master_key.is_some() {
+        tracing::info!("API key authentication enabled");
+        return Ok(Some(AuthMode::Token(Arc::new(ApiKeyProvider::new(
+            backend,
+            auth.api_key.master_key.clone(),
+            auth.oidc.session.clone(),
+        )))));
     }
 
-    if providers.len() == 1 {
-        Ok(Some(providers.pop().unwrap()))
-    } else {
-        tracing::info!("authentication chain: JWT -> API key");
-        Ok(Some(Arc::new(ChainAuthProvider::new(providers))))
+    if auth.trusted_headers.is_configured() {
+        let username_header = auth.trusted_headers.username_header.clone().unwrap();
+        tracing::info!(header = %username_header, "trusted headers authentication enabled");
+        return Ok(Some(AuthMode::TrustedHeaders(Arc::new(
+            TrustedHeadersAuthProvider::new(
+                backend,
+                username_header,
+                auth.trusted_headers.display_name_header.clone(),
+                auth.trusted_headers.email_header.clone(),
+            ),
+        ))));
     }
+
+    tracing::info!("no authentication method configured");
+    Ok(None)
 }
 
 pub fn create_local_task_operations(
@@ -701,12 +716,56 @@ name = "project-local"
     }
 
     #[test]
-    fn validate_serve_auth_with_both_ok() {
+    fn validate_serve_auth_with_trusted_headers_ok() {
+        let mut config = Config::default();
+        config.server.auth.trusted_headers.username_header =
+            Some("X-Forwarded-User".to_string());
+        validate_serve_auth(&config).unwrap();
+    }
+
+    #[test]
+    fn validate_serve_auth_with_oidc_and_api_key_fails() {
         let mut config = Config::default();
         config.server.auth.oidc.issuer_url = Some("https://example.com".to_string());
         config.server.auth.oidc.client_id = Some("my-client".to_string());
         config.server.auth.api_key.master_key = Some("secret".to_string());
-        validate_serve_auth(&config).unwrap();
+        let err = validate_serve_auth(&config).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("only one authentication mode"),
+            "error should mention exclusivity: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_serve_auth_with_oidc_and_trusted_headers_fails() {
+        let mut config = Config::default();
+        config.server.auth.oidc.issuer_url = Some("https://example.com".to_string());
+        config.server.auth.oidc.client_id = Some("my-client".to_string());
+        config.server.auth.trusted_headers.username_header =
+            Some("X-Forwarded-User".to_string());
+        let err = validate_serve_auth(&config).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("only one authentication mode"),
+            "error should mention exclusivity: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_serve_auth_with_all_three_fails() {
+        let mut config = Config::default();
+        config.server.auth.oidc.issuer_url = Some("https://example.com".to_string());
+        config.server.auth.oidc.client_id = Some("my-client".to_string());
+        config.server.auth.api_key.master_key = Some("secret".to_string());
+        config.server.auth.trusted_headers.username_header =
+            Some("X-Forwarded-User".to_string());
+        let err = validate_serve_auth(&config).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("only one authentication mode"),
+            "error should mention exclusivity: {msg}"
+        );
     }
 
     #[test]
@@ -716,5 +775,9 @@ name = "project-local"
         let msg = err.to_string();
         assert!(msg.contains("api_key.master_key"), "error should mention api_key.master_key: {msg}");
         assert!(msg.contains("oidc"), "error should mention oidc: {msg}");
+        assert!(
+            msg.contains("trusted_headers"),
+            "error should mention trusted_headers: {msg}"
+        );
     }
 }

@@ -243,17 +243,56 @@ pub struct ApiKeyConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct TrustedHeadersConfig {
+    pub username_header: Option<String>,
+    pub display_name_header: Option<String>,
+    pub email_header: Option<String>,
+}
+
+impl TrustedHeadersConfig {
+    pub fn is_configured(&self) -> bool {
+        self.username_header.is_some()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct AuthConfig {
     #[serde(default)]
     pub api_key: ApiKeyConfig,
     #[serde(default)]
     pub oidc: OidcConfig,
+    #[serde(default)]
+    pub trusted_headers: TrustedHeadersConfig,
 }
 
 impl AuthConfig {
     /// Returns true when at least one authentication method is configured.
     pub fn is_configured(&self) -> bool {
-        self.oidc.is_configured() || self.api_key.master_key.is_some()
+        self.oidc.is_configured()
+            || self.api_key.master_key.is_some()
+            || self.trusted_headers.is_configured()
+    }
+
+    /// Returns an error message if more than one authentication mode is configured.
+    pub fn validate_exclusive(&self) -> Result<(), String> {
+        let count = [
+            self.oidc.is_configured(),
+            self.api_key.master_key.is_some(),
+            self.trusted_headers.is_configured(),
+        ]
+        .iter()
+        .filter(|&&v| v)
+        .count();
+
+        if count > 1 {
+            Err(
+                "only one authentication mode may be configured at a time \
+                 (api_key, oidc, or trusted_headers)"
+                    .to_string(),
+            )
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -599,11 +638,20 @@ pub struct RawApiKeyConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawTrustedHeadersConfig {
+    pub username_header: Option<String>,
+    pub display_name_header: Option<String>,
+    pub email_header: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawAuthConfig {
     #[serde(default)]
     pub api_key: RawApiKeyConfig,
     #[serde(default)]
     pub oidc: RawOidcConfig,
+    #[serde(default)]
+    pub trusted_headers: RawTrustedHeadersConfig,
 }
 
 impl RawConfig {
@@ -677,6 +725,26 @@ impl RawConfig {
                             .api_key
                             .master_key_arn
                             .or(self.server.auth.api_key.master_key_arn),
+                    },
+                    trusted_headers: RawTrustedHeadersConfig {
+                        username_header: overlay
+                            .server
+                            .auth
+                            .trusted_headers
+                            .username_header
+                            .or(self.server.auth.trusted_headers.username_header),
+                        display_name_header: overlay
+                            .server
+                            .auth
+                            .trusted_headers
+                            .display_name_header
+                            .or(self.server.auth.trusted_headers.display_name_header),
+                        email_header: overlay
+                            .server
+                            .auth
+                            .trusted_headers
+                            .email_header
+                            .or(self.server.auth.trusted_headers.email_header),
                     },
                     oidc: RawOidcConfig {
                         issuer_url: overlay
@@ -833,6 +901,11 @@ impl RawConfig {
                             inactive_ttl: self.server.auth.oidc.session.inactive_ttl,
                             max_per_user: self.server.auth.oidc.session.max_per_user,
                         },
+                    },
+                    trusted_headers: TrustedHeadersConfig {
+                        username_header: self.server.auth.trusted_headers.username_header,
+                        display_name_header: self.server.auth.trusted_headers.display_name_header,
+                        email_header: self.server.auth.trusted_headers.email_header,
                     },
                 },
             },

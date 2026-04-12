@@ -363,32 +363,70 @@ impl AuthProvider for JwtAuthProvider {
     }
 }
 
-// --- Auth Chain ---
+// --- Trusted Headers Auth ---
 
-pub struct ChainAuthProvider {
-    providers: Vec<Arc<dyn AuthProvider>>,
+pub struct TrustedHeadersAuthProvider {
+    backend: Arc<dyn TaskBackend>,
+    username_header: String,
+    display_name_header: Option<String>,
+    email_header: Option<String>,
 }
 
-impl ChainAuthProvider {
-    pub fn new(providers: Vec<Arc<dyn AuthProvider>>) -> Self {
-        Self { providers }
+impl TrustedHeadersAuthProvider {
+    pub fn new(
+        backend: Arc<dyn TaskBackend>,
+        username_header: String,
+        display_name_header: Option<String>,
+        email_header: Option<String>,
+    ) -> Self {
+        Self {
+            backend,
+            username_header,
+            display_name_header,
+            email_header,
+        }
     }
-}
 
-#[async_trait]
-impl AuthProvider for ChainAuthProvider {
-    async fn authenticate(
+    pub async fn authenticate_from_headers(
         &self,
-        token: &str,
+        headers: &axum::http::HeaderMap,
     ) -> std::result::Result<crate::domain::user::User, AuthError> {
-        let mut last_err = AuthError::InvalidToken;
-        for provider in &self.providers {
-            match provider.authenticate(token).await {
-                Ok(user) => return Ok(user),
-                Err(e) => last_err = e,
+        let username = headers
+            .get(&self.username_header)
+            .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
+            .ok_or(AuthError::MissingToken)?;
+
+        let display_name = self
+            .display_name_header
+            .as_ref()
+            .and_then(|h| headers.get(h.as_str()))
+            .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
+            .map(String::from);
+
+        let email = self
+            .email_header
+            .as_ref()
+            .and_then(|h| headers.get(h.as_str()))
+            .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
+            .map(String::from);
+
+        match self.backend.get_user_by_username(username).await {
+            Ok(user) => Ok(user),
+            Err(_) => {
+                tracing::info!(username = %username, "auto-provisioning user from trusted headers");
+                self.backend
+                    .create_user(&CreateUserParams {
+                        username: username.to_string(),
+                        display_name,
+                        email,
+                    })
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(error = %e, "failed to auto-provision trusted-headers user");
+                        AuthError::InvalidToken
+                    })
             }
         }
-        Err(last_err)
     }
 }
 
@@ -471,108 +509,83 @@ mod tests {
         assert!(matches!(result, Err(AuthError::InvalidToken)));
     }
 
-    // --- ChainAuthProvider tests ---
-
-    struct FixedAuthProvider {
-        result: std::result::Result<crate::domain::user::User, AuthError>,
-    }
-
-    impl FixedAuthProvider {
-        fn ok(username: &str) -> Self {
-            Self {
-                result: Ok(crate::domain::user::User::new(
-                    1,
-                    username.to_string(),
-                    None,
-                    None,
-                    String::new(),
-                )),
-            }
-        }
-
-        fn err() -> Self {
-            Self {
-                result: Err(AuthError::InvalidToken),
-            }
-        }
-
-        fn forbidden(msg: &str) -> Self {
-            Self {
-                result: Err(AuthError::Forbidden(msg.to_string())),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl AuthProvider for FixedAuthProvider {
-        async fn authenticate(
-            &self,
-            _token: &str,
-        ) -> std::result::Result<crate::domain::user::User, AuthError> {
-            match &self.result {
-                Ok(user) => Ok(user.clone()),
-                Err(AuthError::InvalidToken) => Err(AuthError::InvalidToken),
-                Err(AuthError::MissingToken) => Err(AuthError::MissingToken),
-                Err(AuthError::Forbidden(msg)) => Err(AuthError::Forbidden(msg.clone())),
-            }
-        }
-    }
+    // --- TrustedHeadersAuthProvider tests ---
 
     #[tokio::test]
-    async fn chain_returns_first_success() {
-        let chain = ChainAuthProvider::new(vec![
-            Arc::new(FixedAuthProvider::err()),
-            Arc::new(FixedAuthProvider::ok("second")),
-            Arc::new(FixedAuthProvider::ok("third")),
-        ]);
-
-        let user = chain.authenticate("any-token").await.unwrap();
-        assert_eq!(user.username(), "second");
-    }
-
-    #[tokio::test]
-    async fn chain_returns_last_error_when_all_fail() {
-        let chain = ChainAuthProvider::new(vec![
-            Arc::new(FixedAuthProvider::err()),
-            Arc::new(FixedAuthProvider::forbidden("denied")),
-        ]);
-
-        let result = chain.authenticate("any-token").await;
-        assert!(matches!(result, Err(AuthError::Forbidden(ref msg)) if msg == "denied"));
-    }
-
-    #[tokio::test]
-    async fn chain_single_provider_success() {
-        let chain = ChainAuthProvider::new(vec![
-            Arc::new(FixedAuthProvider::ok("only")),
-        ]);
-
-        let user = chain.authenticate("any-token").await.unwrap();
-        assert_eq!(user.username(), "only");
-    }
-
-    #[tokio::test]
-    async fn chain_fallback_to_api_key() {
-        let (backend, raw_key) = setup_backend_with_api_key().await;
-        let chain = ChainAuthProvider::new(vec![
-            Arc::new(FixedAuthProvider::err()),  // Simulates JWT failure
-            Arc::new(ApiKeyProvider::new(backend, None, SessionConfig::default())),
-        ]);
-
-        let user = chain.authenticate(&raw_key).await.unwrap();
-        assert_eq!(user.username(), "testuser");
-    }
-
-    #[tokio::test]
-    async fn chain_jwt_failure_api_key_failure() {
+    async fn trusted_headers_valid_username() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
-        let chain = ChainAuthProvider::new(vec![
-            Arc::new(FixedAuthProvider::err()),  // Simulates JWT failure
-            Arc::new(ApiKeyProvider::new(backend, None, SessionConfig::default())),
-        ]);
+        let provider = TrustedHeadersAuthProvider::new(
+            backend,
+            "X-Forwarded-User".to_string(),
+            None,
+            None,
+        );
 
-        let result = chain.authenticate("invalid-token").await;
-        assert!(matches!(result, Err(AuthError::InvalidToken)));
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("X-Forwarded-User", "alice".parse().unwrap());
+
+        let user = provider.authenticate_from_headers(&headers).await.unwrap();
+        assert_eq!(user.username(), "alice");
+    }
+
+    #[tokio::test]
+    async fn trusted_headers_missing_username() {
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+        let provider = TrustedHeadersAuthProvider::new(
+            backend,
+            "X-Forwarded-User".to_string(),
+            None,
+            None,
+        );
+
+        let headers = axum::http::HeaderMap::new();
+        let result = provider.authenticate_from_headers(&headers).await;
+        assert!(matches!(result, Err(AuthError::MissingToken)));
+    }
+
+    #[tokio::test]
+    async fn trusted_headers_with_display_name_and_email() {
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+        let provider = TrustedHeadersAuthProvider::new(
+            backend,
+            "X-Forwarded-User".to_string(),
+            Some("X-Forwarded-Name".to_string()),
+            Some("X-Forwarded-Email".to_string()),
+        );
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("X-Forwarded-User", "bob".parse().unwrap());
+        headers.insert("X-Forwarded-Name", "Bob Smith".parse().unwrap());
+        headers.insert("X-Forwarded-Email", "bob@example.com".parse().unwrap());
+
+        let user = provider.authenticate_from_headers(&headers).await.unwrap();
+        assert_eq!(user.username(), "bob");
+    }
+
+    #[tokio::test]
+    async fn trusted_headers_existing_user_returned() {
+        let backend: Arc<dyn TaskBackend> = Arc::new(SqliteBackend::new_in_memory().unwrap());
+        backend
+            .create_user(&CreateUserParams {
+                username: "existing".to_string(),
+                display_name: Some("Existing User".to_string()),
+                email: None,
+            })
+            .await
+            .unwrap();
+
+        let provider = TrustedHeadersAuthProvider::new(
+            backend,
+            "X-Forwarded-User".to_string(),
+            None,
+            None,
+        );
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("X-Forwarded-User", "existing".parse().unwrap());
+
+        let user = provider.authenticate_from_headers(&headers).await.unwrap();
+        assert_eq!(user.username(), "existing");
     }
 
     // --- JwtAuthProvider tests ---
