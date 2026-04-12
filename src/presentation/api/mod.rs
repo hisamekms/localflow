@@ -21,7 +21,7 @@ use crate::application::auth as app_auth;
 use crate::application::auth::Permission;
 use crate::application::port::auth::{AuthError, AuthProvider};
 use crate::application::port::TaskBackend;
-use self::auth::{AuthUser, HasAuth, OptionalAuthUser};
+use self::auth::{HasAuth, OptionalAuthUser};
 use crate::bootstrap;
 use crate::infra::config::Config;
 use crate::domain::project::CreateProjectParams;
@@ -52,6 +52,9 @@ struct AppState {
     proxy_mode: bool,
     session_config: crate::infra::config::SessionConfig,
     oidc_config: crate::infra::config::OidcConfig,
+    upstream_url: Option<String>,
+    upstream_client: reqwest::Client,
+    upstream_api_key: Option<String>,
 }
 
 impl HasAuth for AppState {
@@ -251,6 +254,47 @@ async fn passthrough_auth_middleware(
     }
 }
 
+// --- Proxy forwarding ---
+
+async fn forward_to_upstream(
+    state: &AppState,
+    path: &str,
+    method: reqwest::Method,
+    body: Option<axum::body::Bytes>,
+) -> Result<Response, ApiError> {
+    let upstream_url = state.upstream_url.as_ref().expect("proxy_mode requires upstream_url");
+    let url = format!("{}{}", upstream_url.trim_end_matches('/'), path);
+
+    let mut req = state.upstream_client.request(method, &url);
+
+    // Auth priority: upstream_api_key > PASSTHROUGH_TOKEN > none
+    // (same as HttpBackend::auth())
+    if let Some(key) = &state.upstream_api_key {
+        req = req.bearer_auth(key);
+    } else if let Ok(token) = crate::infra::http::PASSTHROUGH_TOKEN.try_with(|t| t.clone()) {
+        req = req.bearer_auth(token);
+    }
+
+    if let Some(body) = body {
+        req = req.header("content-type", "application/json");
+        req = req.body(body);
+    }
+
+    let resp = req.send().await.map_err(|e| ApiError::Internal(format!("upstream error: {e}")))?;
+
+    let status = axum::http::StatusCode::from_u16(resp.status().as_u16())
+        .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    let content_type = resp.headers().get("content-type").cloned();
+    let body = resp.bytes().await.map_err(|e| ApiError::Internal(format!("upstream read error: {e}")))?;
+
+    let mut builder = axum::http::Response::builder().status(status);
+    if let Some(ct) = content_type {
+        builder = builder.header("content-type", ct.to_str().unwrap_or("application/json"));
+    }
+
+    Ok(builder.body(axum::body::Body::from(body)).unwrap())
+}
+
 // --- Request types ---
 
 #[derive(Deserialize)]
@@ -386,6 +430,11 @@ pub async fn serve(
     let project_service = Arc::new(ProjectService::new(backend.clone()));
     let user_service = Arc::new(UserService::new(backend.clone()));
 
+    let upstream_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("failed to build upstream HTTP client");
+
     let state = AppState {
         project_root: Arc::new(project_root),
         config_path: config_path.map(Arc::new),
@@ -398,6 +447,9 @@ pub async fn serve(
         proxy_mode: config.server.url.is_some(),
         session_config: config.auth.oidc.session.clone(),
         oidc_config: config.auth.oidc.clone(),
+        upstream_url: config.server.url.clone(),
+        upstream_client,
+        upstream_api_key: config.server.token.clone(),
     };
 
     let app = Router::new()
@@ -937,7 +989,10 @@ async fn uncheck_dod(
 }
 
 // GET /auth/config (public, no auth required)
-async fn get_auth_config(State(state): State<AppState>) -> Json<AuthConfigResponse> {
+async fn get_auth_config(State(state): State<AppState>) -> Result<Response, ApiError> {
+    if state.proxy_mode {
+        return forward_to_upstream(&state, "/auth/config", reqwest::Method::GET, None).await;
+    }
     let oidc = if state.oidc_config.is_configured() {
         Some(AuthConfigOidc {
             issuer_url: state.oidc_config.issuer_url.clone().unwrap(),
@@ -947,22 +1002,28 @@ async fn get_auth_config(State(state): State<AppState>) -> Json<AuthConfigRespon
     } else {
         None
     };
-    Json(AuthConfigResponse { oidc })
+    Ok(Json(AuthConfigResponse { oidc }).into_response())
+}
+
+// GET /api/v1/health
+async fn health_check(State(state): State<AppState>) -> Result<Response, ApiError> {
+    if state.proxy_mode {
+        return forward_to_upstream(&state, "/api/v1/health", reqwest::Method::GET, None).await;
+    }
+    Ok(Json(serde_json::json!({"status": "ok"})).into_response())
 }
 
 // GET /api/v1/config
-// GET /api/v1/health
-async fn health_check() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"status": "ok"}))
-}
-
 async fn get_config(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-) -> Result<Json<ConfigResponse>, ApiError> {
+) -> Result<Response, ApiError> {
+    if state.proxy_mode {
+        return forward_to_upstream(&state, "/api/v1/config", reqwest::Method::GET, None).await;
+    }
     require_auth_user(&auth, state.auth_enabled())?;
     let config = crate::bootstrap::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-    Ok(Json(ConfigResponse::from(config)))
+    Ok(Json(ConfigResponse::from(config)).into_response())
 }
 
 // GET /api/v1/projects/{project_id}/stats
@@ -1140,9 +1201,13 @@ async fn delete_api_key(
 // GET /auth/me — current user + session info
 async fn get_me(
     State(state): State<AppState>,
-    auth: AuthUser,
+    auth: OptionalAuthUser,
     headers: axum::http::HeaderMap,
-) -> Result<Json<MeResponse>, ApiError> {
+) -> Result<Response, ApiError> {
+    if state.proxy_mode {
+        return forward_to_upstream(&state, "/auth/me", reqwest::Method::GET, None).await;
+    }
+    let auth = auth.0.ok_or(ApiError::Unauthorized("authentication required".into()))?;
     let token = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -1164,7 +1229,7 @@ async fn get_me(
     Ok(Json(MeResponse {
         user: UserResponse::from(auth.user),
         session: SessionResponse::from(current_session),
-    }))
+    }).into_response())
 }
 
 #[derive(Deserialize)]
@@ -1175,10 +1240,20 @@ struct CreateTokenRequest {
 // POST /auth/token — JWT → API key exchange
 async fn create_token(
     State(state): State<AppState>,
-    auth: AuthUser,
-    body: Option<Json<CreateTokenRequest>>,
-) -> Result<(StatusCode, Json<TokenResponse>), ApiError> {
-    let device_name = body.and_then(|b| b.0.device_name);
+    auth: OptionalAuthUser,
+    body: axum::body::Bytes,
+) -> Result<Response, ApiError> {
+    if state.proxy_mode {
+        let body = if body.is_empty() { None } else { Some(body) };
+        return forward_to_upstream(&state, "/auth/token", reqwest::Method::POST, body).await;
+    }
+    let auth = auth.0.ok_or(ApiError::Unauthorized("authentication required".into()))?;
+    let req: Option<CreateTokenRequest> = if body.is_empty() {
+        None
+    } else {
+        Some(serde_json::from_slice(&body).map_err(|e| ApiError::BadRequest(e.to_string()))?)
+    };
+    let device_name = req.and_then(|r| r.device_name);
     // Ensure user exists in DB (auto-created by JwtAuthProvider if OIDC)
     let user = state.user_service
         .get_or_create_user(auth.user.username(), auth.user.display_name(), auth.user.email())
@@ -1197,7 +1272,7 @@ async fn create_token(
         id: key.id(),
         key_prefix: key.key_prefix().to_owned(),
         expires_at,
-    })))
+    })).into_response())
 }
 
 fn compute_expires_at(created_at: &str, session_config: &crate::infra::config::SessionConfig) -> Option<String> {
@@ -1211,32 +1286,44 @@ fn compute_expires_at(created_at: &str, session_config: &crate::infra::config::S
 // GET /auth/sessions — list caller's active sessions
 async fn list_sessions(
     State(state): State<AppState>,
-    auth: AuthUser,
-) -> Result<Json<Vec<SessionResponse>>, ApiError> {
+    auth: OptionalAuthUser,
+) -> Result<Response, ApiError> {
+    if state.proxy_mode {
+        return forward_to_upstream(&state, "/auth/sessions", reqwest::Method::GET, None).await;
+    }
+    let auth = auth.0.ok_or(ApiError::Unauthorized("authentication required".into()))?;
     let sessions = state.user_service
         .list_active_sessions(auth.user.id(), &state.session_config)
         .await
         .map_err(classify_error)?;
-    Ok(Json(sessions.into_iter().map(SessionResponse::from).collect()))
+    Ok(Json(sessions.into_iter().map(SessionResponse::from).collect::<Vec<_>>()).into_response())
 }
 
 // DELETE /auth/sessions/{id} — revoke a specific session
 async fn revoke_session(
     State(state): State<AppState>,
-    auth: AuthUser,
+    auth: OptionalAuthUser,
     Path(key_id): Path<i64>,
-) -> Result<StatusCode, ApiError> {
+) -> Result<Response, ApiError> {
+    if state.proxy_mode {
+        return forward_to_upstream(&state, &format!("/auth/sessions/{key_id}"), reqwest::Method::DELETE, None).await;
+    }
+    let auth = auth.0.ok_or(ApiError::Unauthorized("authentication required".into()))?;
     state.user_service.revoke_session(key_id, auth.user.id()).await.map_err(classify_error)?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 // DELETE /auth/sessions — revoke all sessions
 async fn revoke_all_sessions(
     State(state): State<AppState>,
-    auth: AuthUser,
-) -> Result<StatusCode, ApiError> {
+    auth: OptionalAuthUser,
+) -> Result<Response, ApiError> {
+    if state.proxy_mode {
+        return forward_to_upstream(&state, "/auth/sessions", reqwest::Method::DELETE, None).await;
+    }
+    let auth = auth.0.ok_or(ApiError::Unauthorized("authentication required".into()))?;
     state.user_service.revoke_all_sessions(auth.user.id()).await.map_err(classify_error)?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 #[cfg(test)]
