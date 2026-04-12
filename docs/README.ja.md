@@ -90,32 +90,25 @@ senko skill-install
 ```
 タスク#3を完了としてマーク（DoD項目を先にチェックします）。
 
-## Watch Hooks
+## Hooks
 
-`senko watch` はタスクイベントを監視し、カスタムコマンドを実行します。`.senko/config.toml` でフックを設定します:
+フックは、CLIコマンドがタスクの状態を変更した際に自動実行されるシェルコマンドです。デーモン不要 — fire-and-forgetの子プロセスとしてインラインで実行されます。`.senko/config.toml` で設定します:
 
 ```toml
 [hooks]
+# 単一コマンド
 on_task_added = "echo '新しいタスク' | notify-send -"
-on_task_ready = "echo 'タスク準備完了'"
-on_task_started = "echo 'タスク開始'"
+
+# イベントごとに複数コマンド
 on_task_completed = [
   "curl -X POST https://example.com/webhook",
   "echo 'タスク完了' >> /tmp/tasks.log"
 ]
-on_task_canceled = "echo 'タスクキャンセル'"
 ```
 
-フックはstdinでイベントペイロード（JSON）を受け取り、`sh -c` で実行されます。`jq` でフィールドを抽出できます:
+フックはstdinでイベントペイロード（JSON）を受け取り、`sh -c` で実行されます。5つのライフサイクルイベントすべてに対応しています: `on_task_added`, `on_task_ready`, `on_task_started`, `on_task_completed`, `on_task_canceled`。
 
-```bash
-# ステータス遷移をログに記録
-on_task_started = "jq -r '\"\\(.task.title): \\(.from_status) → \\(.task.status)\"' >> /tmp/transitions.log"
-```
-
-`senko watch`（フォアグラウンド）または `senko watch -d`（デーモン）で監視を開始します。
-
-詳細は [CLIリファレンス – Watch](CLI.ja.md#watch--タスクイベントの監視とフック実行) を参照してください。
+詳細は [CLIリファレンス – Hooks](CLI.ja.md#hooks--タスク状態変更時の自動アクション) を参照してください。
 
 ## ワークフロー設定
 
@@ -165,20 +158,19 @@ aws secretsmanager create-secret \
 
 ```bash
 # 直接値を設定
-export SENKO_MASTER_API_KEY="<your-key>"
+export SENKO_AUTH_API_KEY_MASTER_KEY="<your-key>"
 
 # または AWS Secrets Manager ARN で設定（aws-secrets feature が必要）
-export SENKO_MASTER_API_KEY_ARN="arn:aws:secretsmanager:us-east-1:123456789:secret:senko/master-api-key-AbCdEf"
+export SENKO_AUTH_API_KEY_MASTER_KEY_ARN="arn:aws:secretsmanager:us-east-1:123456789:secret:senko/master-api-key-AbCdEf"
 ```
 
 `.senko/config.toml` で設定:
 
 ```toml
-[auth]
-enabled = true
-master_api_key = "<your-key>"
+[server.auth.api_key]
+master_key = "<your-key>"
 # または ARN で指定（aws-secrets feature が必要）:
-# master_api_key_arn = "arn:aws:secretsmanager:..."
+# master_key_arn = "arn:aws:secretsmanager:..."
 ```
 
 ### ブートストラップ手順
@@ -187,28 +179,27 @@ master_api_key = "<your-key>"
 
 ```bash
 # 1. マスターキーを生成して設定
-export SENKO_MASTER_API_KEY="$(openssl rand -base64 32)"
+export SENKO_AUTH_API_KEY_MASTER_KEY="$(openssl rand -base64 32)"
 
-# 2. 認証を有効にしてサーバーを起動
-export SENKO_AUTH_ENABLED=true
+# 2. サーバーを起動
 senko serve
 
 # 3. ユーザーを作成
-curl -s -X POST http://localhost:3141/api/v1/users \
-  -H "Authorization: Bearer $SENKO_MASTER_API_KEY" \
+curl -s -X POST http://localhost:3142/api/v1/users \
+  -H "Authorization: Bearer $SENKO_AUTH_API_KEY_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{"username": "alice"}' | jq .
 
 # 4. ユーザーのAPIキーを発行（1はステップ3で返されたユーザーIDに置き換え）
-curl -s -X POST http://localhost:3141/api/v1/users/1/api-keys \
-  -H "Authorization: Bearer $SENKO_MASTER_API_KEY" \
+curl -s -X POST http://localhost:3142/api/v1/users/1/api-keys \
+  -H "Authorization: Bearer $SENKO_AUTH_API_KEY_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name": "default"}' | jq .
 
 # 5. 発行されたAPIキーを以降のリクエストに使用
-export SENKO_API_KEY="<ステップ4で取得したキー>"
-curl -s http://localhost:3141/api/v1/projects \
-  -H "Authorization: Bearer $SENKO_API_KEY" | jq .
+export SENKO_TOKEN="<ステップ4で取得したキー>"
+curl -s http://localhost:3142/api/v1/projects \
+  -H "Authorization: Bearer $SENKO_TOKEN" | jq .
 ```
 
 ## 認証
