@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build metadata JSON from config.toml's [workflow.start].metadata_fields.
-# Resolves env/fixed sources, reports prompt sources for the caller to handle.
+# Resolves env/value/command sources, reports prompt sources for the caller to handle.
 #
 # Output (JSON):
 #   { "resolved": { "key": "value", ... }, "prompts": [ { "key": "...", "prompt": "..." } ] }
@@ -39,9 +39,22 @@ for i in $(seq 0 $((FIELD_COUNT - 1))); do
       fi
       RESOLVED=$(echo "$RESOLVED" | jq --arg k "$KEY" --arg v "$VALUE" '. + {($k): $v}')
       ;;
-    fixed)
+    value)
       FIELD_VALUE=$(echo "$FIELD" | jq '.value')
       RESOLVED=$(echo "$RESOLVED" | jq --arg k "$KEY" --argjson v "$FIELD_VALUE" '. + {($k): $v}')
+      ;;
+    command)
+      CMD=$(echo "$FIELD" | jq -r '.command')
+      DEFAULT=$(echo "$FIELD" | jq -r '.default // empty')
+      VALUE=$(eval "$CMD" 2>/dev/null || true)
+      if [ -z "$VALUE" ]; then
+        if [ -n "$DEFAULT" ]; then
+          VALUE="$DEFAULT"
+        else
+          continue
+        fi
+      fi
+      RESOLVED=$(echo "$RESOLVED" | jq --arg k "$KEY" --arg v "$VALUE" '. + {($k): $v}')
       ;;
     prompt)
       PROMPT_TEXT=$(echo "$FIELD" | jq -r '.prompt')
