@@ -244,14 +244,16 @@ pub struct ApiKeyConfig {
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct TrustedHeadersConfig {
-    pub username_header: Option<String>,
-    pub display_name_header: Option<String>,
+    pub subject_header: Option<String>,
+    pub name_header: Option<String>,
     pub email_header: Option<String>,
+    pub groups_header: Option<String>,
+    pub scope_header: Option<String>,
 }
 
 impl TrustedHeadersConfig {
     pub fn is_configured(&self) -> bool {
-        self.username_header.is_some()
+        self.subject_header.is_some()
     }
 }
 
@@ -639,9 +641,11 @@ pub struct RawApiKeyConfig {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawTrustedHeadersConfig {
-    pub username_header: Option<String>,
-    pub display_name_header: Option<String>,
+    pub subject_header: Option<String>,
+    pub name_header: Option<String>,
     pub email_header: Option<String>,
+    pub groups_header: Option<String>,
+    pub scope_header: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -727,24 +731,36 @@ impl RawConfig {
                             .or(self.server.auth.api_key.master_key_arn),
                     },
                     trusted_headers: RawTrustedHeadersConfig {
-                        username_header: overlay
+                        subject_header: overlay
                             .server
                             .auth
                             .trusted_headers
-                            .username_header
-                            .or(self.server.auth.trusted_headers.username_header),
-                        display_name_header: overlay
+                            .subject_header
+                            .or(self.server.auth.trusted_headers.subject_header),
+                        name_header: overlay
                             .server
                             .auth
                             .trusted_headers
-                            .display_name_header
-                            .or(self.server.auth.trusted_headers.display_name_header),
+                            .name_header
+                            .or(self.server.auth.trusted_headers.name_header),
                         email_header: overlay
                             .server
                             .auth
                             .trusted_headers
                             .email_header
                             .or(self.server.auth.trusted_headers.email_header),
+                        groups_header: overlay
+                            .server
+                            .auth
+                            .trusted_headers
+                            .groups_header
+                            .or(self.server.auth.trusted_headers.groups_header),
+                        scope_header: overlay
+                            .server
+                            .auth
+                            .trusted_headers
+                            .scope_header
+                            .or(self.server.auth.trusted_headers.scope_header),
                     },
                     oidc: RawOidcConfig {
                         issuer_url: overlay
@@ -903,9 +919,11 @@ impl RawConfig {
                         },
                     },
                     trusted_headers: TrustedHeadersConfig {
-                        username_header: self.server.auth.trusted_headers.username_header,
-                        display_name_header: self.server.auth.trusted_headers.display_name_header,
+                        subject_header: self.server.auth.trusted_headers.subject_header,
+                        name_header: self.server.auth.trusted_headers.name_header,
                         email_header: self.server.auth.trusted_headers.email_header,
+                        groups_header: self.server.auth.trusted_headers.groups_header,
+                        scope_header: self.server.auth.trusted_headers.scope_header,
                     },
                 },
             },
@@ -1050,6 +1068,28 @@ impl Config {
         if let Ok(val) = std::env::var("SENKO_OIDC_USERNAME_CLAIM")
             && !val.is_empty() {
                 self.server.auth.oidc.username_claim = Some(val);
+            }
+
+        // Server trusted headers settings
+        if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_SUBJECT_HEADER")
+            && !val.is_empty() {
+                self.server.auth.trusted_headers.subject_header = Some(val);
+            }
+        if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_NAME_HEADER")
+            && !val.is_empty() {
+                self.server.auth.trusted_headers.name_header = Some(val);
+            }
+        if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_EMAIL_HEADER")
+            && !val.is_empty() {
+                self.server.auth.trusted_headers.email_header = Some(val);
+            }
+        if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_GROUPS_HEADER")
+            && !val.is_empty() {
+                self.server.auth.trusted_headers.groups_header = Some(val);
+            }
+        if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_SCOPE_HEADER")
+            && !val.is_empty() {
+                self.server.auth.trusted_headers.scope_header = Some(val);
             }
 
         // Server OIDC session settings

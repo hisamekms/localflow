@@ -21,6 +21,8 @@ pub trait HasAuth {
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub user: User,
+    pub groups: Vec<String>,
+    pub scopes: Vec<String>,
 }
 
 impl<S> FromRequestParts<S> for AuthUser
@@ -40,7 +42,7 @@ where
             }
         };
 
-        let user = match mode {
+        match mode {
             AuthMode::Token(provider) => {
                 let auth_header = parts
                     .headers
@@ -52,14 +54,22 @@ where
                     .strip_prefix("Bearer ")
                     .ok_or(AuthError::InvalidToken)?;
 
-                provider.authenticate(token).await?
+                let user = provider.authenticate(token).await?;
+                Ok(AuthUser {
+                    user,
+                    groups: Vec::new(),
+                    scopes: Vec::new(),
+                })
             }
             AuthMode::TrustedHeaders(provider) => {
-                provider.authenticate_from_headers(&parts.headers).await?
+                let result = provider.authenticate_from_headers(&parts.headers).await?;
+                Ok(AuthUser {
+                    user: result.user,
+                    groups: result.groups,
+                    scopes: result.scopes,
+                })
             }
-        };
-
-        Ok(AuthUser { user })
+        }
     }
 }
 

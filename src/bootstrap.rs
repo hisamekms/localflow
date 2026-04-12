@@ -138,7 +138,7 @@ pub fn validate_serve_auth(config: &Config) -> Result<()> {
             "senko serve requires an authentication method. \
              Set server.auth.oidc (issuer_url + client_id), \
              server.auth.api_key.master_key, or \
-             server.auth.trusted_headers.username_header."
+             server.auth.trusted_headers.subject_header."
         );
     }
     config
@@ -180,14 +180,16 @@ pub fn create_auth_mode(
     }
 
     if auth.trusted_headers.is_configured() {
-        let username_header = auth.trusted_headers.username_header.clone().unwrap();
-        tracing::info!(header = %username_header, "trusted headers authentication enabled");
+        let subject_header = auth.trusted_headers.subject_header.clone().unwrap();
+        tracing::info!(header = %subject_header, "trusted headers authentication enabled");
         return Ok(Some(AuthMode::TrustedHeaders(Arc::new(
             TrustedHeadersAuthProvider::new(
                 backend,
-                username_header,
-                auth.trusted_headers.display_name_header.clone(),
+                subject_header,
+                auth.trusted_headers.name_header.clone(),
                 auth.trusted_headers.email_header.clone(),
+                auth.trusted_headers.groups_header.clone(),
+                auth.trusted_headers.scope_header.clone(),
             ),
         ))));
     }
@@ -718,8 +720,8 @@ name = "project-local"
     #[test]
     fn validate_serve_auth_with_trusted_headers_ok() {
         let mut config = Config::default();
-        config.server.auth.trusted_headers.username_header =
-            Some("X-Forwarded-User".to_string());
+        config.server.auth.trusted_headers.subject_header =
+            Some("x-senko-user-sub".to_string());
         validate_serve_auth(&config).unwrap();
     }
 
@@ -742,8 +744,8 @@ name = "project-local"
         let mut config = Config::default();
         config.server.auth.oidc.issuer_url = Some("https://example.com".to_string());
         config.server.auth.oidc.client_id = Some("my-client".to_string());
-        config.server.auth.trusted_headers.username_header =
-            Some("X-Forwarded-User".to_string());
+        config.server.auth.trusted_headers.subject_header =
+            Some("x-senko-user-sub".to_string());
         let err = validate_serve_auth(&config).unwrap_err();
         let msg = err.to_string();
         assert!(
@@ -758,8 +760,8 @@ name = "project-local"
         config.server.auth.oidc.issuer_url = Some("https://example.com".to_string());
         config.server.auth.oidc.client_id = Some("my-client".to_string());
         config.server.auth.api_key.master_key = Some("secret".to_string());
-        config.server.auth.trusted_headers.username_header =
-            Some("X-Forwarded-User".to_string());
+        config.server.auth.trusted_headers.subject_header =
+            Some("x-senko-user-sub".to_string());
         let err = validate_serve_auth(&config).unwrap_err();
         let msg = err.to_string();
         assert!(

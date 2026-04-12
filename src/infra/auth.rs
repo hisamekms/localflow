@@ -365,39 +365,51 @@ impl AuthProvider for JwtAuthProvider {
 
 // --- Trusted Headers Auth ---
 
+pub struct TrustedHeadersAuthResult {
+    pub user: crate::domain::user::User,
+    pub groups: Vec<String>,
+    pub scopes: Vec<String>,
+}
+
 pub struct TrustedHeadersAuthProvider {
     backend: Arc<dyn TaskBackend>,
-    username_header: String,
-    display_name_header: Option<String>,
+    subject_header: String,
+    name_header: Option<String>,
     email_header: Option<String>,
+    groups_header: Option<String>,
+    scope_header: Option<String>,
 }
 
 impl TrustedHeadersAuthProvider {
     pub fn new(
         backend: Arc<dyn TaskBackend>,
-        username_header: String,
-        display_name_header: Option<String>,
+        subject_header: String,
+        name_header: Option<String>,
         email_header: Option<String>,
+        groups_header: Option<String>,
+        scope_header: Option<String>,
     ) -> Self {
         Self {
             backend,
-            username_header,
-            display_name_header,
+            subject_header,
+            name_header,
             email_header,
+            groups_header,
+            scope_header,
         }
     }
 
     pub async fn authenticate_from_headers(
         &self,
         headers: &axum::http::HeaderMap,
-    ) -> std::result::Result<crate::domain::user::User, AuthError> {
+    ) -> std::result::Result<TrustedHeadersAuthResult, AuthError> {
         let username = headers
-            .get(&self.username_header)
+            .get(&self.subject_header)
             .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
             .ok_or(AuthError::MissingToken)?;
 
         let display_name = self
-            .display_name_header
+            .name_header
             .as_ref()
             .and_then(|h| headers.get(h.as_str()))
             .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
@@ -410,8 +422,24 @@ impl TrustedHeadersAuthProvider {
             .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
             .map(String::from);
 
-        match self.backend.get_user_by_username(username).await {
-            Ok(user) => Ok(user),
+        let groups = self
+            .groups_header
+            .as_ref()
+            .and_then(|h| headers.get(h.as_str()))
+            .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
+            .map(|s| s.split(',').map(|g| g.trim().to_string()).filter(|g| !g.is_empty()).collect())
+            .unwrap_or_default();
+
+        let scopes = self
+            .scope_header
+            .as_ref()
+            .and_then(|h| headers.get(h.as_str()))
+            .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
+            .map(|s| s.split(',').map(|g| g.trim().to_string()).filter(|g| !g.is_empty()).collect())
+            .unwrap_or_default();
+
+        let user = match self.backend.get_user_by_username(username).await {
+            Ok(user) => user,
             Err(_) => {
                 tracing::info!(username = %username, "auto-provisioning user from trusted headers");
                 self.backend
@@ -424,9 +452,11 @@ impl TrustedHeadersAuthProvider {
                     .map_err(|e| {
                         tracing::warn!(error = %e, "failed to auto-provision trusted-headers user");
                         AuthError::InvalidToken
-                    })
+                    })?
             }
-        }
+        };
+
+        Ok(TrustedHeadersAuthResult { user, groups, scopes })
     }
 }
 
@@ -512,28 +542,34 @@ mod tests {
     // --- TrustedHeadersAuthProvider tests ---
 
     #[tokio::test]
-    async fn trusted_headers_valid_username() {
+    async fn trusted_headers_valid_subject() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider = TrustedHeadersAuthProvider::new(
             backend,
-            "X-Forwarded-User".to_string(),
+            "x-senko-user-sub".to_string(),
+            None,
+            None,
             None,
             None,
         );
 
         let mut headers = axum::http::HeaderMap::new();
-        headers.insert("X-Forwarded-User", "alice".parse().unwrap());
+        headers.insert("x-senko-user-sub", "alice".parse().unwrap());
 
-        let user = provider.authenticate_from_headers(&headers).await.unwrap();
-        assert_eq!(user.username(), "alice");
+        let result = provider.authenticate_from_headers(&headers).await.unwrap();
+        assert_eq!(result.user.username(), "alice");
+        assert!(result.groups.is_empty());
+        assert!(result.scopes.is_empty());
     }
 
     #[tokio::test]
-    async fn trusted_headers_missing_username() {
+    async fn trusted_headers_missing_subject() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider = TrustedHeadersAuthProvider::new(
             backend,
-            "X-Forwarded-User".to_string(),
+            "x-senko-user-sub".to_string(),
+            None,
+            None,
             None,
             None,
         );
@@ -544,22 +580,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn trusted_headers_with_display_name_and_email() {
+    async fn trusted_headers_with_name_and_email() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider = TrustedHeadersAuthProvider::new(
             backend,
-            "X-Forwarded-User".to_string(),
-            Some("X-Forwarded-Name".to_string()),
-            Some("X-Forwarded-Email".to_string()),
+            "x-senko-user-sub".to_string(),
+            Some("x-senko-user-name".to_string()),
+            Some("x-senko-user-email".to_string()),
+            None,
+            None,
         );
 
         let mut headers = axum::http::HeaderMap::new();
-        headers.insert("X-Forwarded-User", "bob".parse().unwrap());
-        headers.insert("X-Forwarded-Name", "Bob Smith".parse().unwrap());
-        headers.insert("X-Forwarded-Email", "bob@example.com".parse().unwrap());
+        headers.insert("x-senko-user-sub", "bob".parse().unwrap());
+        headers.insert("x-senko-user-name", "Bob Smith".parse().unwrap());
+        headers.insert("x-senko-user-email", "bob@example.com".parse().unwrap());
 
-        let user = provider.authenticate_from_headers(&headers).await.unwrap();
-        assert_eq!(user.username(), "bob");
+        let result = provider.authenticate_from_headers(&headers).await.unwrap();
+        assert_eq!(result.user.username(), "bob");
     }
 
     #[tokio::test]
@@ -576,16 +614,62 @@ mod tests {
 
         let provider = TrustedHeadersAuthProvider::new(
             backend,
-            "X-Forwarded-User".to_string(),
+            "x-senko-user-sub".to_string(),
+            None,
+            None,
             None,
             None,
         );
 
         let mut headers = axum::http::HeaderMap::new();
-        headers.insert("X-Forwarded-User", "existing".parse().unwrap());
+        headers.insert("x-senko-user-sub", "existing".parse().unwrap());
 
-        let user = provider.authenticate_from_headers(&headers).await.unwrap();
-        assert_eq!(user.username(), "existing");
+        let result = provider.authenticate_from_headers(&headers).await.unwrap();
+        assert_eq!(result.user.username(), "existing");
+    }
+
+    #[tokio::test]
+    async fn trusted_headers_with_groups_and_scope() {
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+        let provider = TrustedHeadersAuthProvider::new(
+            backend,
+            "x-senko-user-sub".to_string(),
+            None,
+            None,
+            Some("x-senko-user-groups".to_string()),
+            Some("x-senko-user-scope".to_string()),
+        );
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-senko-user-sub", "carol".parse().unwrap());
+        headers.insert("x-senko-user-groups", "admin, dev, ops".parse().unwrap());
+        headers.insert("x-senko-user-scope", "read,write".parse().unwrap());
+
+        let result = provider.authenticate_from_headers(&headers).await.unwrap();
+        assert_eq!(result.user.username(), "carol");
+        assert_eq!(result.groups, vec!["admin", "dev", "ops"]);
+        assert_eq!(result.scopes, vec!["read", "write"]);
+    }
+
+    #[tokio::test]
+    async fn trusted_headers_empty_groups_and_scope() {
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+        let provider = TrustedHeadersAuthProvider::new(
+            backend,
+            "x-senko-user-sub".to_string(),
+            None,
+            None,
+            Some("x-senko-user-groups".to_string()),
+            Some("x-senko-user-scope".to_string()),
+        );
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-senko-user-sub", "dave".parse().unwrap());
+
+        let result = provider.authenticate_from_headers(&headers).await.unwrap();
+        assert_eq!(result.user.username(), "dave");
+        assert!(result.groups.is_empty());
+        assert!(result.scopes.is_empty());
     }
 
     // --- JwtAuthProvider tests ---
