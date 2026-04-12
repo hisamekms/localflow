@@ -15,6 +15,14 @@ run = "cargo build -q --bin senko"
 description = "Run senko CLI"
 run = "senko"
 
+[tasks.test]
+description = "Run unit tests"
+run = "cargo test"
+
+[tasks.test-e2e]
+description = "Run e2e tests"
+run = "bash tests/e2e/run.sh"
+
 [tasks.senko-dev]
 description = "Run locally built senko binary"
 depends = ["build"]
