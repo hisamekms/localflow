@@ -104,6 +104,9 @@ command = "curl -X POST https://example.com/webhook"
 
 [hooks.on_task_completed.log]
 command = "echo 'Task done!' >> /tmp/tasks.log"
+
+[hooks.on_no_eligible_task.notify]
+command = "notify-send 'No eligible tasks'"
 ```
 
 Hooks receive the event payload as JSON on stdin and are executed via `sh -c`. All lifecycle events are supported: `on_task_added`, `on_task_ready`, `on_task_started`, `on_task_completed`, `on_task_canceled`, `on_no_eligible_task`.

@@ -103,6 +103,9 @@ command = "curl -X POST https://example.com/webhook"
 
 [hooks.on_task_completed.log]
 command = "echo 'タスク完了' >> /tmp/tasks.log"
+
+[hooks.on_no_eligible_task.notify]
+command = "notify-send '該当タスクなし'"
 ```
 
 フックはstdinでイベントペイロード（JSON）を受け取り、`sh -c` で実行されます。すべてのライフサイクルイベントに対応しています: `on_task_added`, `on_task_ready`, `on_task_started`, `on_task_completed`, `on_task_canceled`, `on_no_eligible_task`。
