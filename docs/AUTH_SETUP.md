@@ -77,10 +77,10 @@ openssl rand -base64 32
 Server-side `.senko/config.toml`:
 
 ```toml
-[auth.api_key]
+[server.auth.api_key]
 master_key = "your-generated-master-api-key"
 
-[auth.oidc.session]
+[server.auth.oidc.session]
 ttl = "30d"              # Token lifetime (omit for no expiration)
 inactive_ttl = "7d"      # Inactivity timeout (omit for no expiration)
 max_per_user = 10        # Max sessions per user (omit for unlimited)
@@ -148,7 +148,7 @@ The `token` field in the response is the API key. **This key is shown only once.
 `~/.config/senko/config.toml` or project-level `.senko/config.toml`:
 
 ```toml
-[server]
+[cli.remote]
 url = "http://senko-server:3142"
 token = "api-key-from-administrator"
 ```
@@ -209,16 +209,16 @@ Note the following from your provider:
 Server-side `.senko/config.toml`:
 
 ```toml
-[auth.oidc]
+[server.auth.oidc]
 issuer_url = "https://cognito-idp.ap-northeast-1.amazonaws.com/ap-northeast-1_XXXXXXXXX"
 client_id = "1a2b3c4d5e6f7g8h9i0j"
 scopes = ["openid", "profile"]    # Default: ["openid", "profile"]
 
 # Require specific JWT claims (optional)
-[auth.oidc.required_claims]
+[server.auth.oidc.required_claims]
 "custom:tenant" = "my-company"
 
-[auth.oidc.session]
+[server.auth.oidc.session]
 ttl = "24h"              # Token lifetime
 inactive_ttl = "7d"      # Inactivity timeout
 max_per_user = 10        # Max sessions per user
@@ -255,7 +255,7 @@ senko members add --user-id 2 --role member
 `~/.config/senko/config.toml` or project-level `.senko/config.toml`:
 
 ```toml
-[server]
+[cli.remote]
 url = "http://senko-server:3142"
 ```
 
@@ -328,15 +328,15 @@ Run a senko instance as a relay that forwards requests to a remote senko server.
 
 ```
 CLI ──→ Relay Server (senko serve) ──→ Remote Server
-         [server.url configured]        [auth enabled]
+         [cli.remote.url configured]    [auth enabled]
 ```
 
-When `server.url` is configured and `senko serve` is run, the instance operates in relay mode:
+When `cli.remote.url` is configured and `senko serve` is run, the instance operates in relay mode:
 
 - Local authentication is skipped (delegated to the upstream server)
 - The relay captures the client's Bearer token from the `Authorization` header
 - Requests are forwarded to the remote server with either:
-  - The relay's own `server.token` (if configured) — takes priority
+  - The relay's own `cli.remote.token` (if configured) — takes priority
   - The client's original token (passthrough)
 
 ### Pattern A: Token Injection (AI Sandbox)
@@ -348,7 +348,7 @@ The relay injects its own token into forwarded requests. Clients do not need any
 `.senko/config.toml` on the relay:
 
 ```toml
-[server]
+[cli.remote]
 url = "http://remote-senko:3142"
 token = "relay-api-key-issued-by-remote-server"
 ```
@@ -371,7 +371,7 @@ senko serve --host 0.0.0.0 --port 3142
 The client only needs the relay's URL — no token required:
 
 ```toml
-[server]
+[cli.remote]
 url = "http://relay-server:3142"
 ```
 
@@ -396,7 +396,7 @@ The relay forwards the client's original token to the remote server. Each client
 `.senko/config.toml` on the relay (no `token` — only `url`):
 
 ```toml
-[server]
+[cli.remote]
 url = "http://remote-senko:3142"
 ```
 
@@ -417,7 +417,7 @@ senko serve --host 0.0.0.0 --port 3142
 The client configures both the relay URL and its own token (API key or OIDC-issued token):
 
 ```toml
-[server]
+[cli.remote]
 url = "http://relay-server:3142"
 token = "client-own-api-key"
 ```
@@ -439,7 +439,7 @@ The remote server validates the client's token directly. No special configuratio
 |-|----------------------------|-------------------------------|
 | **Use case** | AI sandbox, shared service account | Per-user auth via relay |
 | **Client token** | Not required | Required (API key or OIDC token) |
-| **Relay config** | `server.url` + `server.token` | `server.url` only |
+| **Relay config** | `cli.remote.url` + `cli.remote.token` | `cli.remote.url` only |
 | **Remote validates** | Relay's token | Client's original token |
 
 ## config.toml Reference
@@ -448,33 +448,35 @@ The remote server validates the client's token directly. No special configuratio
 
 | Section | Key | Type | Default | Description | Local | Remote+API Key | Remote+OIDC | Relay |
 |---------|-----|------|---------|-------------|:-----:|:--------------:|:-----------:|:-----:|
-| `[auth.api_key]` | `master_key` | string | - | Master API key | - | Required | Optional | - |
-| `[auth.api_key]` | `master_key_arn` | string | - | AWS Secrets Manager ARN | - | Optional | Optional | - |
-| `[auth.oidc]` | `issuer_url` | string | - | OIDC issuer URL | - | - | Required | - |
-| `[auth.oidc]` | `client_id` | string | - | OIDC client ID | - | - | Required | - |
-| `[auth.oidc]` | `scopes` | array | `["openid", "profile"]` | OIDC scopes | - | - | Optional | - |
-| `[auth.oidc]` | `required_claims` | table | - | Required JWT claims (key-value pairs) | - | - | Optional | - |
-| `[auth.oidc.cli]` | `callback_port` | integer | Auto-assign | Callback port | - | - | Optional | - |
-| `[auth.oidc.cli]` | `browser` | bool | `true` | Auto-open browser | - | - | Optional | - |
-| `[auth.oidc.session]` | `ttl` | string | No expiration | Session lifetime (e.g., `"24h"`, `"30d"`) | - | Optional | Optional | - |
-| `[auth.oidc.session]` | `inactive_ttl` | string | No expiration | Inactivity timeout | - | Optional | Optional | - |
-| `[auth.oidc.session]` | `max_per_user` | integer | Unlimited | Max sessions per user | - | Optional | Optional | - |
+| `[server.auth.api_key]` | `master_key` | string | - | Master API key | - | Required | Optional | - |
+| `[server.auth.api_key]` | `master_key_arn` | string | - | AWS Secrets Manager ARN | - | Optional | Optional | - |
+| `[server.auth.oidc]` | `issuer_url` | string | - | OIDC issuer URL | - | - | Required | - |
+| `[server.auth.oidc]` | `client_id` | string | - | OIDC client ID | - | - | Required | - |
+| `[server.auth.oidc]` | `scopes` | array | `["openid", "profile"]` | OIDC scopes | - | - | Optional | - |
+| `[server.auth.oidc]` | `required_claims` | table | - | Required JWT claims (key-value pairs) | - | - | Optional | - |
+| `[server.auth.oidc.cli]` | `callback_port` | integer | Auto-assign | Callback port | - | - | Optional | - |
+| `[server.auth.oidc.cli]` | `browser` | bool | `true` | Auto-open browser | - | - | Optional | - |
+| `[server.auth.oidc.session]` | `ttl` | string | No expiration | Session lifetime (e.g., `"24h"`, `"30d"`) | - | Optional | Optional | - |
+| `[server.auth.oidc.session]` | `inactive_ttl` | string | No expiration | Inactivity timeout | - | Optional | Optional | - |
+| `[server.auth.oidc.session]` | `max_per_user` | integer | Unlimited | Max sessions per user | - | Optional | Optional | - |
 
-> **Note**: Authentication is implicitly enabled when any `[auth.*]` configuration is present. There is no explicit `auth.enabled` key.
+> **Note**: Authentication is implicitly enabled when any `[server.auth.*]` configuration is present. There is no explicit `auth.enabled` key.
 
 ### Connection Configuration Keys
 
 | Section | Key | Type | Default | Description |
 |---------|-----|------|---------|-------------|
-| `[server]` | `url` | string | - | API server URL (enables HTTP backend) |
-| `[server]` | `token` | string | - | API token (client-side) |
-| `[serve]` | `host` | string | `"127.0.0.1"` | Server bind address |
-| `[serve]` | `port` | integer | `3142` | Server listen port |
+| `[cli.remote]` | `url` | string | - | API server URL (enables HTTP backend) |
+| `[cli.remote]` | `token` | string | - | API token (client-side) |
+| `[server]` | `host` | string | `"127.0.0.1"` | Server bind address |
+| `[server]` | `port` | integer | `3142` | Server listen port |
+| `[web]` | `host` | string | `"127.0.0.1"` | Web UI bind address |
+| `[web]` | `port` | integer | `3141` | Web UI listen port |
 | `[project]` | `name` | string | `"default"` | Project name |
 | `[user]` | `name` | string | `"default"` | User name |
-| `[storage]` | `db_path` | string | `.senko/senko.db` | SQLite database path |
+| `[backend.sqlite]` | `db_path` | string | `.senko/senko.db` | SQLite database path |
 
-> **Note**: In relay mode, the `[server]` section on the relay server specifies the upstream remote server. `server.url` enables relay mode when `senko serve` is run; `server.token` (if set) is injected into forwarded requests instead of passing through the client's token.
+> **Note**: In relay mode, the `[cli.remote]` section on the relay server specifies the upstream remote server. `cli.remote.url` enables relay mode when `senko serve` is run; `cli.remote.token` (if set) is injected into forwarded requests instead of passing through the client's token.
 
 ### API Endpoints
 
@@ -492,18 +494,20 @@ The remote server validates the client's token directly. No special configuratio
 
 | Variable | Config Key | Description |
 |----------|-----------|-------------|
-| `SENKO_AUTH_API_KEY_MASTER_KEY` | `auth.api_key.master_key` | Master API key |
-| `SENKO_AUTH_API_KEY_MASTER_KEY_ARN` | `auth.api_key.master_key_arn` | AWS ARN for master API key |
-| `SENKO_OIDC_ISSUER_URL` | `auth.oidc.issuer_url` | OIDC issuer URL |
-| `SENKO_OIDC_CLIENT_ID` | `auth.oidc.client_id` | OIDC client ID |
-| `SENKO_AUTH_OIDC_SESSION_TTL` | `auth.oidc.session.ttl` | Session lifetime |
-| `SENKO_AUTH_OIDC_SESSION_INACTIVE_TTL` | `auth.oidc.session.inactive_ttl` | Inactivity timeout |
-| `SENKO_AUTH_OIDC_SESSION_MAX_PER_USER` | `auth.oidc.session.max_per_user` | Max sessions per user |
-| `SENKO_SERVER_URL` | `server.url` | API server URL |
-| `SENKO_TOKEN` | `server.token` | API token (client-side) |
-| `SENKO_HOST` | `serve.host` | Server bind address |
-| `SENKO_PORT` | `serve.port` | Server port |
-| `SENKO_DB_PATH` | `storage.db_path` | SQLite database path |
+| `SENKO_AUTH_API_KEY_MASTER_KEY` | `server.auth.api_key.master_key` | Master API key |
+| `SENKO_AUTH_API_KEY_MASTER_KEY_ARN` | `server.auth.api_key.master_key_arn` | AWS ARN for master API key |
+| `SENKO_OIDC_ISSUER_URL` | `server.auth.oidc.issuer_url` | OIDC issuer URL |
+| `SENKO_OIDC_CLIENT_ID` | `server.auth.oidc.client_id` | OIDC client ID |
+| `SENKO_AUTH_OIDC_SESSION_TTL` | `server.auth.oidc.session.ttl` | Session lifetime |
+| `SENKO_AUTH_OIDC_SESSION_INACTIVE_TTL` | `server.auth.oidc.session.inactive_ttl` | Inactivity timeout |
+| `SENKO_AUTH_OIDC_SESSION_MAX_PER_USER` | `server.auth.oidc.session.max_per_user` | Max sessions per user |
+| `SENKO_SERVER_URL` | `cli.remote.url` | API server URL |
+| `SENKO_TOKEN` | `cli.remote.token` | API token (client-side) |
+| `SENKO_SERVER_HOST` | `server.host` | Server bind address |
+| `SENKO_SERVER_PORT` | `server.port` | Server port |
+| `SENKO_HOST` | `web.host` | Web UI bind address |
+| `SENKO_PORT` | `web.port` | Web UI port |
+| `SENKO_DB_PATH` | `backend.sqlite.db_path` | SQLite database path |
 | `SENKO_PROJECT` | - | Project name to operate on |
 | `SENKO_USER` | - | User name to operate as |
 
