@@ -213,6 +213,47 @@ BRANCH=$(echo "$TASK8" | jq -r '.branch')
 assert_eq "feature/${TASK8_ID}-test" "$BRANCH" "branch template expanded"
 
 echo ""
+echo "=== Get project ==="
+PROJECT=$(api_get "$BASE/projects/1")
+assert_json_field "$PROJECT" '.id' "1" "get project by id"
+assert_json_field "$PROJECT" '.name' "default" "project name is default"
+
+echo ""
+echo "=== Get nonexistent project ==="
+STATUS_PROJ_403=$(api_status "$BASE/projects/99999")
+assert_eq "403" "$STATUS_PROJ_403" "nonexistent project returns 403 (no permission)"
+
+echo ""
+echo "=== Preview transition: draft to todo (allowed) ==="
+PT_TASK=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Preview Test"}')
+PT_TASK_ID=$(echo "$PT_TASK" | jq -r '.id')
+PREVIEW_OK=$(api_get "$PBASE/tasks/$PT_TASK_ID/preview-transition?target=todo")
+assert_json_field "$PREVIEW_OK" '.allowed' "true" "preview draft->todo allowed"
+assert_json_field "$PREVIEW_OK" '.target_status' "todo" "preview target_status is todo"
+
+echo ""
+echo "=== Preview transition: draft to completed (not allowed) ==="
+PREVIEW_NG=$(api_get "$PBASE/tasks/$PT_TASK_ID/preview-transition?target=completed")
+assert_json_field "$PREVIEW_NG" '.allowed' "false" "preview draft->completed not allowed"
+
+echo ""
+echo "=== Preview transition: unchecked DoD blocks complete ==="
+PT_DOD=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Preview DoD","definition_of_done":["Check me"]}')
+PT_DOD_ID=$(echo "$PT_DOD" | jq -r '.id')
+api_json -X POST "$PBASE/tasks/$PT_DOD_ID/ready" -d '{}' >/dev/null
+api_json -X POST "$PBASE/tasks/$PT_DOD_ID/start" -d '{}' >/dev/null
+PREVIEW_DOD_RESULT=$(api_get "$PBASE/tasks/$PT_DOD_ID/preview-transition?target=completed")
+assert_json_field "$PREVIEW_DOD_RESULT" '.allowed' "false" "preview complete with unchecked DoD not allowed"
+assert_contains "$(echo "$PREVIEW_DOD_RESULT" | jq -r '.reason')" "DoD" "preview reason mentions DoD"
+
+echo ""
+echo "=== Preview next: has candidate ==="
+api_json -X POST "$PBASE/tasks/$PT_TASK_ID/ready" -d '{}' >/dev/null
+PREVIEW_NEXT=$(api_get "$PBASE/tasks/preview-next")
+assert_json_field "$PREVIEW_NEXT" '.allowed' "true" "preview-next has candidate"
+assert_json_field "$PREVIEW_NEXT" '.target_status' "in_progress" "preview-next target is in_progress"
+
+echo ""
 echo "=== Next when no eligible task ==="
 # Complete or cancel remaining active tasks
 api_json -X POST "$PBASE/tasks/$TASK5_ID/complete" -d '{}' >/dev/null 2>&1 || true
@@ -220,7 +261,14 @@ api_json -X POST "$PBASE/tasks/$TASK4_ID/ready" -d '{}' >/dev/null 2>&1 || true
 api_json -X POST "$PBASE/tasks/$TASK4_ID/cancel" -d '{"reason":"cleanup"}' >/dev/null 2>&1 || true
 api_json -X POST "$PBASE/tasks/$TASK7_ID/cancel" -d '{"reason":"cleanup"}' >/dev/null 2>&1 || true
 api_json -X POST "$PBASE/tasks/$TASK8_ID/cancel" -d '{"reason":"cleanup"}' >/dev/null 2>&1 || true
+api_json -X POST "$PBASE/tasks/$PT_TASK_ID/cancel" -d '{"reason":"cleanup"}' >/dev/null 2>&1 || true
+api_json -X POST "$PBASE/tasks/$PT_DOD_ID/cancel" -d '{"reason":"cleanup"}' >/dev/null 2>&1 || true
 STATUS_NEXT_EMPTY=$(api_status -X POST "$PBASE/tasks/next" -d '{}')
 assert_eq "404" "$STATUS_NEXT_EMPTY" "next with no eligible task returns 404"
+
+echo ""
+echo "=== Preview next: no candidate ==="
+STATUS_PREVIEW_EMPTY=$(api_status "$PBASE/tasks/preview-next")
+assert_eq "404" "$STATUS_PREVIEW_EMPTY" "preview-next with no eligible task returns 404"
 
 test_summary
