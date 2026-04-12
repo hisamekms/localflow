@@ -1544,6 +1544,10 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
         .json()
         .await
         .context("failed to parse /auth/config response")?;
+    let auth_mode = auth_config
+        .get("auth_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("oidc");
     let server_oidc = auth_config
         .get("oidc")
         .and_then(|v| if v.is_null() { None } else { Some(v) })
@@ -1578,26 +1582,48 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
         &oidc_config,
         api_url,
         device_name.as_deref(),
+        auth_mode,
     )
     .await?;
 
-    match cli.output {
-        OutputFormat::Json => {
-            println!(
-                "{}",
-                serde_json::json!({
-                    "key_prefix": result.key_prefix,
-                    "expires_at": result.expires_at,
-                })
-            );
-        }
-        OutputFormat::Text => {
-            eprintln!("Login successful!");
-            eprintln!("  API key: {}...", result.key_prefix);
-            if let Some(ref exp) = result.expires_at {
-                eprintln!("  Expires: {exp}");
+    match result {
+        super::oidc_login::LoginResult::Oidc { key_prefix, expires_at } => {
+            match cli.output {
+                OutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "auth_mode": "oidc",
+                            "key_prefix": key_prefix,
+                            "expires_at": expires_at,
+                        })
+                    );
+                }
+                OutputFormat::Text => {
+                    eprintln!("Login successful!");
+                    eprintln!("  API key: {}...", key_prefix);
+                    if let Some(ref exp) = expires_at {
+                        eprintln!("  Expires: {exp}");
+                    }
+                    eprintln!("  Saved to OS keychain.");
+                }
             }
-            eprintln!("  Saved to OS keychain.");
+        }
+        super::oidc_login::LoginResult::TrustedHeaders => {
+            match cli.output {
+                OutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "auth_mode": "trusted_headers",
+                        })
+                    );
+                }
+                OutputFormat::Text => {
+                    eprintln!("Login successful!");
+                    eprintln!("  Access token saved to OS keychain.");
+                }
+            }
         }
     }
     Ok(())
@@ -1746,6 +1772,8 @@ pub async fn cmd_auth_logout(cli: &Cli) -> Result<()> {
 
     // Always delete from keychain
     super::keychain::delete(&api_url)?;
+    // Also delete access token if present (ignore error if not found)
+    let _ = super::keychain::delete_access_token(&api_url);
 
     match cli.output {
         OutputFormat::Json => {

@@ -16,9 +16,14 @@ struct OidcDiscovery {
     token_endpoint: String,
 }
 
-pub struct LoginResult {
-    pub key_prefix: String,
-    pub expires_at: Option<String>,
+pub enum LoginResult {
+    /// OIDC mode: both access token and API key were saved
+    Oidc {
+        key_prefix: String,
+        expires_at: Option<String>,
+    },
+    /// trusted_headers mode: only access token was saved (no API key exchange)
+    TrustedHeaders,
 }
 
 #[derive(Deserialize)]
@@ -32,6 +37,7 @@ pub async fn perform_login(
     oidc_config: &OidcConfig,
     api_url: &str,
     device_name: Option<&str>,
+    auth_mode: &str,
 ) -> Result<LoginResult> {
     let issuer_url = oidc_config
         .issuer_url
@@ -111,7 +117,20 @@ pub async fn perform_login(
 
     let jwt = token_response.access_token().secret().to_string();
 
-    // Step 7: Exchange JWT for senko API key
+    // TODO: If the OIDC provider returns a refresh token (token_response.refresh_token()),
+    // save it to keychain for automatic token renewal. This would allow the CLI to
+    // transparently refresh expired access tokens without requiring re-authentication.
+
+    // Step 7: Save access token to keychain (both modes need this)
+    super::keychain::save_access_token(api_url, &jwt)?;
+
+    if auth_mode == "trusted_headers" {
+        // In trusted_headers mode, no server-side API key exchange is needed.
+        // The access token is sufficient for authentication via the reverse proxy.
+        return Ok(LoginResult::TrustedHeaders);
+    }
+
+    // Step 8: Exchange JWT for senko API key (oidc mode)
     let token_url = format!("{}/auth/token", api_url.trim_end_matches('/'));
     let mut req = http_client
         .post(&token_url)
@@ -133,10 +152,10 @@ pub async fn perform_login(
         .await
         .context("failed to parse /auth/token response")?;
 
-    // Step 8: Save to keychain
+    // Step 9: Save API key to keychain
     super::keychain::save(api_url, &senko_token.token)?;
 
-    Ok(LoginResult {
+    Ok(LoginResult::Oidc {
         key_prefix: senko_token.key_prefix,
         expires_at: senko_token.expires_at,
     })
