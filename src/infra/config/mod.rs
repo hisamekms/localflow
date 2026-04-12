@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 pub use crate::domain::task::{BranchMode, MergeStrategy, MergeVia};
 
@@ -19,32 +19,70 @@ pub struct Config {
     #[serde(default)]
     pub user: UserConfig,
     #[serde(default)]
-    pub auth: AuthConfig,
-    #[serde(default)]
-    pub storage: StorageConfig,
-    #[serde(default)]
-    pub serve: ServeConfig,
-    #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
-    pub skill: SkillConfig,
+    pub cli: CliConfig,
+    #[serde(default)]
+    pub web: WebConfig,
 }
 
-// --- Skill config ---
+// --- Hook definition types ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OnFailure {
+    #[default]
+    Abort,
+    Warn,
+    Ignore,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookObject {
+    pub command: Option<String>,
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub on_failure: OnFailure,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum HookDef {
+    Simple(String),
+    Complex(HookObject),
+}
+
+impl<'de> Deserialize<'de> for HookDef {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Helper {
+            Simple(String),
+            Complex(HookObject),
+        }
+        match Helper::deserialize(deserializer)? {
+            Helper::Simple(s) => Ok(HookDef::Simple(s)),
+            Helper::Complex(o) => Ok(HookDef::Complex(o)),
+        }
+    }
+}
+
+// --- Metadata field types ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "source")]
 pub enum MetadataFieldSource {
     Env {
         env_var: String,
-        #[serde(default)]
-        default: Option<String>,
-    },
-    Fixed {
-        value: serde_json::Value,
     },
     Prompt {
         prompt: String,
+    },
+    Value {
+        value: serde_json::Value,
+    },
+    Command {
+        command: String,
     },
 }
 
@@ -53,32 +91,109 @@ pub struct MetadataField {
     pub key: String,
     #[serde(flatten)]
     pub source: MetadataFieldSource,
+    #[serde(default)]
+    pub default: Option<serde_json::Value>,
+    #[serde(default)]
+    pub required: bool,
+}
+
+// --- Workflow event configs ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkflowEventConfig {
+    #[serde(default)]
+    pub instructions: Vec<String>,
+    #[serde(default)]
+    pub pre_hooks: Vec<HookDef>,
+    #[serde(default)]
+    pub post_hooks: Vec<HookDef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SkillStartConfig {
+pub struct WorkflowAddConfig {
+    #[serde(default)]
+    pub default_dod: Vec<String>,
+    #[serde(default)]
+    pub default_tags: Vec<String>,
+    #[serde(default)]
+    pub default_priority: Option<String>,
+    #[serde(default)]
+    pub instructions: Vec<String>,
+    #[serde(default)]
+    pub pre_hooks: Vec<HookDef>,
+    #[serde(default)]
+    pub post_hooks: Vec<HookDef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkflowStartConfig {
     #[serde(default)]
     pub metadata_fields: Vec<MetadataField>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SkillConfig {
     #[serde(default)]
-    pub start: SkillStartConfig,
+    pub instructions: Vec<String>,
+    #[serde(default)]
+    pub pre_hooks: Vec<HookDef>,
+    #[serde(default)]
+    pub post_hooks: Vec<HookDef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ServeConfig {
+pub struct WorkflowPlanConfig {
+    #[serde(default)]
+    pub required_sections: Vec<String>,
+    #[serde(default)]
+    pub instructions: Vec<String>,
+    #[serde(default)]
+    pub pre_hooks: Vec<HookDef>,
+    #[serde(default)]
+    pub post_hooks: Vec<HookDef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkflowCompleteConfig {
+    #[serde(default)]
+    pub metadata_fields: Vec<MetadataField>,
+    #[serde(default)]
+    pub instructions: Vec<String>,
+    #[serde(default)]
+    pub pre_hooks: Vec<HookDef>,
+    #[serde(default)]
+    pub post_hooks: Vec<HookDef>,
+}
+
+// --- Web config ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WebConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
 }
 
+// --- CLI config ---
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ServerConfig {
+pub struct CliRemoteConfig {
     pub url: Option<String>,
-    #[serde(skip)]
     pub token: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CliConfig {
+    #[serde(default)]
+    pub remote: CliRemoteConfig,
+}
+
+// --- Server config ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServerConfig {
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub auth: AuthConfig,
+}
+
+// --- Auth types (unchanged) ---
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct OidcCliConfig {
@@ -109,7 +224,6 @@ impl OidcConfig {
         self.issuer_url.is_some() && self.client_id.is_some()
     }
 }
-
 
 fn default_oidc_scopes() -> Vec<String> {
     vec!["openid".to_string(), "profile".to_string()]
@@ -143,6 +257,8 @@ impl AuthConfig {
     }
 }
 
+// --- Project / User ---
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProjectConfig {
     pub name: Option<String>,
@@ -152,6 +268,8 @@ pub struct ProjectConfig {
 pub struct UserConfig {
     pub name: Option<String>,
 }
+
+// --- Log config ---
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LogConfig {
@@ -174,6 +292,8 @@ fn default_log_level() -> String {
     "info".to_string()
 }
 
+// --- Backend config ---
+
 #[cfg(feature = "dynamodb")]
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct DynamoDbConfig {
@@ -192,12 +312,14 @@ pub struct PostgresConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct StorageConfig {
+pub struct SqliteConfig {
     pub db_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BackendConfig {
+    #[serde(default)]
+    pub sqlite: SqliteConfig,
     #[cfg(feature = "dynamodb")]
     #[serde(default)]
     pub dynamodb: Option<DynamoDbConfig>,
@@ -206,19 +328,7 @@ pub struct BackendConfig {
     pub postgres: Option<PostgresConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "type")]
-pub enum WorkflowEventType {
-    Command { command: String },
-    Prompt { content: String },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowEvent {
-    pub point: String,
-    #[serde(flatten)]
-    pub event_type: WorkflowEventType,
-}
+// --- Workflow config ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowConfig {
@@ -231,7 +341,25 @@ pub struct WorkflowConfig {
     #[serde(default)]
     pub merge_strategy: MergeStrategy,
     #[serde(default)]
-    pub events: Vec<WorkflowEvent>,
+    pub branch_template: Option<String>,
+    #[serde(default)]
+    pub add: WorkflowAddConfig,
+    #[serde(default)]
+    pub start: WorkflowStartConfig,
+    #[serde(default)]
+    pub branch: WorkflowEventConfig,
+    #[serde(default)]
+    pub plan: WorkflowPlanConfig,
+    #[serde(default)]
+    pub implement: WorkflowEventConfig,
+    #[serde(rename = "merge", default)]
+    pub merge_event: WorkflowEventConfig,
+    #[serde(default)]
+    pub pr: WorkflowEventConfig,
+    #[serde(default)]
+    pub complete: WorkflowCompleteConfig,
+    #[serde(default)]
+    pub branch_cleanup: WorkflowEventConfig,
 }
 
 fn default_true() -> bool {
@@ -245,12 +373,21 @@ impl Default for WorkflowConfig {
             auto_merge: true,
             branch_mode: BranchMode::default(),
             merge_strategy: MergeStrategy::default(),
-            events: Vec::new(),
+            branch_template: None,
+            add: WorkflowAddConfig::default(),
+            start: WorkflowStartConfig::default(),
+            branch: WorkflowEventConfig::default(),
+            plan: WorkflowPlanConfig::default(),
+            implement: WorkflowEventConfig::default(),
+            merge_event: WorkflowEventConfig::default(),
+            pr: WorkflowEventConfig::default(),
+            complete: WorkflowCompleteConfig::default(),
+            branch_cleanup: WorkflowEventConfig::default(),
         }
     }
 }
 
-// --- Named hook types ---
+// --- Named hook types (CLI hooks, unchanged) ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookEntry {
@@ -346,15 +483,11 @@ pub struct RawConfig {
     #[serde(default)]
     pub user: UserConfig,
     #[serde(default)]
-    pub auth: RawAuthConfig,
-    #[serde(default)]
-    pub storage: StorageConfig,
-    #[serde(default)]
-    pub serve: RawServeConfig,
-    #[serde(default)]
     pub server: RawServerConfig,
     #[serde(default)]
-    pub skill: Option<SkillConfig>,
+    pub cli: RawCliConfig,
+    #[serde(default)]
+    pub web: RawWebConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -364,11 +497,31 @@ pub struct RawWorkflowConfig {
     pub auto_merge: Option<bool>,
     pub branch_mode: Option<BranchMode>,
     pub merge_strategy: Option<MergeStrategy>,
-    pub events: Option<Vec<WorkflowEvent>>,
+    pub branch_template: Option<String>,
+    #[serde(default)]
+    pub add: Option<WorkflowAddConfig>,
+    #[serde(default)]
+    pub start: Option<WorkflowStartConfig>,
+    #[serde(default)]
+    pub branch: Option<WorkflowEventConfig>,
+    #[serde(default)]
+    pub plan: Option<WorkflowPlanConfig>,
+    #[serde(default)]
+    pub implement: Option<WorkflowEventConfig>,
+    #[serde(rename = "merge", default)]
+    pub merge_event: Option<WorkflowEventConfig>,
+    #[serde(default)]
+    pub pr: Option<WorkflowEventConfig>,
+    #[serde(default)]
+    pub complete: Option<WorkflowCompleteConfig>,
+    #[serde(default)]
+    pub branch_cleanup: Option<WorkflowEventConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawBackendConfig {
+    #[serde(default)]
+    pub sqlite: RawSqliteConfig,
     #[cfg(feature = "dynamodb")]
     pub dynamodb: Option<DynamoDbConfig>,
     #[cfg(feature = "postgres")]
@@ -376,10 +529,41 @@ pub struct RawBackendConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawSqliteConfig {
+    pub db_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawLogConfig {
     pub dir: Option<String>,
     pub level: Option<String>,
     pub format: Option<LogFormat>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawServerConfig {
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub auth: RawAuthConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawCliConfig {
+    #[serde(default)]
+    pub remote: RawCliRemoteConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawCliRemoteConfig {
+    pub url: Option<String>,
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawWebConfig {
+    pub host: Option<String>,
+    pub port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -422,17 +606,6 @@ pub struct RawAuthConfig {
     pub oidc: RawOidcConfig,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct RawServeConfig {
-    pub host: Option<String>,
-    pub port: Option<u16>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct RawServerConfig {
-    pub url: Option<String>,
-}
-
 impl RawConfig {
     /// Merge two configs: `self` is the base (lower priority), `overlay` wins.
     pub fn merge(self, overlay: RawConfig) -> RawConfig {
@@ -442,10 +615,35 @@ impl RawConfig {
                 merge_via: overlay.workflow.merge_via.or(self.workflow.merge_via),
                 auto_merge: overlay.workflow.auto_merge.or(self.workflow.auto_merge),
                 branch_mode: overlay.workflow.branch_mode.or(self.workflow.branch_mode),
-                merge_strategy: overlay.workflow.merge_strategy.or(self.workflow.merge_strategy),
-                events: overlay.workflow.events.or(self.workflow.events),
+                merge_strategy: overlay
+                    .workflow
+                    .merge_strategy
+                    .or(self.workflow.merge_strategy),
+                branch_template: overlay
+                    .workflow
+                    .branch_template
+                    .or(self.workflow.branch_template),
+                add: overlay.workflow.add.or(self.workflow.add),
+                start: overlay.workflow.start.or(self.workflow.start),
+                branch: overlay.workflow.branch.or(self.workflow.branch),
+                plan: overlay.workflow.plan.or(self.workflow.plan),
+                implement: overlay.workflow.implement.or(self.workflow.implement),
+                merge_event: overlay.workflow.merge_event.or(self.workflow.merge_event),
+                pr: overlay.workflow.pr.or(self.workflow.pr),
+                complete: overlay.workflow.complete.or(self.workflow.complete),
+                branch_cleanup: overlay
+                    .workflow
+                    .branch_cleanup
+                    .or(self.workflow.branch_cleanup),
             },
             backend: RawBackendConfig {
+                sqlite: RawSqliteConfig {
+                    db_path: overlay
+                        .backend
+                        .sqlite
+                        .db_path
+                        .or(self.backend.sqlite.db_path),
+                },
                 #[cfg(feature = "dynamodb")]
                 dynamodb: overlay.backend.dynamodb.or(self.backend.dynamodb),
                 #[cfg(feature = "postgres")]
@@ -462,63 +660,107 @@ impl RawConfig {
             user: UserConfig {
                 name: overlay.user.name.or(self.user.name),
             },
-            auth: RawAuthConfig {
-                api_key: RawApiKeyConfig {
-                    master_key: overlay.auth.api_key.master_key.or(self.auth.api_key.master_key),
-                    master_key_arn: overlay.auth.api_key.master_key_arn.or(self.auth.api_key.master_key_arn),
-                },
-                oidc: RawOidcConfig {
-                    issuer_url: overlay.auth.oidc.issuer_url.or(self.auth.oidc.issuer_url),
-                    client_id: overlay.auth.oidc.client_id.or(self.auth.oidc.client_id),
-                    username_claim: overlay.auth.oidc.username_claim.or(self.auth.oidc.username_claim),
-                    scopes: overlay.auth.oidc.scopes.or(self.auth.oidc.scopes),
-                    required_claims: overlay
-                        .auth
-                        .oidc
-                        .required_claims
-                        .or(self.auth.oidc.required_claims),
-                    cli: RawOidcCliConfig {
-                        callback_port: overlay
-                            .auth
-                            .oidc
-                            .cli
-                            .callback_port
-                            .or(self.auth.oidc.cli.callback_port),
-                        browser: overlay
-                            .auth
-                            .oidc
-                            .cli
-                            .browser
-                            .or(self.auth.oidc.cli.browser),
-                    },
-                    session: RawSessionConfig {
-                        ttl: overlay.auth.oidc.session.ttl.or(self.auth.oidc.session.ttl),
-                        inactive_ttl: overlay
-                            .auth
-                            .oidc
-                            .session
-                            .inactive_ttl
-                            .or(self.auth.oidc.session.inactive_ttl),
-                        max_per_user: overlay
-                            .auth
-                            .oidc
-                            .session
-                            .max_per_user
-                            .or(self.auth.oidc.session.max_per_user),
-                    },
-                },
-            },
-            storage: StorageConfig {
-                db_path: overlay.storage.db_path.or(self.storage.db_path),
-            },
-            serve: RawServeConfig {
-                host: overlay.serve.host.or(self.serve.host),
-                port: overlay.serve.port.or(self.serve.port),
-            },
             server: RawServerConfig {
-                url: overlay.server.url.or(self.server.url),
+                host: overlay.server.host.or(self.server.host),
+                port: overlay.server.port.or(self.server.port),
+                auth: RawAuthConfig {
+                    api_key: RawApiKeyConfig {
+                        master_key: overlay
+                            .server
+                            .auth
+                            .api_key
+                            .master_key
+                            .or(self.server.auth.api_key.master_key),
+                        master_key_arn: overlay
+                            .server
+                            .auth
+                            .api_key
+                            .master_key_arn
+                            .or(self.server.auth.api_key.master_key_arn),
+                    },
+                    oidc: RawOidcConfig {
+                        issuer_url: overlay
+                            .server
+                            .auth
+                            .oidc
+                            .issuer_url
+                            .or(self.server.auth.oidc.issuer_url),
+                        client_id: overlay
+                            .server
+                            .auth
+                            .oidc
+                            .client_id
+                            .or(self.server.auth.oidc.client_id),
+                        username_claim: overlay
+                            .server
+                            .auth
+                            .oidc
+                            .username_claim
+                            .or(self.server.auth.oidc.username_claim),
+                        scopes: overlay
+                            .server
+                            .auth
+                            .oidc
+                            .scopes
+                            .or(self.server.auth.oidc.scopes),
+                        required_claims: overlay
+                            .server
+                            .auth
+                            .oidc
+                            .required_claims
+                            .or(self.server.auth.oidc.required_claims),
+                        cli: RawOidcCliConfig {
+                            callback_port: overlay
+                                .server
+                                .auth
+                                .oidc
+                                .cli
+                                .callback_port
+                                .or(self.server.auth.oidc.cli.callback_port),
+                            browser: overlay
+                                .server
+                                .auth
+                                .oidc
+                                .cli
+                                .browser
+                                .or(self.server.auth.oidc.cli.browser),
+                        },
+                        session: RawSessionConfig {
+                            ttl: overlay
+                                .server
+                                .auth
+                                .oidc
+                                .session
+                                .ttl
+                                .or(self.server.auth.oidc.session.ttl),
+                            inactive_ttl: overlay
+                                .server
+                                .auth
+                                .oidc
+                                .session
+                                .inactive_ttl
+                                .or(self.server.auth.oidc.session.inactive_ttl),
+                            max_per_user: overlay
+                                .server
+                                .auth
+                                .oidc
+                                .session
+                                .max_per_user
+                                .or(self.server.auth.oidc.session.max_per_user),
+                        },
+                    },
+                },
             },
-            skill: overlay.skill.or(self.skill),
+            cli: RawCliConfig {
+                remote: RawCliRemoteConfig {
+                    url: overlay.cli.remote.url.or(self.cli.remote.url),
+                    token: overlay.cli.remote.token.or(self.cli.remote.token),
+                },
+            },
+            web: RawWebConfig {
+                host: overlay.web.host.or(self.web.host),
+                port: overlay.web.port.or(self.web.port),
+            },
         }
     }
 
@@ -531,9 +773,21 @@ impl RawConfig {
                 auto_merge: self.workflow.auto_merge.unwrap_or(true),
                 branch_mode: self.workflow.branch_mode.unwrap_or_default(),
                 merge_strategy: self.workflow.merge_strategy.unwrap_or_default(),
-                events: self.workflow.events.unwrap_or_default(),
+                branch_template: self.workflow.branch_template,
+                add: self.workflow.add.unwrap_or_default(),
+                start: self.workflow.start.unwrap_or_default(),
+                branch: self.workflow.branch.unwrap_or_default(),
+                plan: self.workflow.plan.unwrap_or_default(),
+                implement: self.workflow.implement.unwrap_or_default(),
+                merge_event: self.workflow.merge_event.unwrap_or_default(),
+                pr: self.workflow.pr.unwrap_or_default(),
+                complete: self.workflow.complete.unwrap_or_default(),
+                branch_cleanup: self.workflow.branch_cleanup.unwrap_or_default(),
             },
             backend: BackendConfig {
+                sqlite: SqliteConfig {
+                    db_path: self.backend.sqlite.db_path,
+                },
                 #[cfg(feature = "dynamodb")]
                 dynamodb: self.backend.dynamodb,
                 #[cfg(feature = "postgres")]
@@ -546,38 +800,52 @@ impl RawConfig {
             },
             project: self.project,
             user: self.user,
-            auth: AuthConfig {
-                api_key: ApiKeyConfig {
-                    master_key: self.auth.api_key.master_key,
-                    master_key_arn: self.auth.api_key.master_key_arn,
-                },
-                oidc: OidcConfig {
-                    issuer_url: self.auth.oidc.issuer_url,
-                    client_id: self.auth.oidc.client_id,
-                    username_claim: self.auth.oidc.username_claim,
-                    scopes: self.auth.oidc.scopes.unwrap_or_else(default_oidc_scopes),
-                    required_claims: self.auth.oidc.required_claims.unwrap_or_default(),
-                    cli: OidcCliConfig {
-                        callback_port: self.auth.oidc.cli.callback_port,
-                        browser: self.auth.oidc.cli.browser.unwrap_or(true),
-                    },
-                    session: SessionConfig {
-                        ttl: self.auth.oidc.session.ttl,
-                        inactive_ttl: self.auth.oidc.session.inactive_ttl,
-                        max_per_user: self.auth.oidc.session.max_per_user,
-                    },
-                },
-            },
-            storage: self.storage,
-            serve: ServeConfig {
-                host: self.serve.host,
-                port: self.serve.port,
-            },
             server: ServerConfig {
-                url: self.server.url,
-                token: None,
+                host: self.server.host,
+                port: self.server.port,
+                auth: AuthConfig {
+                    api_key: ApiKeyConfig {
+                        master_key: self.server.auth.api_key.master_key,
+                        master_key_arn: self.server.auth.api_key.master_key_arn,
+                    },
+                    oidc: OidcConfig {
+                        issuer_url: self.server.auth.oidc.issuer_url,
+                        client_id: self.server.auth.oidc.client_id,
+                        username_claim: self.server.auth.oidc.username_claim,
+                        scopes: self
+                            .server
+                            .auth
+                            .oidc
+                            .scopes
+                            .unwrap_or_else(default_oidc_scopes),
+                        required_claims: self
+                            .server
+                            .auth
+                            .oidc
+                            .required_claims
+                            .unwrap_or_default(),
+                        cli: OidcCliConfig {
+                            callback_port: self.server.auth.oidc.cli.callback_port,
+                            browser: self.server.auth.oidc.cli.browser.unwrap_or(true),
+                        },
+                        session: SessionConfig {
+                            ttl: self.server.auth.oidc.session.ttl,
+                            inactive_ttl: self.server.auth.oidc.session.inactive_ttl,
+                            max_per_user: self.server.auth.oidc.session.max_per_user,
+                        },
+                    },
+                },
             },
-            skill: self.skill.unwrap_or_default(),
+            cli: CliConfig {
+                remote: CliRemoteConfig {
+                    url: self.cli.remote.url,
+                    token: self.cli.remote.token,
+                },
+            },
+            web: WebConfig {
+                host: self.web.host,
+                port: self.web.port,
+            },
         }
     }
 }
@@ -668,15 +936,17 @@ impl Config {
             }
         }
 
-        // Server settings
+        // CLI remote settings
         if let Ok(val) = std::env::var("SENKO_SERVER_URL")
             && !val.is_empty() {
-                self.server.url = Some(val);
+                self.cli.remote.url = Some(val);
             }
         if let Ok(val) = std::env::var("SENKO_TOKEN")
             && !val.is_empty() {
-                self.server.token = Some(val);
+                self.cli.remote.token = Some(val);
             }
+
+        // CLI hooks
         if let Ok(val) = std::env::var("SENKO_HOOKS_ENABLED") {
             match val.to_lowercase().as_str() {
                 "true" | "1" => self.hooks.enabled = true,
@@ -685,43 +955,53 @@ impl Config {
             }
         }
 
-        // Auth settings
+        // Server auth settings
         if let Ok(val) = std::env::var("SENKO_AUTH_API_KEY_MASTER_KEY")
             && !val.is_empty() {
-                self.auth.api_key.master_key = Some(val);
+                self.server.auth.api_key.master_key = Some(val);
             }
         if let Ok(val) = std::env::var("SENKO_AUTH_API_KEY_MASTER_KEY_ARN")
             && !val.is_empty() {
-                self.auth.api_key.master_key_arn = Some(val);
+                self.server.auth.api_key.master_key_arn = Some(val);
             }
 
-        // OIDC settings
+        // Server OIDC settings
         if let Ok(val) = std::env::var("SENKO_OIDC_ISSUER_URL")
             && !val.is_empty() {
-                self.auth.oidc.issuer_url = Some(val);
+                self.server.auth.oidc.issuer_url = Some(val);
             }
         if let Ok(val) = std::env::var("SENKO_OIDC_CLIENT_ID")
             && !val.is_empty() {
-                self.auth.oidc.client_id = Some(val);
+                self.server.auth.oidc.client_id = Some(val);
             }
         if let Ok(val) = std::env::var("SENKO_OIDC_USERNAME_CLAIM")
             && !val.is_empty() {
-                self.auth.oidc.username_claim = Some(val);
+                self.server.auth.oidc.username_claim = Some(val);
             }
 
-        // Session settings
+        // Server OIDC session settings
         if let Ok(val) = std::env::var("SENKO_AUTH_OIDC_SESSION_TTL")
             && !val.is_empty() {
-                self.auth.oidc.session.ttl = Some(val);
+                self.server.auth.oidc.session.ttl = Some(val);
             }
         if let Ok(val) = std::env::var("SENKO_AUTH_OIDC_SESSION_INACTIVE_TTL")
             && !val.is_empty() {
-                self.auth.oidc.session.inactive_ttl = Some(val);
+                self.server.auth.oidc.session.inactive_ttl = Some(val);
             }
         if let Ok(val) = std::env::var("SENKO_AUTH_OIDC_SESSION_MAX_PER_USER")
             && !val.is_empty()
             && let Ok(n) = val.parse::<u32>() {
-                self.auth.oidc.session.max_per_user = Some(n);
+                self.server.auth.oidc.session.max_per_user = Some(n);
+            }
+
+        // Server host/port
+        if let Ok(val) = std::env::var("SENKO_SERVER_HOST")
+            && !val.is_empty() {
+                self.server.host = Some(val);
+            }
+        if let Ok(val) = std::env::var("SENKO_SERVER_PORT")
+            && let Ok(port) = val.parse::<u16>() {
+                self.server.port = Some(port);
             }
 
         // DynamoDB settings (feature-gated)
@@ -840,10 +1120,10 @@ impl Config {
                 self.project.name = Some(val);
             }
 
-        // Storage settings
+        // Backend SQLite settings
         if let Ok(val) = std::env::var("SENKO_DB_PATH")
             && !val.is_empty() {
-                self.storage.db_path = Some(val);
+                self.backend.sqlite.db_path = Some(val);
             }
 
         // Log settings
@@ -863,14 +1143,14 @@ impl Config {
             }
         }
 
-        // Serve settings
+        // Web settings
         if let Ok(val) = std::env::var("SENKO_PORT")
             && let Ok(port) = val.parse::<u16>() {
-                self.serve.port = Some(port);
+                self.web.port = Some(port);
             }
         if let Ok(val) = std::env::var("SENKO_HOST")
             && !val.is_empty() {
-                self.serve.host = Some(val);
+                self.web.host = Some(val);
             }
     }
 
@@ -881,7 +1161,7 @@ impl Config {
             self.log.dir = Some(dir.clone());
         }
         if let Some(ref path) = overrides.db_path {
-            self.storage.db_path = Some(path.clone());
+            self.backend.sqlite.db_path = Some(path.clone());
         }
         #[cfg(feature = "postgres")]
         if let Some(ref url) = overrides.postgres_url {
@@ -897,23 +1177,23 @@ impl Config {
             self.user.name = Some(name.clone());
         }
         if let Some(port) = overrides.port {
-            self.serve.port = Some(port);
+            self.web.port = Some(port);
         }
         if let Some(ref host) = overrides.host {
-            self.serve.host = Some(host.clone());
+            self.web.host = Some(host.clone());
         }
     }
 
-    pub fn serve_port_or(&self, default: u16) -> u16 {
-        self.serve.port.unwrap_or(default)
+    pub fn web_port_or(&self, default: u16) -> u16 {
+        self.web.port.unwrap_or(default)
     }
 
-    pub fn serve_port_is_explicit(&self) -> bool {
-        self.serve.port.is_some()
+    pub fn web_port_is_explicit(&self) -> bool {
+        self.web.port.is_some()
     }
 
     pub fn effective_host(&self) -> String {
-        self.serve
+        self.web
             .host
             .clone()
             .unwrap_or_else(|| "127.0.0.1".to_string())
@@ -951,9 +1231,9 @@ impl Config {
     ) -> anyhow::Result<()> {
         use anyhow::Context;
 
-        if let Some(ref arn) = self.auth.api_key.master_key_arn {
+        if let Some(ref arn) = self.server.auth.api_key.master_key_arn {
             let secret = client.get_secret(arn).await?;
-            self.auth.api_key.master_key = Some(secret);
+            self.server.auth.api_key.master_key = Some(secret);
         }
 
         #[cfg(feature = "postgres")]
@@ -1003,7 +1283,10 @@ fn build_rds_url(json_str: &str, sslrootcert: Option<&str>) -> anyhow::Result<St
     let encoded_user = utf8_percent_encode(&secret.username, NON_ALPHANUMERIC);
     let encoded_pass = utf8_percent_encode(&secret.password, NON_ALPHANUMERIC);
 
-    let mut url = format!("postgres://{encoded_user}:{encoded_pass}@{}:{port}/{dbname}", secret.host);
+    let mut url = format!(
+        "postgres://{encoded_user}:{encoded_pass}@{}:{port}/{dbname}",
+        secret.host
+    );
 
     if let Some(cert_path) = sslrootcert {
         url.push_str("?sslmode=verify-full&sslrootcert=");
@@ -1041,8 +1324,9 @@ mod resolve_secrets_tests {
     #[tokio::test]
     async fn arn_overwrites_direct_value() {
         let mut config = Config::default();
-        config.auth.api_key.master_key = Some("direct-value".to_string());
-        config.auth.api_key.master_key_arn = Some("arn:aws:secretsmanager:us-east-1:123:secret:key".to_string());
+        config.server.auth.api_key.master_key = Some("direct-value".to_string());
+        config.server.auth.api_key.master_key_arn =
+            Some("arn:aws:secretsmanager:us-east-1:123:secret:key".to_string());
 
         let client = make_client(HashMap::from([(
             "arn:aws:secretsmanager:us-east-1:123:secret:key".to_string(),
@@ -1052,7 +1336,7 @@ mod resolve_secrets_tests {
         config.resolve_secrets_with(&client).await.unwrap();
 
         assert_eq!(
-            config.auth.api_key.master_key.as_deref(),
+            config.server.auth.api_key.master_key.as_deref(),
             Some("arn-resolved-value")
         );
     }
@@ -1060,7 +1344,8 @@ mod resolve_secrets_tests {
     #[tokio::test]
     async fn arn_only_sets_master_key() {
         let mut config = Config::default();
-        config.auth.api_key.master_key_arn = Some("arn:aws:secretsmanager:us-east-1:123:secret:key".to_string());
+        config.server.auth.api_key.master_key_arn =
+            Some("arn:aws:secretsmanager:us-east-1:123:secret:key".to_string());
 
         let client = make_client(HashMap::from([(
             "arn:aws:secretsmanager:us-east-1:123:secret:key".to_string(),
@@ -1070,7 +1355,7 @@ mod resolve_secrets_tests {
         config.resolve_secrets_with(&client).await.unwrap();
 
         assert_eq!(
-            config.auth.api_key.master_key.as_deref(),
+            config.server.auth.api_key.master_key.as_deref(),
             Some("arn-resolved-value")
         );
     }
@@ -1078,14 +1363,14 @@ mod resolve_secrets_tests {
     #[tokio::test]
     async fn direct_only_unchanged() {
         let mut config = Config::default();
-        config.auth.api_key.master_key = Some("direct-value".to_string());
+        config.server.auth.api_key.master_key = Some("direct-value".to_string());
 
         let client = make_client(HashMap::new());
 
         config.resolve_secrets_with(&client).await.unwrap();
 
         assert_eq!(
-            config.auth.api_key.master_key.as_deref(),
+            config.server.auth.api_key.master_key.as_deref(),
             Some("direct-value")
         );
     }
@@ -1098,7 +1383,7 @@ mod resolve_secrets_tests {
 
         config.resolve_secrets_with(&client).await.unwrap();
 
-        assert!(config.auth.api_key.master_key.is_none());
+        assert!(config.server.auth.api_key.master_key.is_none());
     }
 
     #[cfg(feature = "postgres")]
@@ -1106,7 +1391,10 @@ mod resolve_secrets_tests {
         use super::*;
 
         fn pg_config(config: &mut Config) -> &mut PostgresConfig {
-            config.backend.postgres.get_or_insert_with(PostgresConfig::default)
+            config
+                .backend
+                .postgres
+                .get_or_insert_with(PostgresConfig::default)
         }
 
         #[tokio::test]
@@ -1147,7 +1435,8 @@ mod resolve_secrets_tests {
 
         #[tokio::test]
         async fn rds_secrets_arn_takes_priority_over_url_arn() {
-            let rds_json = r#"{"username":"u","password":"p","host":"rds.example.com"}"#;
+            let rds_json =
+                r#"{"username":"u","password":"p","host":"rds.example.com"}"#;
             let mut config = Config::default();
             let pg = pg_config(&mut config);
             pg.rds_secrets_arn = Some("arn:rds".to_string());
@@ -1155,13 +1444,26 @@ mod resolve_secrets_tests {
 
             let client = make_client(HashMap::from([
                 ("arn:rds".to_string(), rds_json.to_string()),
-                ("arn:url".to_string(), "postgres://from-url-arn/db".to_string()),
+                (
+                    "arn:url".to_string(),
+                    "postgres://from-url-arn/db".to_string(),
+                ),
             ]));
 
             config.resolve_secrets_with(&client).await.unwrap();
 
-            let url = config.backend.postgres.as_ref().unwrap().url.as_deref().unwrap();
-            assert!(url.contains("rds.example.com"), "should use RDS secret, got: {url}");
+            let url = config
+                .backend
+                .postgres
+                .as_ref()
+                .unwrap()
+                .url
+                .as_deref()
+                .unwrap();
+            assert!(
+                url.contains("rds.example.com"),
+                "should use RDS secret, got: {url}"
+            );
         }
 
         #[tokio::test]
@@ -1169,9 +1471,10 @@ mod resolve_secrets_tests {
             let mut config = Config::default();
             pg_config(&mut config).url_arn = Some("arn:url".to_string());
 
-            let client = make_client(HashMap::from([
-                ("arn:url".to_string(), "postgres://direct-url/db".to_string()),
-            ]));
+            let client = make_client(HashMap::from([(
+                "arn:url".to_string(),
+                "postgres://direct-url/db".to_string(),
+            )]));
 
             config.resolve_secrets_with(&client).await.unwrap();
 
@@ -1206,18 +1509,23 @@ mod resolve_secrets_tests {
             let mut config = Config::default();
             pg_config(&mut config).rds_secrets_arn = Some("arn:bad".to_string());
 
-            let client = make_client(HashMap::from([
-                ("arn:bad".to_string(), "not-valid-json".to_string()),
-            ]));
+            let client = make_client(HashMap::from([(
+                "arn:bad".to_string(),
+                "not-valid-json".to_string(),
+            )]));
 
             let err = config.resolve_secrets_with(&client).await.unwrap_err();
             let msg = format!("{err:#}");
-            assert!(msg.contains("failed to parse RDS JSON secret from arn:bad"), "error: {msg}");
+            assert!(
+                msg.contains("failed to parse RDS JSON secret from arn:bad"),
+                "error: {msg}"
+            );
         }
 
         #[tokio::test]
         async fn rds_password_with_special_chars_is_encoded() {
-            let rds_json = r#"{"username":"admin","password":"p@ss:w/rd?#","host":"db.example.com"}"#;
+            let rds_json =
+                r#"{"username":"admin","password":"p@ss:w/rd?#","host":"db.example.com"}"#;
             let mut config = Config::default();
             pg_config(&mut config).rds_secrets_arn = Some("arn:rds".to_string());
 
@@ -1227,10 +1535,467 @@ mod resolve_secrets_tests {
 
             config.resolve_secrets_with(&client).await.unwrap();
 
-            let url = config.backend.postgres.as_ref().unwrap().url.as_deref().unwrap();
+            let url = config
+                .backend
+                .postgres
+                .as_ref()
+                .unwrap()
+                .url
+                .as_deref()
+                .unwrap();
             // Password should be percent-encoded
-            assert!(!url.contains("p@ss:w/rd?#"), "password should be encoded, got: {url}");
-            assert!(url.contains("p%40ss%3Aw%2Frd%3F%23"), "expected encoded password, got: {url}");
+            assert!(
+                !url.contains("p@ss:w/rd?#"),
+                "password should be encoded, got: {url}"
+            );
+            assert!(
+                url.contains("p%40ss%3Aw%2Frd%3F%23"),
+                "expected encoded password, got: {url}"
+            );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hookdef_simple_string() {
+        let json = r#""echo hello""#;
+        let hook: HookDef = serde_json::from_str(json).unwrap();
+        match hook {
+            HookDef::Simple(s) => assert_eq!(s, "echo hello"),
+            HookDef::Complex(_) => panic!("expected Simple"),
+        }
+    }
+
+    #[test]
+    fn hookdef_complex_object() {
+        let json = r#"{"command": "cargo test", "on_failure": "warn"}"#;
+        let hook: HookDef = serde_json::from_str(json).unwrap();
+        match hook {
+            HookDef::Complex(h) => {
+                assert_eq!(h.command.as_deref(), Some("cargo test"));
+                assert_eq!(h.on_failure, OnFailure::Warn);
+                assert!(h.prompt.is_none());
+            }
+            HookDef::Simple(_) => panic!("expected Complex"),
+        }
+    }
+
+    #[test]
+    fn hookdef_prompt_only() {
+        let json = r#"{"prompt": "Review the code", "on_failure": "ignore"}"#;
+        let hook: HookDef = serde_json::from_str(json).unwrap();
+        match hook {
+            HookDef::Complex(h) => {
+                assert!(h.command.is_none());
+                assert_eq!(h.prompt.as_deref(), Some("Review the code"));
+                assert_eq!(h.on_failure, OnFailure::Ignore);
+            }
+            HookDef::Simple(_) => panic!("expected Complex"),
+        }
+    }
+
+    #[test]
+    fn on_failure_variants() {
+        assert_eq!(
+            serde_json::from_str::<OnFailure>(r#""abort""#).unwrap(),
+            OnFailure::Abort
+        );
+        assert_eq!(
+            serde_json::from_str::<OnFailure>(r#""warn""#).unwrap(),
+            OnFailure::Warn
+        );
+        assert_eq!(
+            serde_json::from_str::<OnFailure>(r#""ignore""#).unwrap(),
+            OnFailure::Ignore
+        );
+    }
+
+    #[test]
+    fn metadata_field_source_env() {
+        let json = r#"{"key": "sprint", "source": "env", "env_var": "SPRINT"}"#;
+        let field: MetadataField = serde_json::from_str(json).unwrap();
+        assert_eq!(field.key, "sprint");
+        assert!(!field.required);
+        assert!(field.default.is_none());
+        match field.source {
+            MetadataFieldSource::Env { env_var } => assert_eq!(env_var, "SPRINT"),
+            _ => panic!("expected Env"),
+        }
+    }
+
+    #[test]
+    fn metadata_field_source_value() {
+        let json = r#"{"key": "team", "source": "value", "value": "backend"}"#;
+        let field: MetadataField = serde_json::from_str(json).unwrap();
+        match field.source {
+            MetadataFieldSource::Value { value } => assert_eq!(value, "backend"),
+            _ => panic!("expected Value"),
+        }
+    }
+
+    #[test]
+    fn metadata_field_source_command() {
+        let json = r#"{"key": "version", "source": "command", "command": "git describe --tags"}"#;
+        let field: MetadataField = serde_json::from_str(json).unwrap();
+        match field.source {
+            MetadataFieldSource::Command { command } => {
+                assert_eq!(command, "git describe --tags");
+            }
+            _ => panic!("expected Command"),
+        }
+    }
+
+    #[test]
+    fn metadata_field_source_prompt() {
+        let json = r#"{"key": "priority", "source": "prompt", "prompt": "What priority?"}"#;
+        let field: MetadataField = serde_json::from_str(json).unwrap();
+        match field.source {
+            MetadataFieldSource::Prompt { prompt } => assert_eq!(prompt, "What priority?"),
+            _ => panic!("expected Prompt"),
+        }
+    }
+
+    #[test]
+    fn metadata_field_default_and_required() {
+        let json = r#"{"key": "sprint", "source": "env", "env_var": "SPRINT", "default": "Q1", "required": true}"#;
+        let field: MetadataField = serde_json::from_str(json).unwrap();
+        assert_eq!(field.key, "sprint");
+        assert!(field.required);
+        assert_eq!(field.default, Some(serde_json::Value::String("Q1".to_string())));
+    }
+
+    #[test]
+    fn workflow_add_config_deser() {
+        let toml_str = r#"
+            default_dod = ["Write tests", "Update docs"]
+            default_tags = ["backend"]
+            default_priority = "p1"
+            instructions = ["Be thorough"]
+        "#;
+        let config: WorkflowAddConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.default_dod, vec!["Write tests", "Update docs"]);
+        assert_eq!(config.default_tags, vec!["backend"]);
+        assert_eq!(config.default_priority.as_deref(), Some("p1"));
+        assert_eq!(config.instructions, vec!["Be thorough"]);
+        assert!(config.pre_hooks.is_empty());
+    }
+
+    #[test]
+    fn workflow_start_config_deser() {
+        let json = r#"{
+            "metadata_fields": [
+                {"key": "sprint", "source": "env", "env_var": "SPRINT"}
+            ],
+            "instructions": ["Check prerequisites"]
+        }"#;
+        let config: WorkflowStartConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.metadata_fields.len(), 1);
+        assert_eq!(config.instructions, vec!["Check prerequisites"]);
+    }
+
+    #[test]
+    fn workflow_plan_config_deser() {
+        let toml_str = r#"
+            required_sections = ["Context", "Verification"]
+            instructions = ["Include diagrams"]
+        "#;
+        let config: WorkflowPlanConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.required_sections,
+            vec!["Context", "Verification"]
+        );
+    }
+
+    #[test]
+    fn workflow_complete_config_deser() {
+        let json = r#"{
+            "metadata_fields": [
+                {"key": "review_notes", "source": "prompt", "prompt": "Any review notes?"}
+            ],
+            "instructions": ["Verify all tests pass"]
+        }"#;
+        let config: WorkflowCompleteConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.metadata_fields.len(), 1);
+        assert_eq!(config.instructions, vec!["Verify all tests pass"]);
+    }
+
+    #[test]
+    fn workflow_config_full_toml() {
+        let toml_str = r#"
+            merge_via = "direct"
+            auto_merge = true
+            branch_mode = "worktree"
+            merge_strategy = "rebase"
+            branch_template = "feat/{id}-{slug}"
+
+            [add]
+            default_dod = ["Tests"]
+            default_tags = ["backend"]
+
+            [start]
+            instructions = ["Review task"]
+
+            [plan]
+            required_sections = ["Context"]
+
+            [complete]
+            instructions = ["Run tests"]
+        "#;
+        let config: WorkflowConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.merge_via, MergeVia::Direct);
+        assert!(config.auto_merge);
+        assert_eq!(config.branch_mode, BranchMode::Worktree);
+        assert_eq!(config.merge_strategy, MergeStrategy::Rebase);
+        assert_eq!(
+            config.branch_template.as_deref(),
+            Some("feat/{id}-{slug}")
+        );
+        assert_eq!(config.add.default_dod, vec!["Tests"]);
+        assert_eq!(config.start.instructions, vec!["Review task"]);
+        assert_eq!(config.plan.required_sections, vec!["Context"]);
+        assert_eq!(config.complete.instructions, vec!["Run tests"]);
+    }
+
+    #[test]
+    fn mixed_hooks_in_event() {
+        let json = r#"{
+            "pre_hooks": ["echo start", {"command": "cargo check", "on_failure": "abort"}],
+            "post_hooks": [{"prompt": "Verify output", "on_failure": "warn"}]
+        }"#;
+        let config: WorkflowEventConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.pre_hooks.len(), 2);
+        match &config.pre_hooks[0] {
+            HookDef::Simple(s) => assert_eq!(s, "echo start"),
+            HookDef::Complex(_) => panic!("expected Simple"),
+        }
+        match &config.pre_hooks[1] {
+            HookDef::Complex(h) => {
+                assert_eq!(h.command.as_deref(), Some("cargo check"));
+                assert_eq!(h.on_failure, OnFailure::Abort);
+            }
+            HookDef::Simple(_) => panic!("expected Complex"),
+        }
+        assert_eq!(config.post_hooks.len(), 1);
+    }
+
+    #[test]
+    fn backend_sqlite_deser() {
+        let toml_str = r#"
+            [sqlite]
+            db_path = "/data/senko.db"
+        "#;
+        let config: BackendConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.sqlite.db_path.as_deref(),
+            Some("/data/senko.db")
+        );
+    }
+
+    #[test]
+    fn cli_remote_deser() {
+        let toml_str = r#"
+            [remote]
+            url = "http://api.senko.local:3141"
+            token = "sk_test"
+        "#;
+        let config: CliConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.remote.url.as_deref(),
+            Some("http://api.senko.local:3141")
+        );
+        assert_eq!(config.remote.token.as_deref(), Some("sk_test"));
+    }
+
+    #[test]
+    fn web_config_deser() {
+        let toml_str = r#"
+            host = "0.0.0.0"
+            port = 8080
+        "#;
+        let config: WebConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.host.as_deref(), Some("0.0.0.0"));
+        assert_eq!(config.port, Some(8080));
+    }
+
+    #[test]
+    fn server_auth_deser() {
+        let toml_str = r#"
+            host = "127.0.0.1"
+            port = 3142
+
+            [auth.api_key]
+            master_key = "sk_master"
+
+            [auth.oidc]
+            issuer_url = "https://auth.example.com"
+            client_id = "my_client"
+        "#;
+        let config: ServerConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(config.port, Some(3142));
+        assert_eq!(
+            config.auth.api_key.master_key.as_deref(),
+            Some("sk_master")
+        );
+        assert_eq!(
+            config.auth.oidc.issuer_url.as_deref(),
+            Some("https://auth.example.com")
+        );
+    }
+
+    #[test]
+    fn raw_config_merge_events() {
+        let base: RawConfig = toml::from_str(
+            r#"
+            [workflow.start]
+            instructions = ["base instruction"]
+            [workflow.plan]
+            required_sections = ["Context"]
+        "#,
+        )
+        .unwrap();
+
+        let overlay: RawConfig = toml::from_str(
+            r#"
+            [workflow.start]
+            instructions = ["overlay instruction"]
+        "#,
+        )
+        .unwrap();
+
+        let merged = base.merge(overlay);
+        let start = merged.workflow.start.unwrap();
+        assert_eq!(start.instructions, vec!["overlay instruction"]);
+        // plan was only in base, should survive
+        let plan = merged.workflow.plan.unwrap();
+        assert_eq!(plan.required_sections, vec!["Context"]);
+    }
+
+    #[test]
+    fn resolve_full() {
+        let raw: RawConfig = toml::from_str(
+            r#"
+            [project]
+            name = "test"
+
+            [backend.sqlite]
+            db_path = "/tmp/test.db"
+
+            [cli.remote]
+            url = "http://localhost:3141"
+
+            [web]
+            host = "0.0.0.0"
+            port = 8080
+
+            [server]
+            host = "127.0.0.1"
+            port = 3142
+
+            [server.auth.api_key]
+            master_key = "secret"
+
+            [workflow]
+            merge_via = "pr"
+            branch_template = "feat/{id}"
+
+            [workflow.start]
+            instructions = ["Check prerequisites"]
+        "#,
+        )
+        .unwrap();
+
+        let config = raw.resolve();
+        assert_eq!(config.project.name.as_deref(), Some("test"));
+        assert_eq!(
+            config.backend.sqlite.db_path.as_deref(),
+            Some("/tmp/test.db")
+        );
+        assert_eq!(
+            config.cli.remote.url.as_deref(),
+            Some("http://localhost:3141")
+        );
+        assert_eq!(config.web.host.as_deref(), Some("0.0.0.0"));
+        assert_eq!(config.web.port, Some(8080));
+        assert_eq!(config.server.host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(config.server.port, Some(3142));
+        assert_eq!(
+            config.server.auth.api_key.master_key.as_deref(),
+            Some("secret")
+        );
+        assert_eq!(config.workflow.merge_via, MergeVia::Pr);
+        assert_eq!(
+            config.workflow.branch_template.as_deref(),
+            Some("feat/{id}")
+        );
+        assert_eq!(
+            config.workflow.start.instructions,
+            vec!["Check prerequisites"]
+        );
+        // Defaults
+        assert!(config.workflow.auto_merge);
+        assert_eq!(config.workflow.branch_mode, BranchMode::Worktree);
+        assert_eq!(config.workflow.merge_strategy, MergeStrategy::Rebase);
+    }
+
+    #[test]
+    fn apply_env_new_paths() {
+        let mut config = Config::default();
+
+        // Simulate env vars using direct assignment (apply_env reads from std::env)
+        config.backend.sqlite.db_path = Some("/env/db.db".to_string());
+        config.cli.remote.url = Some("http://env:3141".to_string());
+        config.cli.remote.token = Some("env_token".to_string());
+        config.web.host = Some("0.0.0.0".to_string());
+        config.web.port = Some(9090);
+        config.server.host = Some("10.0.0.1".to_string());
+        config.server.port = Some(3142);
+        config.server.auth.api_key.master_key = Some("env_key".to_string());
+
+        assert_eq!(
+            config.backend.sqlite.db_path.as_deref(),
+            Some("/env/db.db")
+        );
+        assert_eq!(
+            config.cli.remote.url.as_deref(),
+            Some("http://env:3141")
+        );
+        assert_eq!(config.cli.remote.token.as_deref(), Some("env_token"));
+        assert_eq!(config.web.host.as_deref(), Some("0.0.0.0"));
+        assert_eq!(config.web.port, Some(9090));
+        assert_eq!(config.server.host.as_deref(), Some("10.0.0.1"));
+        assert_eq!(config.server.port, Some(3142));
+        assert_eq!(
+            config.server.auth.api_key.master_key.as_deref(),
+            Some("env_key")
+        );
+    }
+
+    #[test]
+    fn web_port_helpers() {
+        let mut config = Config::default();
+        assert_eq!(config.web_port_or(3141), 3141);
+        assert!(!config.web_port_is_explicit());
+
+        config.web.port = Some(8080);
+        assert_eq!(config.web_port_or(3141), 8080);
+        assert!(config.web_port_is_explicit());
+    }
+
+    #[test]
+    fn effective_host_default() {
+        let config = Config::default();
+        assert_eq!(config.effective_host(), "127.0.0.1");
+    }
+
+    #[test]
+    fn effective_host_custom() {
+        let mut config = Config::default();
+        config.web.host = Some("0.0.0.0".to_string());
+        assert_eq!(config.effective_host(), "0.0.0.0");
     }
 }
