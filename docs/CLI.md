@@ -287,18 +287,31 @@ Create `.senko/config.toml` to define hooks:
 
 ```toml
 [hooks]
-on_task_added = "echo 'New task' | notify-send -"
-on_task_ready = "curl -X POST https://example.com/ready"
-on_task_started = "slack-notify started"
-on_task_completed = "curl -X POST https://example.com/webhook"
-on_task_canceled = "echo canceled"
+[hooks.on_task_added.notify]
+command = "echo 'New task' | notify-send -"
+
+[hooks.on_task_ready.webhook]
+command = "curl -X POST https://example.com/ready"
+
+[hooks.on_task_started.slack]
+command = "slack-notify started"
+
+[hooks.on_task_completed.webhook]
+command = "curl -X POST https://example.com/webhook"
+
+[hooks.on_task_canceled.log]
+command = "echo canceled"
 ```
 
-Multiple commands per event are supported as arrays:
+Multiple hooks per event use separate named entries. Each entry supports `enabled` and `requires_env` fields:
 
 ```toml
-[hooks]
-on_task_completed = ["notify-send 'Done'", "curl https://example.com/done"]
+[hooks.on_task_completed.notify]
+command = "notify-send 'Done'"
+
+[hooks.on_task_completed.webhook]
+command = "curl https://example.com/done"
+requires_env = ["WEBHOOK_URL"]
 ```
 
 | Hook | Trigger |
@@ -308,6 +321,7 @@ on_task_completed = ["notify-send 'Done'", "curl https://example.com/done"]
 | `on_task_started` | `senko start` or `senko next` starts a task |
 | `on_task_completed` | `senko complete` completes a task |
 | `on_task_canceled` | `senko cancel` cancels a task |
+| `on_no_eligible_task` | `senko next` finds no eligible task |
 
 Hooks receive the full event payload as JSON on **stdin** and are executed via `sh -c`.
 
@@ -497,6 +511,7 @@ All settings follow the precedence: **CLI flag > environment variable > config.t
 | `SENKO_HOOK_ON_TASK_STARTED` | Shell command to run when a task is started |
 | `SENKO_HOOK_ON_TASK_COMPLETED` | Shell command to run when a task is completed |
 | `SENKO_HOOK_ON_TASK_CANCELED` | Shell command to run when a task is canceled |
+| `SENKO_HOOK_ON_NO_ELIGIBLE_TASK` | Shell command to run when no eligible task is found |
 
 Hook environment variables override the corresponding `[hooks]` section in `config.toml`.
 
