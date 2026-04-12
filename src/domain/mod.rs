@@ -1,11 +1,13 @@
 pub mod duration;
 pub mod error;
+pub mod metadata_field;
 pub mod project;
 pub mod task;
 pub mod user;
 pub mod validator;
 
 pub use error::*;
+pub use metadata_field::*;
 pub use project::*;
 pub use task::*;
 pub use user::*;
