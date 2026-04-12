@@ -24,6 +24,7 @@ use crate::application::port::TaskBackend;
 use self::auth::{AuthUser, HasAuth, OptionalAuthUser};
 use crate::bootstrap;
 use crate::infra::config::Config;
+use crate::domain::metadata_field::{CreateMetadataFieldParams, validate_field_name};
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
     CompletionPolicy, CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus,
@@ -34,9 +35,9 @@ use crate::domain::user::{
 };
 use super::dto::{
     ApiKeyResponse, ApiKeyWithSecretResponse, AuthConfigOidc, AuthConfigResponse,
-    CompleteTaskResponse, ConfigResponse, MeResponse, PreviewTransitionResponse,
-    ProjectMemberResponse, ProjectResponse, SessionResponse, TaskResponse, TokenResponse,
-    UserResponse,
+    CompleteTaskResponse, ConfigResponse, MeResponse, MetadataFieldResponse,
+    PreviewTransitionResponse, ProjectMemberResponse, ProjectResponse, SessionResponse,
+    TaskResponse, TokenResponse, UserResponse,
 };
 
 #[derive(Clone)]
@@ -496,6 +497,15 @@ pub async fn serve(
         .route(
             "/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/uncheck",
             post(uncheck_dod),
+        )
+        // Metadata fields
+        .route(
+            "/api/v1/projects/{project_id}/metadata-fields",
+            get(list_metadata_fields).post(create_metadata_field),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/metadata-fields/{name}",
+            delete(delete_metadata_field_handler),
         )
         // Project stats
         .route(
@@ -1099,6 +1109,59 @@ async fn remove_member(
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     let caller_user_id = auth.0.as_ref().map(|a| a.user.id());
     state.project_service.remove_project_member(project_id, user_id, caller_user_id).await.map_err(classify_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// --- MetadataField Handlers ---
+
+// POST /api/v1/projects/{project_id}/metadata-fields
+async fn create_metadata_field(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(project_id): Path<i64>,
+    Json(body): Json<CreateMetadataFieldParams>,
+) -> Result<(StatusCode, Json<MetadataFieldResponse>), ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
+    validate_field_name(&body.name).map_err(|e| classify_error(e.into()))?;
+    let field = state.backend
+        .create_metadata_field(project_id, &body)
+        .await
+        .map_err(classify_error)?;
+    Ok((StatusCode::CREATED, Json(MetadataFieldResponse::from(field))))
+}
+
+// GET /api/v1/projects/{project_id}/metadata-fields
+async fn list_metadata_fields(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(project_id): Path<i64>,
+) -> Result<Json<Vec<MetadataFieldResponse>>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::View).await?;
+    let fields = state.backend
+        .list_metadata_fields(project_id)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(fields.into_iter().map(MetadataFieldResponse::from).collect()))
+}
+
+// DELETE /api/v1/projects/{project_id}/metadata-fields/{name}
+async fn delete_metadata_field_handler(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path((project_id, name)): Path<(i64, String)>,
+) -> Result<StatusCode, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
+    let fields = state.backend
+        .list_metadata_fields(project_id)
+        .await
+        .map_err(classify_error)?;
+    let field = fields.into_iter()
+        .find(|f| f.name() == name)
+        .ok_or_else(|| ApiError::NotFound(format!("metadata field not found: {name}")))?;
+    state.backend
+        .delete_metadata_field(project_id, field.id())
+        .await
+        .map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

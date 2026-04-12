@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::application::{CompleteResult, PreviewResult};
 use crate::infra::config::Config;
+use crate::domain::metadata_field::{MetadataField, MetadataFieldType};
 use crate::domain::project::Project;
 use crate::domain::task::{DodItem, Task};
 use crate::domain::user::{ApiKey, ApiKeyWithSecret, ProjectMember, User};
@@ -23,6 +24,33 @@ impl From<Project> for ProjectResponse {
             name: p.name().to_owned(),
             description: p.description().map(|s| s.to_owned()),
             created_at: p.created_at().to_owned(),
+        }
+    }
+}
+
+// --- MetadataField ---
+
+#[derive(Serialize)]
+pub struct MetadataFieldResponse {
+    id: i64,
+    project_id: i64,
+    name: String,
+    field_type: MetadataFieldType,
+    required_on_complete: bool,
+    description: Option<String>,
+    created_at: String,
+}
+
+impl From<MetadataField> for MetadataFieldResponse {
+    fn from(f: MetadataField) -> Self {
+        Self {
+            id: f.id(),
+            project_id: f.project_id(),
+            name: f.name().to_owned(),
+            field_type: f.field_type(),
+            required_on_complete: f.required_on_complete(),
+            description: f.description().map(|s| s.to_owned()),
+            created_at: f.created_at().to_owned(),
         }
     }
 }
