@@ -22,7 +22,7 @@ assert_json_field "$JSON_OUT" '.hooks.enabled' "false" "env overrides hooks.enab
 
 echo "[4] SENKO_SERVER_URL overrides default"
 JSON_OUT="$(SENKO_SERVER_URL=http://remote:9999 run_lf config)"
-assert_json_field "$JSON_OUT" '.server.url' "http://remote:9999" "env overrides server.url"
+assert_json_field "$JSON_OUT" '.cli.remote.url' "http://remote:9999" "env overrides cli.remote.url"
 
 echo "[5] Env vars override config.toml values"
 mkdir -p "$TEST_PROJECT_ROOT/.senko"

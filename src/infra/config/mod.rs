@@ -1783,6 +1783,158 @@ mod tests {
     }
 
     #[test]
+    fn workflow_config_full_toml_all_stages() {
+        let toml_str = r#"
+            merge_via = "pr"
+            auto_merge = false
+
+            [add]
+            default_dod = ["Tests"]
+
+            [start]
+            instructions = ["Check prereqs"]
+
+            [branch]
+            instructions = ["Create feature branch"]
+            pre_hooks = ["echo branching"]
+
+            [plan]
+            required_sections = ["Context"]
+
+            [implement]
+            instructions = ["Follow style guide"]
+            pre_hooks = ["cargo fmt --check"]
+            post_hooks = ["cargo test"]
+
+            [merge]
+            instructions = ["Squash commits"]
+            pre_hooks = ["echo pre-merge"]
+
+            [pr]
+            instructions = ["Add reviewers"]
+            post_hooks = ["echo pr-created"]
+
+            [complete]
+            instructions = ["Run tests"]
+
+            [branch_cleanup]
+            instructions = ["Delete remote branch"]
+            post_hooks = ["git remote prune origin"]
+        "#;
+        let config: WorkflowConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.merge_via, MergeVia::Pr);
+        assert!(!config.auto_merge);
+        assert_eq!(config.add.default_dod, vec!["Tests"]);
+        assert_eq!(config.start.instructions, vec!["Check prereqs"]);
+        assert_eq!(config.branch.instructions, vec!["Create feature branch"]);
+        assert_eq!(config.branch.pre_hooks.len(), 1);
+        assert_eq!(config.plan.required_sections, vec!["Context"]);
+        assert_eq!(config.implement.instructions, vec!["Follow style guide"]);
+        assert_eq!(config.implement.pre_hooks.len(), 1);
+        assert_eq!(config.implement.post_hooks.len(), 1);
+        assert_eq!(config.merge_event.instructions, vec!["Squash commits"]);
+        assert_eq!(config.merge_event.pre_hooks.len(), 1);
+        assert_eq!(config.pr.instructions, vec!["Add reviewers"]);
+        assert_eq!(config.pr.post_hooks.len(), 1);
+        assert_eq!(config.complete.instructions, vec!["Run tests"]);
+        assert_eq!(
+            config.branch_cleanup.instructions,
+            vec!["Delete remote branch"]
+        );
+        assert_eq!(config.branch_cleanup.post_hooks.len(), 1);
+    }
+
+    #[test]
+    fn workflow_event_config_toml_with_mixed_hooks() {
+        let toml_str = r#"
+            instructions = ["Review carefully"]
+
+            [[pre_hooks]]
+            command = "cargo check"
+            on_failure = "abort"
+
+            [[post_hooks]]
+            prompt = "Verify output"
+            on_failure = "warn"
+        "#;
+        let config: WorkflowEventConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.instructions, vec!["Review carefully"]);
+        assert_eq!(config.pre_hooks.len(), 1);
+        match &config.pre_hooks[0] {
+            HookDef::Complex(h) => {
+                assert_eq!(h.command.as_deref(), Some("cargo check"));
+                assert_eq!(h.on_failure, OnFailure::Abort);
+            }
+            HookDef::Simple(_) => panic!("expected Complex"),
+        }
+        assert_eq!(config.post_hooks.len(), 1);
+        match &config.post_hooks[0] {
+            HookDef::Complex(h) => {
+                assert_eq!(h.prompt.as_deref(), Some("Verify output"));
+                assert_eq!(h.on_failure, OnFailure::Warn);
+            }
+            HookDef::Simple(_) => panic!("expected Complex"),
+        }
+    }
+
+    #[test]
+    fn unknown_toml_section_silently_ignored() {
+        let toml_str = r#"
+            [workflow]
+            merge_via = "direct"
+
+            [skill.start]
+            metadata_fields = []
+        "#;
+        let config: RawConfig = toml::from_str(toml_str).unwrap();
+        let resolved = config.resolve();
+        assert_eq!(resolved.workflow.merge_via, MergeVia::Direct);
+        assert!(resolved.workflow.start.metadata_fields.is_empty());
+    }
+
+    #[test]
+    fn workflow_start_metadata_fields_toml() {
+        let toml_str = r#"
+            [[start.metadata_fields]]
+            key = "assigned_by"
+            source = "env"
+            env_var = "USER"
+            default = "unknown"
+
+            [[start.metadata_fields]]
+            key = "team"
+            source = "value"
+            value = "backend"
+
+            [[start.metadata_fields]]
+            key = "estimate"
+            source = "prompt"
+            prompt = "Estimated time?"
+        "#;
+        let config: WorkflowConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.start.metadata_fields.len(), 3);
+        assert_eq!(config.start.metadata_fields[0].key, "assigned_by");
+        match &config.start.metadata_fields[0].source {
+            MetadataFieldSource::Env { env_var } => assert_eq!(env_var, "USER"),
+            _ => panic!("expected Env"),
+        }
+        assert_eq!(
+            config.start.metadata_fields[0].default,
+            Some(serde_json::Value::String("unknown".to_string()))
+        );
+        assert_eq!(config.start.metadata_fields[1].key, "team");
+        match &config.start.metadata_fields[1].source {
+            MetadataFieldSource::Value { value } => assert_eq!(value, "backend"),
+            _ => panic!("expected Value"),
+        }
+        assert_eq!(config.start.metadata_fields[2].key, "estimate");
+        match &config.start.metadata_fields[2].source {
+            MetadataFieldSource::Prompt { prompt } => assert_eq!(prompt, "Estimated time?"),
+            _ => panic!("expected Prompt"),
+        }
+    }
+
+    #[test]
     fn backend_sqlite_deser() {
         let toml_str = r#"
             [sqlite]
