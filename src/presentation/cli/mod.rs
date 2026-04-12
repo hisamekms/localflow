@@ -466,6 +466,39 @@ pub enum ProjectAction {
         /// Project ID
         id: i64,
     },
+    /// Manage metadata fields
+    #[command(name = "metadata-field")]
+    MetadataField {
+        #[command(subcommand)]
+        action: MetadataFieldAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MetadataFieldAction {
+    /// Add a metadata field to the project
+    Add {
+        /// Field name (lowercase letters, digits, underscores, hyphens)
+        #[arg(long)]
+        name: String,
+        /// Field type (string, number, boolean)
+        #[arg(long = "type")]
+        field_type: String,
+        /// Whether field must be filled when completing a task
+        #[arg(long)]
+        required_on_complete: bool,
+        /// Human-readable description
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// List all metadata fields in the project
+    List,
+    /// Remove a metadata field from the project
+    Remove {
+        /// Field name to remove
+        #[arg(long)]
+        name: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1271,5 +1304,62 @@ mod tests {
     fn parse_no_project_root() {
         let cli = Cli::parse_from(["senko", "add"]);
         assert!(cli.project_root.is_none());
+    }
+
+    #[test]
+    fn parse_metadata_field_add() {
+        let cli = Cli::parse_from([
+            "senko", "project", "metadata-field", "add",
+            "--name", "sprint", "--type", "string",
+            "--required-on-complete", "--description", "Sprint name",
+        ]);
+        match cli.command {
+            Command::Project { action: ProjectAction::MetadataField { action: MetadataFieldAction::Add { name, field_type, required_on_complete, description } } } => {
+                assert_eq!(name, "sprint");
+                assert_eq!(field_type, "string");
+                assert!(required_on_complete);
+                assert_eq!(description, Some("Sprint name".to_string()));
+            }
+            _ => panic!("expected Project MetadataField Add"),
+        }
+    }
+
+    #[test]
+    fn parse_metadata_field_add_minimal() {
+        let cli = Cli::parse_from([
+            "senko", "project", "metadata-field", "add",
+            "--name", "points", "--type", "number",
+        ]);
+        match cli.command {
+            Command::Project { action: ProjectAction::MetadataField { action: MetadataFieldAction::Add { name, field_type, required_on_complete, description } } } => {
+                assert_eq!(name, "points");
+                assert_eq!(field_type, "number");
+                assert!(!required_on_complete);
+                assert!(description.is_none());
+            }
+            _ => panic!("expected Project MetadataField Add"),
+        }
+    }
+
+    #[test]
+    fn parse_metadata_field_list() {
+        let cli = Cli::parse_from(["senko", "project", "metadata-field", "list"]);
+        assert!(matches!(
+            cli.command,
+            Command::Project { action: ProjectAction::MetadataField { action: MetadataFieldAction::List } }
+        ));
+    }
+
+    #[test]
+    fn parse_metadata_field_remove() {
+        let cli = Cli::parse_from([
+            "senko", "project", "metadata-field", "remove", "--name", "sprint",
+        ]);
+        match cli.command {
+            Command::Project { action: ProjectAction::MetadataField { action: MetadataFieldAction::Remove { name } } } => {
+                assert_eq!(name, "sprint");
+            }
+            _ => panic!("expected Project MetadataField Remove"),
+        }
     }
 }

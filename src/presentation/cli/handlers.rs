@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 
 use super::{
     Cli, DepsCommand, DodCommand, DryRunOperation, HooksCommand, MemberAction,
-    OutputFormat, ProjectAction, UserAction, CONFIG_TEMPLATE, print_dry_run,
+    MetadataFieldAction, OutputFormat, ProjectAction, UserAction, CONFIG_TEMPLATE, print_dry_run,
 };
 use crate::bootstrap::{
     create_backend, create_hook_test_service, create_project_service,
@@ -20,6 +20,7 @@ use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, Priority, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
+use crate::domain::metadata_field::{CreateMetadataFieldParams, MetadataFieldType, validate_field_name};
 use crate::domain::user::{AddProjectMemberParams, CreateUserParams};
 use crate::bootstrap::resolve_project_root;
 
@@ -1262,7 +1263,7 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let backend = create_backend(&root, &config)?;
-    let project_service = create_project_service(backend);
+    let project_service = create_project_service(backend.clone());
 
     match action {
         ProjectAction::List => {
@@ -1307,6 +1308,92 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                 }
                 OutputFormat::Text => {
                     println!("Deleted project #{}", id);
+                }
+            }
+        }
+        ProjectAction::MetadataField { action: mf_action } => {
+            let project_id = resolve_project_id(&*backend, &config).await?;
+            match mf_action {
+                MetadataFieldAction::Add {
+                    name,
+                    field_type,
+                    required_on_complete,
+                    description,
+                } => {
+                    validate_field_name(name)?;
+                    let ft: MetadataFieldType = field_type.parse()?;
+                    let params = CreateMetadataFieldParams {
+                        name: name.clone(),
+                        field_type: ft,
+                        required_on_complete: *required_on_complete,
+                        description: description.clone(),
+                    };
+                    let field = backend.create_metadata_field(project_id, &params).await?;
+                    match cli.output {
+                        OutputFormat::Json => {
+                            println!("{}", serde_json::to_string_pretty(&field)?);
+                        }
+                        OutputFormat::Text => {
+                            println!(
+                                "Added metadata field #{}: {} (type: {}, required: {})",
+                                field.id(),
+                                field.name(),
+                                field.field_type(),
+                                field.required_on_complete()
+                            );
+                        }
+                    }
+                }
+                MetadataFieldAction::List => {
+                    let fields = backend.list_metadata_fields(project_id).await?;
+                    match cli.output {
+                        OutputFormat::Json => {
+                            println!("{}", serde_json::to_string_pretty(&fields)?);
+                        }
+                        OutputFormat::Text => {
+                            for f in &fields {
+                                let desc = f.description().unwrap_or("");
+                                let req = if f.required_on_complete() {
+                                    " [required]"
+                                } else {
+                                    ""
+                                };
+                                println!(
+                                    "#{} {} ({}){} {}",
+                                    f.id(),
+                                    f.name(),
+                                    f.field_type(),
+                                    req,
+                                    desc
+                                );
+                            }
+                        }
+                    }
+                }
+                MetadataFieldAction::Remove { name } => {
+                    let fields = backend.list_metadata_fields(project_id).await?;
+                    let field = fields
+                        .iter()
+                        .find(|f| f.name() == name.as_str())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("metadata field not found: {}", name)
+                        })?;
+                    let field_id = field.id();
+                    let field_name = field.name().to_string();
+                    backend
+                        .delete_metadata_field(project_id, field_id)
+                        .await?;
+                    match cli.output {
+                        OutputFormat::Json => {
+                            println!(
+                                "{}",
+                                serde_json::json!({"deleted": field_name, "id": field_id})
+                            );
+                        }
+                        OutputFormat::Text => {
+                            println!("Removed metadata field #{}: {}", field_id, field_name);
+                        }
+                    }
                 }
             }
         }
