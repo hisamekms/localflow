@@ -1679,6 +1679,20 @@ struct CliSessionInfo {
 
 // --- Auth subcommand handlers ---
 
+async fn fetch_auth_mode(api_url: &str) -> Result<String> {
+    let url = format!("{}/auth/config", api_url_base(api_url));
+    let resp = http_client().get(&url).send().await?;
+    if !resp.status().is_success() {
+        bail!("GET /auth/config failed ({})", resp.status());
+    }
+    let config: serde_json::Value = resp.json().await?;
+    Ok(config
+        .get("auth_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("oidc")
+        .to_string())
+}
+
 pub async fn cmd_auth_token(cli: &Cli) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
@@ -1688,8 +1702,22 @@ pub async fn cmd_auth_token(cli: &Cli) -> Result<()> {
         .url
         .as_deref()
         .context("cli.remote.url is not configured. Set it in config to point to the senko API server.")?;
-    let token = super::keychain::load(api_url)
-        .context("Not logged in. Run `senko auth login` first.")?;
+
+    let token = match fetch_auth_mode(api_url).await {
+        Ok(auth_mode) => match auth_mode.as_str() {
+            "trusted_headers" => super::keychain::load_access_token(api_url)
+                .context("Not logged in. Run `senko auth login` first.")?,
+            _ => super::keychain::load(api_url)
+                .context("Not logged in. Run `senko auth login` first.")?,
+        },
+        Err(_) => {
+            // Server unreachable: try API key first, then access token
+            super::keychain::load(api_url)
+                .or_else(|_| super::keychain::load_access_token(api_url))
+                .context("Not logged in. Run `senko auth login` first.")?
+        }
+    };
+
     match cli.output {
         OutputFormat::Json => println!("{}", serde_json::json!({"token": token})),
         OutputFormat::Text => print!("{token}"),
