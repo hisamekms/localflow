@@ -254,6 +254,55 @@ assert_json_field "$PREVIEW_NEXT" '.allowed' "true" "preview-next has candidate"
 assert_json_field "$PREVIEW_NEXT" '.target_status' "in_progress" "preview-next target is in_progress"
 
 echo ""
+echo "=== Save task (_save) ==="
+SAVE_TASK=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Save Target","description":"original desc"}')
+SAVE_TASK_ID=$(echo "$SAVE_TASK" | jq -r '.id')
+# Get full task JSON, modify title
+SAVE_BODY=$(api_get "$PBASE/tasks/$SAVE_TASK_ID" | jq '.title = "Save Target Updated"')
+SAVE_STATUS=$(api_status -X PUT "$PBASE/tasks/$SAVE_TASK_ID/_save" -d "$SAVE_BODY")
+assert_eq "204" "$SAVE_STATUS" "save task returns 204"
+# Verify the change persisted
+SAVE_VERIFY=$(api_get "$PBASE/tasks/$SAVE_TASK_ID")
+assert_json_field "$SAVE_VERIFY" '.title' "Save Target Updated" "save task persisted title"
+assert_json_field "$SAVE_VERIFY" '.description' "original desc" "save task kept description"
+
+echo ""
+echo "=== Save task ID mismatch ==="
+MISMATCH_TASK=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Mismatch Target"}')
+MISMATCH_TASK_ID=$(echo "$MISMATCH_TASK" | jq -r '.id')
+# Body has SAVE_TASK_ID but URL targets MISMATCH_TASK_ID
+MISMATCH_STATUS=$(api_status -X PUT "$PBASE/tasks/$MISMATCH_TASK_ID/_save" -d "$SAVE_BODY")
+assert_eq "400" "$MISMATCH_STATUS" "save with mismatched task ID returns 400"
+
+echo ""
+echo "=== Set dependencies (replace all) ==="
+DEP_A=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Dep A"}')
+DEP_A_ID=$(echo "$DEP_A" | jq -r '.id')
+DEP_B=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Dep B"}')
+DEP_B_ID=$(echo "$DEP_B" | jq -r '.id')
+DEP_C=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Dep C"}')
+DEP_C_ID=$(echo "$DEP_C" | jq -r '.id')
+
+# Add initial dep: C depends on A
+api_json -X POST "$PBASE/tasks/$DEP_C_ID/deps" -d "{\"dep_id\":$DEP_A_ID}" >/dev/null
+DEPS_BEFORE=$(api_get "$PBASE/tasks/$DEP_C_ID/deps")
+assert_eq "1" "$(echo "$DEPS_BEFORE" | jq 'length')" "set_deps initial: 1 dependency"
+
+# Replace all deps: C now depends on B only
+SET_RESULT=$(api_json -X PUT "$PBASE/tasks/$DEP_C_ID/deps" -d "{\"dep_ids\":[$DEP_B_ID]}")
+assert_eq "1" "$(echo "$SET_RESULT" | jq '.dependencies | length')" "set_deps: 1 dep after replace"
+assert_contains "$(echo "$SET_RESULT" | jq -r '.dependencies[]')" "$DEP_B_ID" "set_deps: dep is B"
+
+# Verify via list endpoint
+DEPS_AFTER=$(api_get "$PBASE/tasks/$DEP_C_ID/deps")
+assert_eq "1" "$(echo "$DEPS_AFTER" | jq 'length')" "set_deps verify: 1 dependency"
+assert_json_field "$(echo "$DEPS_AFTER" | jq '.[0]')" '.id' "$DEP_B_ID" "set_deps verify: dep is B"
+
+# Clear all deps
+CLEAR_RESULT=$(api_json -X PUT "$PBASE/tasks/$DEP_C_ID/deps" -d '{"dep_ids":[]}')
+assert_eq "0" "$(echo "$CLEAR_RESULT" | jq '.dependencies | length')" "set_deps: cleared all"
+
+echo ""
 echo "=== Next when no eligible task ==="
 # Complete or cancel remaining active tasks
 api_json -X POST "$PBASE/tasks/$TASK5_ID/complete" -d '{}' >/dev/null 2>&1 || true

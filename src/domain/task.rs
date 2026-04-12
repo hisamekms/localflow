@@ -354,6 +354,10 @@ impl Task {
         self.id
     }
 
+    pub fn set_id(&mut self, id: i64) {
+        self.id = id;
+    }
+
     pub fn task_number(&self) -> i64 {
         self.task_number
     }
