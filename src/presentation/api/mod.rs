@@ -16,7 +16,7 @@ use tower_http::trace::TraceLayer;
 mod auth;
 
 use crate::domain::error::DomainError;
-use crate::application::{LocalTaskOperations, ProjectOperations, ProjectService, TaskOperations, UserOperations, UserService};
+use crate::application::{LocalTaskOperations, MetadataFieldOperations, MetadataFieldService, ProjectOperations, ProjectService, TaskOperations, UserOperations, UserService};
 use crate::application::auth as app_auth;
 use crate::application::auth::Permission;
 use crate::application::port::auth::AuthError;
@@ -25,7 +25,7 @@ use self::auth::{AuthUser, HasAuth, OptionalAuthUser};
 use crate::bootstrap;
 use crate::bootstrap::AuthMode;
 use crate::infra::config::Config;
-use crate::domain::metadata_field::{CreateMetadataFieldParams, validate_field_name};
+use crate::domain::metadata_field::CreateMetadataFieldParams;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
     CompletionPolicy, CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus,
@@ -49,6 +49,7 @@ struct AppState {
     task_service: Arc<LocalTaskOperations>,
     project_service: Arc<ProjectService>,
     user_service: Arc<UserService>,
+    metadata_field_ops: Arc<dyn MetadataFieldOperations>,
     auth_mode: Option<Arc<AuthMode>>,
     master_key_configured: bool,
     proxy_mode: bool,
@@ -392,6 +393,7 @@ pub async fn serve(
     ));
     let project_service = Arc::new(ProjectService::new(backend.clone()));
     let user_service = Arc::new(UserService::new(backend.clone()));
+    let metadata_field_ops: Arc<dyn MetadataFieldOperations> = Arc::new(MetadataFieldService::new(backend.clone()));
 
     let state = AppState {
         project_root: Arc::new(project_root),
@@ -400,6 +402,7 @@ pub async fn serve(
         task_service,
         project_service,
         user_service,
+        metadata_field_ops,
         auth_mode: auth_mode.map(Arc::new),
         master_key_configured: config.server.auth.api_key.master_key.is_some(),
         proxy_mode: config.cli.remote.url.is_some(),
@@ -1169,8 +1172,7 @@ async fn create_metadata_field(
     Json(body): Json<CreateMetadataFieldParams>,
 ) -> Result<(StatusCode, Json<MetadataFieldResponse>), ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    validate_field_name(&body.name).map_err(|e| classify_error(e.into()))?;
-    let field = state.backend
+    let field = state.metadata_field_ops
         .create_metadata_field(project_id, &body)
         .await
         .map_err(classify_error)?;
@@ -1184,7 +1186,7 @@ async fn list_metadata_fields(
     Path(project_id): Path<i64>,
 ) -> Result<Json<Vec<MetadataFieldResponse>>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let fields = state.backend
+    let fields = state.metadata_field_ops
         .list_metadata_fields(project_id)
         .await
         .map_err(classify_error)?;
@@ -1198,15 +1200,8 @@ async fn delete_metadata_field_handler(
     Path((project_id, name)): Path<(i64, String)>,
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let fields = state.backend
-        .list_metadata_fields(project_id)
-        .await
-        .map_err(classify_error)?;
-    let field = fields.into_iter()
-        .find(|f| f.name() == name)
-        .ok_or_else(|| ApiError::NotFound(format!("metadata field not found: {name}")))?;
-    state.backend
-        .delete_metadata_field(project_id, field.id())
+    state.metadata_field_ops
+        .delete_metadata_field_by_name(project_id, &name)
         .await
         .map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)

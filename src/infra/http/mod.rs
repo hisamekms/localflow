@@ -1,4 +1,5 @@
 pub(crate) mod client;
+pub mod remote_metadata_field_ops;
 pub mod remote_project_ops;
 pub mod remote_task_ops;
 pub mod remote_user_ops;

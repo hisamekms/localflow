@@ -6,11 +6,12 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 use crate::application::port::auth::AuthProvider;
 use crate::application::port::{HookExecutor, PrVerifier};
-use crate::application::{HookTestService, LocalTaskOperations, ProjectService, TaskOperations, UserService};
+use crate::application::{HookTestService, LocalTaskOperations, MetadataFieldService, ProjectService, TaskOperations, UserService};
 use crate::domain::task::CompletionPolicy;
 use crate::application::port::TaskBackend;
 use crate::infra::config::{Config, LogConfig, LogFormat, RawConfig};
 use crate::infra::http::HttpBackend;
+use crate::infra::http::remote_metadata_field_ops::RemoteMetadataFieldOperations;
 use crate::infra::http::remote_task_ops::RemoteTaskOperations;
 use crate::infra::http::remote_user_ops::RemoteUserOperations;
 use crate::infra::hook::executor::ShellHookExecutor;
@@ -259,6 +260,16 @@ pub fn create_remote_user_operations(config: &Config) -> RemoteUserOperations {
     let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
     RemoteUserOperations::new(url, api_key)
+}
+
+pub fn create_metadata_field_service(backend: Arc<dyn TaskBackend>) -> MetadataFieldService {
+    MetadataFieldService::new(backend)
+}
+
+pub fn create_remote_metadata_field_operations(config: &Config) -> RemoteMetadataFieldOperations {
+    let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
+    let api_key = config.cli.remote.token.clone();
+    RemoteMetadataFieldOperations::new(url, api_key)
 }
 
 pub fn create_hook_test_service(
