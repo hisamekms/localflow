@@ -1103,6 +1103,14 @@ impl Config {
             && !val.is_empty() {
                 self.server.auth.oidc.username_claim = Some(val);
             }
+        if let Ok(val) = std::env::var("SENKO_OIDC_CALLBACK_PORTS")
+            && !val.is_empty() {
+                self.server.auth.oidc.callback_ports = val
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+            }
 
         // Server trusted headers settings
         if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_SUBJECT_HEADER")
