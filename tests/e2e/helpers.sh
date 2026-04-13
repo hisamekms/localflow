@@ -6,6 +6,18 @@ set -euo pipefail
 PASS_COUNT=0
 FAIL_COUNT=0
 
+# Allocate a deterministic port based on TEST_INDEX and an optional offset.
+# Usage: PORT=$(allocate_port)        # offset=0
+#        PORT2=$(allocate_port 1)     # offset=1
+allocate_port() {
+  local offset="${1:-0}"
+  if [[ -z "${TEST_INDEX:-}" ]]; then
+    echo "FATAL: TEST_INDEX not set. Run tests via run.sh." >&2
+    exit 1
+  fi
+  echo $(( 20000 + TEST_INDEX * 10 + offset ))
+}
+
 # Setup isolated test environment with temp directory
 setup_test_env() {
   TEST_DIR="$(mktemp -d)"

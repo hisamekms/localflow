@@ -7,8 +7,7 @@ trap cleanup_test_env EXIT
 
 MASTER_KEY="test-key"
 
-# Pick a random high port
-PORT=$((20000 + RANDOM % 40000))
+PORT=$(allocate_port)
 SERVER_URL="http://127.0.0.1:$PORT"
 AUTH_BASE="$SERVER_URL/auth"
 

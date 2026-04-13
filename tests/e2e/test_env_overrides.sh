@@ -84,7 +84,7 @@ assert_eq "Alt project task" "$TASK_TITLE" "SENKO_PROJECT_ROOT selects alt proje
 rm -rf "$ALT_PROJECT"
 
 echo "[10] SENKO_PORT sets serve port"
-PORT=$((20000 + RANDOM % 40000))
+PORT=$(allocate_port 0)
 SENKO_PORT=$PORT SENKO_AUTH_API_KEY_MASTER_KEY=test-key "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null || true; cleanup_test_env' EXIT
@@ -95,7 +95,7 @@ kill $SERVER_PID 2>/dev/null || true
 wait $SERVER_PID 2>/dev/null || true
 
 echo "[11] SENKO_HOST sets bind address"
-PORT2=$((20000 + RANDOM % 40000))
+PORT2=$(allocate_port 1)
 SENKO_HOST=127.0.0.1 SENKO_AUTH_API_KEY_MASTER_KEY=test-key "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT2" &
 SERVER_PID2=$!
 trap 'kill $SERVER_PID2 2>/dev/null || true; cleanup_test_env' EXIT
@@ -113,12 +113,8 @@ assert_json_field "$JSON_OUT" '.workflow.auto_merge' "false" "no toml + env auto
 rm -rf "$NO_TOML_PROJECT"
 
 echo "[13] CLI flags take priority over env vars"
-PORT3=$((20000 + RANDOM % 40000))
-PORT_CLI=$((20000 + RANDOM % 40000))
-# Ensure different ports
-while [[ "$PORT_CLI" == "$PORT3" ]]; do
-  PORT_CLI=$((20000 + RANDOM % 40000))
-done
+PORT3=$(allocate_port 2)
+PORT_CLI=$(allocate_port 3)
 SENKO_PORT=$PORT3 SENKO_AUTH_API_KEY_MASTER_KEY=test-key "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT_CLI" &
 SERVER_PID3=$!
 trap 'kill $SERVER_PID3 2>/dev/null || true; cleanup_test_env' EXIT

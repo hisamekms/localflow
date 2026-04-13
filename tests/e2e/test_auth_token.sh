@@ -23,7 +23,7 @@ OUTPUT=$("$SENKO" --project-root "$TEST_PROJECT_ROOT" auth token 2>&1 || true)
 assert_contains "$OUTPUT" "cli.remote.url is not configured" "error without remote url"
 
 # Start a server so auth token can query /auth/config for auth_mode
-PORT=$((20000 + RANDOM % 40000))
+PORT=$(allocate_port)
 API_URL="http://127.0.0.1:$PORT"
 MASTER_KEY=test-key
 

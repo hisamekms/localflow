@@ -7,7 +7,7 @@ setup_test_env
 trap cleanup_test_env EXIT
 
 MASTER_KEY="test-master-key"
-PORT=$((20000 + RANDOM % 40000))
+PORT=$(allocate_port 0)
 BASE="http://127.0.0.1:$PORT/api/v1"
 PROJECT_ID=1
 
@@ -243,7 +243,7 @@ kill $SERVER_PID 2>/dev/null
 wait $SERVER_PID 2>/dev/null || true
 
 # Start new server with OIDC config (enables auth) but NO master key
-PORT2=$((20000 + RANDOM % 40000))
+PORT2=$(allocate_port 1)
 BASE2="http://127.0.0.1:$PORT2/api/v1"
 
 SENKO_OIDC_ISSUER_URL="https://fake.example.com" \

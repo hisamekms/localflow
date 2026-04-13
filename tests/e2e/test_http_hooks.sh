@@ -39,7 +39,7 @@ EOF
 MASTER_KEY=test-key
 
 start_server() {
-  PORT=$((20000 + RANDOM % 40000))
+  PORT=$(allocate_port)
   API_URL="http://127.0.0.1:$PORT"
   SENKO_AUTH_API_KEY_MASTER_KEY="$MASTER_KEY" "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT" >/dev/null 2>&1 &
   SERVER_PID=$!

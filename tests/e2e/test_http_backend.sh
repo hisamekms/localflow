@@ -5,8 +5,7 @@ source "$(dirname "$0")/helpers.sh"
 setup_test_env
 trap cleanup_test_env EXIT
 
-# Pick a random high port
-PORT=$((20000 + RANDOM % 40000))
+PORT=$(allocate_port)
 API_URL="http://127.0.0.1:$PORT"
 MASTER_KEY=test-key
 

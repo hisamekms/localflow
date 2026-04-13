@@ -38,12 +38,13 @@ trap "rm -rf '$RESULTS_DIR'" EXIT
 
 # Run a single test and record result
 run_single_test() {
-  local test_file="$1"
+  local test_index="$1"
+  local test_file="$2"
   local test_name
   test_name="$(basename "$test_file")"
   local result_file="$RESULTS_DIR/$test_name"
 
-  if bash "$test_file" >"$result_file.out" 2>&1; then
+  if TEST_INDEX="$test_index" bash "$test_file" >"$result_file.out" 2>&1; then
     echo "ok" > "$result_file.status"
   else
     echo "fail" > "$result_file.status"
@@ -56,8 +57,8 @@ export RESULTS_DIR SENKO
 echo "=== Running ${#TEST_FILES[@]} tests (parallel=$PARALLEL) ==="
 echo ""
 
-# Run tests in parallel
-printf '%s\n' "${TEST_FILES[@]}" | xargs -P "$PARALLEL" -I {} bash -c 'run_single_test "$@"' _ {}
+# Run tests in parallel (pass "index filepath" pairs for deterministic port allocation)
+printf '%s\n' "${TEST_FILES[@]}" | awk '{print NR-1, $0}' | xargs -P "$PARALLEL" -n 2 bash -c 'run_single_test "$@"' _
 
 # Collect results
 FAILED_TESTS=()

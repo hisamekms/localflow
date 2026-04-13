@@ -23,7 +23,7 @@ fi
 echo "--- Test: trusted_headers CLI auth ---"
 
 # Start a server with API key auth (master key) so we can create users/keys.
-PORT=$((20000 + RANDOM % 40000))
+PORT=$(allocate_port)
 API_URL="http://127.0.0.1:$PORT"
 MASTER_KEY=test-master-key
 

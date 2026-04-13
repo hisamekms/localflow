@@ -12,9 +12,8 @@ UPSTREAM_PID=""
 RELAY_PID=""
 MASTER_KEY=test-key
 
-# Pick two random high ports
-UPSTREAM_PORT=$((20000 + RANDOM % 20000))
-RELAY_PORT=$((40000 + RANDOM % 20000))
+UPSTREAM_PORT=$(allocate_port 0)
+RELAY_PORT=$(allocate_port 1)
 UPSTREAM_URL="http://127.0.0.1:$UPSTREAM_PORT"
 RELAY_URL="http://127.0.0.1:$RELAY_PORT"
 
@@ -266,9 +265,8 @@ command = "true"
 enabled = true
 EOF
 
-# Use fresh ports to avoid TIME_WAIT conflicts
-UPSTREAM_PORT=$((20000 + RANDOM % 20000))
-RELAY_PORT=$((40000 + RANDOM % 20000))
+UPSTREAM_PORT=$(allocate_port 0)
+RELAY_PORT=$(allocate_port 1)
 UPSTREAM_URL="http://127.0.0.1:$UPSTREAM_PORT"
 RELAY_URL="http://127.0.0.1:$RELAY_PORT"
 
