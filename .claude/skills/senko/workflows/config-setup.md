@@ -59,7 +59,7 @@ Walk through sections in this order:
     - `scopes`: OIDC scopes (default: `["openid", "profile"]`)
     - `username_claim`: JWT claim to use as username
     - `required_claims`: required JWT claim key-value pairs
-    - Sub-sections: `oidc.cli` (callback_port, browser), `oidc.session` (ttl, inactive_ttl, max_per_user)
+    - Sub-sections: `oidc.cli` (callback_ports, browser), `oidc.session` (ttl, inactive_ttl, max_per_user)
 11. **web** — Web UI server settings (skip if default is fine):
     - `host`: bind address (default: 127.0.0.1)
     - `port`: port number

@@ -287,6 +287,6 @@ inactive_ttl = "1h"
 max_per_user = 5
 
 [server.auth.oidc.cli]
-callback_port = 9999
+callback_ports = ["9999"]
 browser = true
 ```

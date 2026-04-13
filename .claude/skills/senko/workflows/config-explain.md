@@ -82,7 +82,7 @@ Stage-specific keys:
 **server.auth.oidc.cli**
 | Key | Default | Options | Description |
 |---|---|---|---|
-| `callback_port` | `null` (auto-assign) | port number | Local port for OIDC callback during CLI login. |
+| `callback_ports` | `[]` (empty) | list of port strings | Local ports for OIDC callback during CLI login. |
 | `browser` | `true` | `true`, `false` | Auto-open browser for OIDC login. |
 
 **server.auth.oidc.session**
