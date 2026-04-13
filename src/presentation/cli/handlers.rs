@@ -13,7 +13,7 @@ use crate::bootstrap::{
     resolve_project_id, DEFAULT_PROJECT_ID,
 };
 use crate::bootstrap::hook as hooks;
-use crate::application::HookTrigger;
+use crate::application::{HookTrigger, ProjectOperations};
 use crate::infra::config::{CliOverrides, Config};
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{

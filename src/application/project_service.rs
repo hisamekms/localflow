@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use async_trait::async_trait;
 
-use crate::application::port::TaskBackend;
+use crate::application::port::{ProjectOperations, TaskBackend};
 use crate::application::auth::{Permission, require_project_role};
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::ListTasksFilter;
@@ -18,12 +19,15 @@ impl ProjectService {
     pub fn new(backend: Arc<dyn TaskBackend>) -> Self {
         Self { backend }
     }
+}
 
-    pub async fn list_projects(&self) -> Result<Vec<Project>> {
+#[async_trait]
+impl ProjectOperations for ProjectService {
+    async fn list_projects(&self) -> Result<Vec<Project>> {
         self.backend.list_projects().await
     }
 
-    pub async fn create_project(&self, params: &CreateProjectParams, caller_user_id: Option<i64>) -> Result<Project> {
+    async fn create_project(&self, params: &CreateProjectParams, caller_user_id: Option<i64>) -> Result<Project> {
         let project = self.backend.create_project(params).await?;
         if let Some(uid) = caller_user_id {
             let member_params = AddProjectMemberParams::new(uid, Some(Role::Owner));
@@ -32,15 +36,15 @@ impl ProjectService {
         Ok(project)
     }
 
-    pub async fn get_project(&self, id: i64) -> Result<Project> {
+    async fn get_project(&self, id: i64) -> Result<Project> {
         self.backend.get_project(id).await
     }
 
-    pub async fn get_project_by_name(&self, name: &str) -> Result<Project> {
+    async fn get_project_by_name(&self, name: &str) -> Result<Project> {
         self.backend.get_project_by_name(name).await
     }
 
-    pub async fn delete_project(&self, id: i64, caller_user_id: Option<i64>) -> Result<()> {
+    async fn delete_project(&self, id: i64, caller_user_id: Option<i64>) -> Result<()> {
         if let Some(uid) = caller_user_id {
             require_project_role(self.backend.as_ref(), uid, id, Permission::Admin).await?;
         }
@@ -52,14 +56,14 @@ impl ProjectService {
 
     // --- Member management ---
 
-    pub async fn list_project_members(
+    async fn list_project_members(
         &self,
         project_id: i64,
     ) -> Result<Vec<ProjectMember>> {
         self.backend.list_project_members(project_id).await
     }
 
-    pub async fn add_project_member(
+    async fn add_project_member(
         &self,
         project_id: i64,
         params: &AddProjectMemberParams,
@@ -71,7 +75,7 @@ impl ProjectService {
         self.backend.add_project_member(project_id, params).await
     }
 
-    pub async fn remove_project_member(
+    async fn remove_project_member(
         &self,
         project_id: i64,
         user_id: i64,
@@ -83,7 +87,7 @@ impl ProjectService {
         self.backend.remove_project_member(project_id, user_id).await
     }
 
-    pub async fn get_project_member(
+    async fn get_project_member(
         &self,
         project_id: i64,
         user_id: i64,
@@ -91,7 +95,7 @@ impl ProjectService {
         self.backend.get_project_member(project_id, user_id).await
     }
 
-    pub async fn update_member_role(
+    async fn update_member_role(
         &self,
         project_id: i64,
         user_id: i64,

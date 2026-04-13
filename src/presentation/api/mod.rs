@@ -16,7 +16,7 @@ use tower_http::trace::TraceLayer;
 mod auth;
 
 use crate::domain::error::DomainError;
-use crate::application::{LocalTaskOperations, ProjectService, TaskOperations, UserService};
+use crate::application::{LocalTaskOperations, ProjectOperations, ProjectService, TaskOperations, UserService};
 use crate::application::auth as app_auth;
 use crate::application::auth::Permission;
 use crate::application::port::auth::AuthError;

@@ -10,6 +10,6 @@ pub use hook_test_service::HookTestService;
 pub use hook_trigger::HookTrigger;
 pub use project_service::ProjectService;
 pub use crate::domain::task::ListTasksFilter;
-pub use port::{CompleteResult, PreviewResult, TaskOperations};
+pub use port::{CompleteResult, PreviewResult, ProjectOperations, TaskOperations};
 pub use task_service::LocalTaskOperations;
 pub use user_service::UserService;
