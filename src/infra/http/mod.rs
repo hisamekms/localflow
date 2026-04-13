@@ -377,10 +377,12 @@ impl ApiKeyRepository for HttpBackend {
         self.delete_api_key(key_id).await
     }
 
-    async fn delete_all_api_keys_for_user(&self, _user_id: i64) -> Result<()> {
-        Err(DomainError::UnsupportedOperation {
-            operation: "delete_all_api_keys_for_user".into(),
-        }.into())
+    async fn delete_all_api_keys_for_user(&self, user_id: i64) -> Result<()> {
+        let keys = self.list_api_keys(user_id).await?;
+        for key in keys {
+            self.delete_api_key(key.id()).await?;
+        }
+        Ok(())
     }
 }
 
