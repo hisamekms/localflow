@@ -414,12 +414,17 @@ impl UserQueryPort for HttpBackend {
     }
 }
 
-/// Task mutation methods are handled by `RemoteTaskOperations`.
-/// Only `get_task` is kept (used by `HookTestService`); the rest are stubs.
+/// Task CRUD operations forwarded to the upstream server via HTTP.
 #[async_trait]
 impl TaskRepository for HttpBackend {
-    async fn create_task(&self, _project_id: i64, _params: &CreateTaskParams) -> Result<Task> {
-        bail!("task mutations should use RemoteTaskOperations, not HttpBackend")
+    async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
+        let resp = self.auth(self
+            .client
+            .post(self.project_url(project_id, "/tasks"))
+            .json(params))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
     }
 
     async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
@@ -431,24 +436,54 @@ impl TaskRepository for HttpBackend {
         read_json_or_error(resp).await
     }
 
-    async fn update_task(&self, _project_id: i64, _id: i64, _params: &UpdateTaskParams) -> Result<Task> {
-        bail!("task mutations should use RemoteTaskOperations, not HttpBackend")
+    async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
+        let body = update_params_to_json(params);
+        let resp = self.auth(self
+            .client
+            .put(self.project_url(project_id, &format!("/tasks/{id}")))
+            .json(&body))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
     }
 
-    async fn update_task_arrays(&self, _project_id: i64, _id: i64, _params: &UpdateTaskArrayParams) -> Result<()> {
-        bail!("task mutations should use RemoteTaskOperations, not HttpBackend")
+    async fn update_task_arrays(&self, project_id: i64, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
+        let body = array_params_to_json(params);
+        let resp = self.auth(self
+            .client
+            .put(self.project_url(project_id, &format!("/tasks/{id}")))
+            .json(&body))
+            .send()
+            .await?;
+        check_success(resp).await
     }
 
-    async fn delete_task(&self, _project_id: i64, _id: i64) -> Result<()> {
-        bail!("task mutations should use RemoteTaskOperations, not HttpBackend")
+    async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
+        let resp = self.auth(self
+            .client
+            .delete(self.project_url(project_id, &format!("/tasks/{id}"))))
+            .send()
+            .await?;
+        check_success(resp).await
     }
 
-    async fn list_dependencies(&self, _project_id: i64, _task_id: i64) -> Result<Vec<Task>> {
-        bail!("task mutations should use RemoteTaskOperations, not HttpBackend")
+    async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
+        let resp = self.auth(self
+            .client
+            .get(self.project_url(project_id, &format!("/tasks/{task_id}/deps"))))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
     }
 
-    async fn save(&self, _task: &Task) -> Result<()> {
-        bail!("task mutations should use RemoteTaskOperations, not HttpBackend")
+    async fn save(&self, task: &Task) -> Result<()> {
+        let resp = self.auth(self
+            .client
+            .put(self.project_url(task.project_id(), &format!("/tasks/{}/_save", task.task_number())))
+            .json(task))
+            .send()
+            .await?;
+        check_success(resp).await
     }
 }
 
