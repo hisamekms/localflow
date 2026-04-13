@@ -771,16 +771,13 @@ async fn save_task_handler(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path((project_id, id)): Path<(i64, i64)>,
-    Json(mut task): Json<Task>,
+    Json(task): Json<Task>,
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     if task.task_number() != id || task.project_id() != project_id {
         return Err(ApiError::BadRequest("task ID or project ID mismatch".into()));
     }
-    // Resolve internal DB id: the deserialized Task has id=0 due to #[serde(skip)]
-    let existing = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
-    task.set_id(existing.id());
-    state.backend.save(&task).await.map_err(classify_error)?;
+    state.task_service.save_task(project_id, id, &task).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -465,6 +465,13 @@ impl TaskOperations for LocalTaskOperations {
         self.backend.delete_task(project_id, id).await
     }
 
+    async fn save_task(&self, project_id: i64, id: i64, task: &Task) -> Result<()> {
+        let existing = self.backend.get_task(project_id, id).await?;
+        let mut task = task.clone();
+        task.set_id(existing.id());
+        self.backend.save(&task).await
+    }
+
     async fn check_dod(
         &self,
         project_id: i64,

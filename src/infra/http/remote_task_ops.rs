@@ -506,6 +506,18 @@ impl TaskOperations for RemoteTaskOperations {
         check_success(resp).await
     }
 
+    async fn save_task(&self, project_id: i64, id: i64, task: &Task) -> Result<()> {
+        let resp = self
+            .auth(
+                self.client()
+                    .put(self.project_url(project_id, &format!("/tasks/{id}/_save")))
+                    .json(task),
+            )
+            .send()
+            .await?;
+        check_success(resp).await
+    }
+
     // --- Definition of Done ---
 
     async fn check_dod(

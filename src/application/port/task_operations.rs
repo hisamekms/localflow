@@ -101,6 +101,7 @@ pub trait TaskOperations: Send + Sync {
         params: &UpdateTaskArrayParams,
     ) -> Result<()>;
     async fn delete_task(&self, project_id: i64, id: i64) -> Result<()>;
+    async fn save_task(&self, project_id: i64, id: i64, task: &Task) -> Result<()>;
 
     // --- Definition of Done ---
 
