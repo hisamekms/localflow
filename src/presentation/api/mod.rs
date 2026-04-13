@@ -965,6 +965,7 @@ async fn get_auth_config(State(state): State<AppState>) -> Json<AuthConfigRespon
                 issuer_url: state.oidc_config.issuer_url.clone().unwrap(),
                 client_id: state.oidc_config.client_id.clone().unwrap(),
                 scopes: state.oidc_config.scopes.clone(),
+                callback_ports: state.oidc_config.callback_ports.clone(),
             }),
         ),
         Some(AuthMode::Token(_)) => ("api_key".to_string(), None),
@@ -977,6 +978,7 @@ async fn get_auth_config(State(state): State<AppState>) -> Json<AuthConfigRespon
                     issuer_url: issuer_url.clone(),
                     client_id: client_id.clone(),
                     scopes: vec!["openid".to_string(), "profile".to_string()],
+                    callback_ports: state.oidc_config.callback_ports.clone(),
                 }),
                 _ => None,
             };

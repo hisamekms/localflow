@@ -414,6 +414,7 @@ pub struct AuthConfigOidc {
     pub issuer_url: String,
     pub client_id: String,
     pub scopes: Vec<String>,
+    pub callback_ports: Vec<String>,
 }
 
 // --- Me (auth status) ---
