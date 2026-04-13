@@ -67,15 +67,8 @@ pub async fn perform_login(
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
     // Step 3: Start callback server
-    let callback_port = oidc_config.callback_ports.first().cloned().unwrap_or_default();
-    let bind_addr = if callback_port.is_empty() {
-        "127.0.0.1:0".to_string()
-    } else {
-        format!("127.0.0.1:{callback_port}")
-    };
-    let listener = TcpListener::bind(&bind_addr)
-        .await
-        .with_context(|| format!("failed to bind callback server on {bind_addr}"))?;
+    let ports = parse_callback_ports(&oidc_config.callback_ports)?;
+    let listener = bind_callback_listener(&ports).await?;
     let local_addr = listener.local_addr()?;
     let redirect_uri = format!("http://127.0.0.1:{}/callback", local_addr.port());
 
@@ -164,6 +157,56 @@ pub async fn perform_login(
         key_prefix: senko_token.key_prefix,
         expires_at: senko_token.expires_at,
     })
+}
+
+fn parse_callback_ports(specs: &[String]) -> Result<Vec<u16>> {
+    let mut ports = Vec::new();
+    for spec in specs {
+        if let Some((start_str, end_str)) = spec.split_once('-') {
+            let start: u16 = start_str
+                .trim()
+                .parse()
+                .with_context(|| format!("invalid port range start: {start_str:?}"))?;
+            let end: u16 = end_str
+                .trim()
+                .parse()
+                .with_context(|| format!("invalid port range end: {end_str:?}"))?;
+            if start > end {
+                bail!("invalid port range: {start} > {end}");
+            }
+            ports.extend(start..=end);
+        } else {
+            let port: u16 = spec
+                .trim()
+                .parse()
+                .with_context(|| format!("invalid port number: {spec:?}"))?;
+            ports.push(port);
+        }
+    }
+    Ok(ports)
+}
+
+async fn bind_callback_listener(ports: &[u16]) -> Result<TcpListener> {
+    if ports.is_empty() {
+        return TcpListener::bind("127.0.0.1:0")
+            .await
+            .context("failed to bind callback server on 127.0.0.1:0");
+    }
+
+    for &port in ports {
+        let addr = format!("127.0.0.1:{port}");
+        match TcpListener::bind(&addr).await {
+            Ok(listener) => return Ok(listener),
+            Err(e) => {
+                tracing::debug!(port, error = %e, "callback port bind failed, trying next");
+            }
+        }
+    }
+
+    tracing::info!("all configured callback ports failed, falling back to OS-assigned port");
+    TcpListener::bind("127.0.0.1:0")
+        .await
+        .context("failed to bind callback server on 127.0.0.1:0 (fallback)")
 }
 
 async fn receive_callback(listener: &TcpListener) -> Result<(String, String)> {
