@@ -619,31 +619,37 @@ impl TaskTransitionPort for HttpBackend {
 impl MetadataFieldRepository for HttpBackend {
     async fn create_metadata_field(
         &self,
-        _project_id: i64,
-        _params: &CreateMetadataFieldParams,
+        project_id: i64,
+        params: &CreateMetadataFieldParams,
     ) -> Result<MetadataField> {
-        Err(DomainError::UnsupportedOperation {
-            operation: "create_metadata_field".into(),
-        }
-        .into())
+        let resp = self.auth(self
+            .client
+            .post(self.project_url(project_id, "/metadata-fields"))
+            .json(params))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
     }
 
     async fn get_metadata_field(
         &self,
-        _project_id: i64,
-        _field_id: i64,
+        project_id: i64,
+        field_id: i64,
     ) -> Result<MetadataField> {
-        Err(DomainError::UnsupportedOperation {
-            operation: "get_metadata_field".into(),
-        }
-        .into())
+        let fields = self.list_metadata_fields(project_id).await?;
+        fields
+            .into_iter()
+            .find(|f| f.id() == field_id)
+            .ok_or_else(|| DomainError::MetadataFieldNotFound.into())
     }
 
-    async fn list_metadata_fields(&self, _project_id: i64) -> Result<Vec<MetadataField>> {
-        Err(DomainError::UnsupportedOperation {
-            operation: "list_metadata_fields".into(),
-        }
-        .into())
+    async fn list_metadata_fields(&self, project_id: i64) -> Result<Vec<MetadataField>> {
+        let resp = self.auth(self
+            .client
+            .get(self.project_url(project_id, "/metadata-fields")))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
     }
 
     async fn update_metadata_field(
@@ -658,11 +664,18 @@ impl MetadataFieldRepository for HttpBackend {
         .into())
     }
 
-    async fn delete_metadata_field(&self, _project_id: i64, _field_id: i64) -> Result<()> {
-        Err(DomainError::UnsupportedOperation {
-            operation: "delete_metadata_field".into(),
-        }
-        .into())
+    async fn delete_metadata_field(&self, project_id: i64, field_id: i64) -> Result<()> {
+        let fields = self.list_metadata_fields(project_id).await?;
+        let field = fields
+            .into_iter()
+            .find(|f| f.id() == field_id)
+            .ok_or_else(|| anyhow::Error::from(DomainError::MetadataFieldNotFound))?;
+        let resp = self.auth(self
+            .client
+            .delete(self.project_url(project_id, &format!("/metadata-fields/{}", field.name()))))
+            .send()
+            .await?;
+        check_success(resp).await
     }
 }
 
