@@ -197,7 +197,6 @@ pub struct ServerConfig {
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct OidcCliConfig {
-    pub callback_port: Option<u16>,
     #[serde(default = "default_true")]
     pub browser: bool,
 }
@@ -211,6 +210,8 @@ pub struct OidcConfig {
     pub scopes: Vec<String>,
     #[serde(default)]
     pub required_claims: HashMap<String, String>,
+    #[serde(default)]
+    pub callback_ports: Vec<String>,
     #[serde(default)]
     pub cli: OidcCliConfig,
     #[serde(default)]
@@ -612,7 +613,6 @@ pub struct RawWebConfig {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawOidcCliConfig {
-    pub callback_port: Option<u16>,
     pub browser: Option<bool>,
 }
 
@@ -623,6 +623,7 @@ pub struct RawOidcConfig {
     pub username_claim: Option<String>,
     pub scopes: Option<Vec<String>>,
     pub required_claims: Option<HashMap<String, String>>,
+    pub callback_ports: Option<Vec<String>>,
     #[serde(default)]
     pub cli: RawOidcCliConfig,
     #[serde(default)]
@@ -817,14 +818,13 @@ impl RawConfig {
                             .oidc
                             .required_claims
                             .or(self.server.auth.oidc.required_claims),
+                        callback_ports: overlay
+                            .server
+                            .auth
+                            .oidc
+                            .callback_ports
+                            .or(self.server.auth.oidc.callback_ports),
                         cli: RawOidcCliConfig {
-                            callback_port: overlay
-                                .server
-                                .auth
-                                .oidc
-                                .cli
-                                .callback_port
-                                .or(self.server.auth.oidc.cli.callback_port),
                             browser: overlay
                                 .server
                                 .auth
@@ -932,8 +932,13 @@ impl RawConfig {
                             .oidc
                             .required_claims
                             .unwrap_or_default(),
+                        callback_ports: self
+                            .server
+                            .auth
+                            .oidc
+                            .callback_ports
+                            .unwrap_or_default(),
                         cli: OidcCliConfig {
-                            callback_port: self.server.auth.oidc.cli.callback_port,
                             browser: self.server.auth.oidc.cli.browser.unwrap_or(true),
                         },
                         session: SessionConfig {

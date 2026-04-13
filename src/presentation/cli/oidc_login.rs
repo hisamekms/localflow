@@ -67,10 +67,15 @@ pub async fn perform_login(
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
     // Step 3: Start callback server
-    let callback_port = oidc_config.cli.callback_port.unwrap_or(0);
-    let listener = TcpListener::bind(format!("127.0.0.1:{callback_port}"))
+    let callback_port = oidc_config.callback_ports.first().cloned().unwrap_or_default();
+    let bind_addr = if callback_port.is_empty() {
+        "127.0.0.1:0".to_string()
+    } else {
+        format!("127.0.0.1:{callback_port}")
+    };
+    let listener = TcpListener::bind(&bind_addr)
         .await
-        .with_context(|| format!("failed to bind callback server on port {callback_port}"))?;
+        .with_context(|| format!("failed to bind callback server on {bind_addr}"))?;
     let local_addr = listener.local_addr()?;
     let redirect_uri = format!("http://127.0.0.1:{}/callback", local_addr.port());
 

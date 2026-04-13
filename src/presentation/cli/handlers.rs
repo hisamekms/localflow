@@ -550,11 +550,15 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                 "    scopes: [{}]",
                 config.server.auth.oidc.scopes.join(", ")
             );
-            println!("  [server.auth.oidc.cli]");
-            match config.server.auth.oidc.cli.callback_port {
-                Some(port) => println!("    callback_port: {port}"),
-                None => println!("    callback_port: (auto)"),
+            if config.server.auth.oidc.callback_ports.is_empty() {
+                println!("    callback_ports: (none)");
+            } else {
+                println!(
+                    "    callback_ports: [{}]",
+                    config.server.auth.oidc.callback_ports.join(", ")
+                );
             }
+            println!("  [server.auth.oidc.cli]");
             println!("    browser: {}", config.server.auth.oidc.cli.browser);
             println!("  [server.auth.oidc.session]");
             match config.server.auth.oidc.session.ttl {
@@ -1620,6 +1624,7 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
             .unwrap_or_default(),
         username_claim: None,
         required_claims: Default::default(),
+        callback_ports: config.server.auth.oidc.callback_ports.clone(),
         cli: config.server.auth.oidc.cli.clone(),
         session: Default::default(),
     };

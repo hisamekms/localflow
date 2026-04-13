@@ -697,8 +697,9 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 # client_id = "senko-cli"                      # OIDC client ID for PKCE (env: SENKO_OIDC_CLIENT_ID)
 # scopes = ["openid", "profile"]               # OIDC scopes (default: ["openid", "profile"])
 #
+# callback_ports = ["8400"]              # local ports for OIDC callback (default: none, auto-assign)
+#
 # [server.auth.oidc.cli]
-# callback_port = 8400                   # local port for OIDC callback (default: auto-assign)
 # browser = true                         # auto-open browser for OIDC login (default: true)
 #
 # [server.auth.oidc.session]
