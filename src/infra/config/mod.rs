@@ -993,6 +993,8 @@ pub struct CliOverrides {
     pub user: Option<String>,
     pub port: Option<u16>,
     pub host: Option<String>,
+    pub server_port: Option<u16>,
+    pub server_host: Option<String>,
 }
 
 impl Config {
@@ -1291,6 +1293,16 @@ impl Config {
             && !val.is_empty() {
                 self.web.host = Some(val);
             }
+
+        // Server settings (same env vars apply to both web and server)
+        if let Ok(val) = std::env::var("SENKO_PORT")
+            && let Ok(port) = val.parse::<u16>() {
+                self.server.port = Some(port);
+            }
+        if let Ok(val) = std::env::var("SENKO_HOST")
+            && !val.is_empty() {
+                self.server.host = Some(val);
+            }
     }
 
     /// Apply CLI argument overrides. Call after `apply_env()`.
@@ -1321,6 +1333,12 @@ impl Config {
         if let Some(ref host) = overrides.host {
             self.web.host = Some(host.clone());
         }
+        if let Some(port) = overrides.server_port {
+            self.server.port = Some(port);
+        }
+        if let Some(ref host) = overrides.server_host {
+            self.server.host = Some(host.clone());
+        }
     }
 
     pub fn web_port_or(&self, default: u16) -> u16 {
@@ -1333,6 +1351,21 @@ impl Config {
 
     pub fn effective_host(&self) -> String {
         self.web
+            .host
+            .clone()
+            .unwrap_or_else(|| "127.0.0.1".to_string())
+    }
+
+    pub fn server_port_or(&self, default: u16) -> u16 {
+        self.server.port.unwrap_or(default)
+    }
+
+    pub fn server_port_is_explicit(&self) -> bool {
+        self.server.port.is_some()
+    }
+
+    pub fn effective_server_host(&self) -> String {
+        self.server
             .host
             .clone()
             .unwrap_or_else(|| "127.0.0.1".to_string())
@@ -2288,5 +2321,44 @@ mod tests {
         let mut config = Config::default();
         config.web.host = Some("0.0.0.0".to_string());
         assert_eq!(config.effective_host(), "0.0.0.0");
+    }
+
+    #[test]
+    fn server_port_helpers() {
+        let mut config = Config::default();
+        assert_eq!(config.server_port_or(3142), 3142);
+        assert!(!config.server_port_is_explicit());
+
+        config.server.port = Some(4000);
+        assert_eq!(config.server_port_or(3142), 4000);
+        assert!(config.server_port_is_explicit());
+    }
+
+    #[test]
+    fn effective_server_host_default() {
+        let config = Config::default();
+        assert_eq!(config.effective_server_host(), "127.0.0.1");
+    }
+
+    #[test]
+    fn effective_server_host_custom() {
+        let mut config = Config::default();
+        config.server.host = Some("0.0.0.0".to_string());
+        assert_eq!(config.effective_server_host(), "0.0.0.0");
+    }
+
+    #[test]
+    fn apply_cli_server_overrides() {
+        let mut config = Config::default();
+        config.apply_cli(&CliOverrides {
+            server_port: Some(5000),
+            server_host: Some("10.0.0.1".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(config.server.port, Some(5000));
+        assert_eq!(config.server.host.as_deref(), Some("10.0.0.1"));
+        // web should remain unset
+        assert!(config.web.port.is_none());
+        assert!(config.web.host.is_none());
     }
 }

@@ -849,7 +849,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             config.apply_cli(&CliOverrides {
                 log_dir: cli.log_dir.as_ref().map(|p| p.to_string_lossy().into_owned()),
                 db_path: cli.db_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-                port, host,
+                server_port: port, server_host: host,
                 ..Default::default()
             });
             #[cfg(feature = "aws-secrets")]
@@ -859,8 +859,8 @@ pub async fn run(cli: Cli) -> Result<()> {
                 crate::bootstrap::validate_serve_auth(&config)?;
             }
             let backend = create_backend(&root, &config)?;
-            let port_is_explicit = config.web_port_is_explicit();
-            let effective_port = config.web_port_or(3142);
+            let port_is_explicit = config.server_port_is_explicit();
+            let effective_port = config.server_port_or(3142);
             let auth_mode = if is_proxy {
                 None
             } else {

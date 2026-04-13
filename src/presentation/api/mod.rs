@@ -563,7 +563,7 @@ pub async fn serve(
                 ),
         );
 
-    let bind_addr_str = config.effective_host();
+    let bind_addr_str = config.effective_server_host();
     let bind_ip: std::net::IpAddr = bind_addr_str
         .parse()
         .with_context(|| format!("invalid bind address: {bind_addr_str}"))?;
