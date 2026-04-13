@@ -14,7 +14,7 @@ use crate::domain::task::{
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
-    Role, User,
+    Role, UpdateUserParams, User,
 };
 
 struct Migration {
@@ -623,6 +623,26 @@ fn list_users(conn: &Connection) -> Result<Vec<User>> {
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(users)
+}
+
+fn update_user(conn: &Connection, id: i64, params: &UpdateUserParams) -> Result<User> {
+    // Verify user exists first
+    get_user(conn, id)?;
+
+    if let Some(ref username) = params.username {
+        conn.execute(
+            "UPDATE users SET username = ?1 WHERE id = ?2",
+            rusqlite::params![username, id],
+        )?;
+    }
+    if let Some(ref display_name) = params.display_name {
+        conn.execute(
+            "UPDATE users SET display_name = ?1 WHERE id = ?2",
+            rusqlite::params![display_name, id],
+        )?;
+    }
+
+    get_user(conn, id)
 }
 
 fn delete_user(conn: &Connection, id: i64) -> Result<()> {
@@ -1727,6 +1747,11 @@ impl UserRepository for SqliteBackend {
     async fn get_user_by_username(&self, username: &str) -> Result<User> {
         let username = username.to_owned();
         blocking!(self, |conn: &Connection| get_user_by_username(conn, &username))
+    }
+
+    async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User> {
+        let params = params.clone();
+        blocking!(self, |conn: &Connection| update_user(conn, id, &params))
     }
 
     async fn delete_user(&self, id: i64) -> Result<()> {

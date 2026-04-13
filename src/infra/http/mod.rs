@@ -20,7 +20,7 @@ use crate::domain::task::{
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
-    Role, User,
+    Role, UpdateUserParams, User,
 };
 
 tokio::task_local! {
@@ -331,6 +331,16 @@ impl UserRepository for HttpBackend {
             .into_iter()
             .find(|u| u.username() == username)
             .ok_or_else(|| anyhow::anyhow!("user not found"))
+    }
+
+    async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User> {
+        let resp = self.auth(self
+            .client
+            .put(self.url(&format!("/api/v1/users/{id}")))
+            .json(params))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
     }
 
     async fn delete_user(&self, id: i64) -> Result<()> {

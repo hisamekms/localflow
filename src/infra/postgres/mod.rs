@@ -18,7 +18,7 @@ use crate::domain::task::{
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
-    Role, User,
+    Role, UpdateUserParams, User,
 };
 
 pub struct PostgresBackend {
@@ -480,6 +480,52 @@ impl UserRepository for PostgresBackend {
         Ok(User::new(
             row.get("id"),
             username.to_string(),
+            row.get("display_name"),
+            row.get("email"),
+            row.get("created_at"),
+        ))
+    }
+
+    async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User> {
+        let pool = self.pool().await?;
+
+        let mut sets = Vec::new();
+        let mut bind_idx = 1u32;
+        if params.username.is_some() {
+            sets.push(format!("username = ${bind_idx}"));
+            bind_idx += 1;
+        }
+        if params.display_name.is_some() {
+            sets.push(format!("display_name = ${bind_idx}"));
+            bind_idx += 1;
+        }
+
+        if sets.is_empty() {
+            return self.get_user(id).await;
+        }
+
+        let sql = format!(
+            "UPDATE users SET {} WHERE id = ${bind_idx} RETURNING id, username, display_name, email, created_at",
+            sets.join(", "),
+        );
+
+        let mut query = sqlx::query(&sql);
+        if let Some(ref username) = params.username {
+            query = query.bind(username);
+        }
+        if let Some(ref display_name) = params.display_name {
+            query = query.bind(display_name);
+        }
+        query = query.bind(id);
+
+        let row = query
+            .fetch_optional(pool)
+            .await?
+            .context("user not found")?;
+
+        Ok(User::new(
+            row.get("id"),
+            row.get("username"),
             row.get("display_name"),
             row.get("email"),
             row.get("created_at"),

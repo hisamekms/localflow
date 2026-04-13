@@ -84,6 +84,12 @@ pub struct CreateUserParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateUserParams {
+    pub username: Option<String>,
+    pub display_name: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectMember {
     id: i64,
     project_id: i64,
@@ -262,6 +268,7 @@ pub trait UserRepository: Send + Sync {
     async fn create_user(&self, params: &CreateUserParams) -> Result<User>;
     async fn get_user(&self, id: i64) -> Result<User>;
     async fn get_user_by_username(&self, username: &str) -> Result<User>;
+    async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User>;
     async fn delete_user(&self, id: i64) -> Result<()>;
 }
 

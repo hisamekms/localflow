@@ -5,7 +5,7 @@ use anyhow::Result;
 use crate::application::port::TaskBackend;
 use crate::domain::duration::parse_duration;
 use crate::domain::user::{
-    ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, User,
+    ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, UpdateUserParams, User,
 };
 use crate::infra::config::SessionConfig;
 
@@ -32,6 +32,10 @@ impl UserService {
 
     pub async fn get_user_by_username(&self, username: &str) -> Result<User> {
         self.backend.get_user_by_username(username).await
+    }
+
+    pub async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User> {
+        self.backend.update_user(id, params).await
     }
 
     pub async fn delete_user(&self, id: i64) -> Result<()> {

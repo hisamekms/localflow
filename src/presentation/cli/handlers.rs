@@ -21,7 +21,7 @@ use crate::domain::task::{
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::metadata_field::{CreateMetadataFieldParams, MetadataFieldType, validate_field_name};
-use crate::domain::user::{AddProjectMemberParams, CreateUserParams};
+use crate::domain::user::{AddProjectMemberParams, CreateUserParams, UpdateUserParams};
 use crate::bootstrap::resolve_project_root;
 
 fn build_cli_overrides(cli: &Cli) -> CliOverrides {
@@ -1449,6 +1449,26 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
                 }
                 OutputFormat::Text => {
                     println!("Created user #{}: {}", user.id(), user.username());
+                }
+            }
+        }
+        UserAction::Update {
+            id,
+            username,
+            display_name,
+        } => {
+            let params = UpdateUserParams {
+                username: username.clone(),
+                display_name: display_name.as_ref().map(|v| Some(v.clone())),
+            };
+            let user = user_service.update_user(*id, &params).await?;
+            match cli.output {
+                OutputFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&user)?);
+                }
+                OutputFormat::Text => {
+                    let display = user.display_name().unwrap_or("");
+                    println!("Updated user #{}: {} {}", user.id(), user.username(), display);
                 }
             }
         }

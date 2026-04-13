@@ -515,6 +515,15 @@ pub enum UserAction {
         #[arg(long)]
         email: Option<String>,
     },
+    /// Update a user
+    Update {
+        /// User ID
+        id: i64,
+        #[arg(long)]
+        username: Option<String>,
+        #[arg(long)]
+        display_name: Option<String>,
+    },
     /// Delete a user
     Delete {
         /// User ID

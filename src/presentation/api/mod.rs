@@ -32,7 +32,7 @@ use crate::domain::task::{
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
-    AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role,
+    AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role, UpdateUserParams,
 };
 use super::dto::{
     ApiKeyResponse, ApiKeyWithSecretResponse, AuthConfigOidc, AuthConfigResponse,
@@ -413,7 +413,7 @@ pub async fn serve(
         .route("/api/v1/users", get(list_users).post(create_user))
         .route(
             "/api/v1/users/{user_id}",
-            get(get_user).delete(delete_user),
+            get(get_user).put(update_user).delete(delete_user),
         )
         // API key management
         .route(
@@ -1044,6 +1044,33 @@ async fn get_user(
 ) -> Result<Json<UserResponse>, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
     let user = state.user_service.get_user(user_id).await.map_err(classify_error)?;
+    Ok(Json(UserResponse::from(user)))
+}
+
+// PUT /api/v1/users/{user_id}
+#[derive(Deserialize)]
+struct UpdateUserBody {
+    username: Option<String>,
+    display_name: Option<Option<String>>,
+}
+
+async fn update_user(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(user_id): Path<i64>,
+    Json(body): Json<UpdateUserBody>,
+) -> Result<Json<UserResponse>, ApiError> {
+    let caller = require_auth_user(&auth, state.auth_enabled())?;
+    if let Some(caller) = caller {
+        if caller.id() != user_id && caller.id() != 0 {
+            return Err(ApiError::Forbidden("can only update your own profile".into()));
+        }
+    }
+    let params = UpdateUserParams {
+        username: body.username,
+        display_name: body.display_name,
+    };
+    let user = state.user_service.update_user(user_id, &params).await.map_err(classify_error)?;
     Ok(Json(UserResponse::from(user)))
 }
 
