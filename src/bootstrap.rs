@@ -12,6 +12,7 @@ use crate::application::port::TaskBackend;
 use crate::infra::config::{Config, LogConfig, LogFormat, RawConfig};
 use crate::infra::http::HttpBackend;
 use crate::infra::http::remote_task_ops::RemoteTaskOperations;
+use crate::infra::http::remote_user_ops::RemoteUserOperations;
 use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::hook::test_executor::ShellHookTestExecutor;
 use crate::infra::hook::{RuntimeMode, BackendInfo};
@@ -252,6 +253,12 @@ pub fn create_project_service(backend: Arc<dyn TaskBackend>) -> ProjectService {
 
 pub fn create_user_service(backend: Arc<dyn TaskBackend>) -> UserService {
     UserService::new(backend)
+}
+
+pub fn create_remote_user_operations(config: &Config) -> RemoteUserOperations {
+    let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
+    let api_key = config.cli.remote.token.clone();
+    RemoteUserOperations::new(url, api_key)
 }
 
 pub fn create_hook_test_service(
