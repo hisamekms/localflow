@@ -34,6 +34,10 @@ impl UserService {
         self.backend.get_user_by_username(username).await
     }
 
+    pub async fn get_user_by_sub(&self, sub: &str) -> Result<User> {
+        self.backend.get_user_by_sub(sub).await
+    }
+
     pub async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User> {
         self.backend.update_user(id, params).await
     }
@@ -64,18 +68,20 @@ impl UserService {
 
     // --- Session management ---
 
-    /// Get a user by username, creating them if they don't exist.
+    /// Get a user by sub, creating them if they don't exist.
     pub async fn get_or_create_user(
         &self,
+        sub: &str,
         username: &str,
         display_name: Option<&str>,
         email: Option<&str>,
     ) -> Result<User> {
-        match self.backend.get_user_by_username(username).await {
+        match self.backend.get_user_by_sub(sub).await {
             Ok(user) => Ok(user),
             Err(_) => {
                 let params = CreateUserParams {
                     username: username.to_string(),
+                    sub: Some(sub.to_string()),
                     display_name: display_name.map(String::from),
                     email: email.map(String::from),
                 };

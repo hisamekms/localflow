@@ -333,6 +333,21 @@ impl UserRepository for HttpBackend {
             .ok_or_else(|| anyhow::anyhow!("user not found"))
     }
 
+    async fn get_user_by_sub(&self, sub: &str) -> Result<User> {
+        let users: Vec<User> = {
+            let resp = self.auth(self
+                .client
+                .get(self.url("/api/v1/users")))
+                .send()
+                .await?;
+            read_json_or_error(resp).await?
+        };
+        users
+            .into_iter()
+            .find(|u| u.sub() == sub)
+            .ok_or_else(|| anyhow::anyhow!("user not found"))
+    }
+
     async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User> {
         let resp = self.auth(self
             .client

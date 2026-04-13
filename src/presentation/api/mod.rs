@@ -1298,7 +1298,7 @@ async fn create_token(
     let device_name = body.and_then(|b| b.0.device_name);
     // Ensure user exists in DB (auto-created by JwtAuthProvider if OIDC)
     let user = state.user_service
-        .get_or_create_user(auth.user.username(), auth.user.display_name(), auth.user.email())
+        .get_or_create_user(auth.user.sub(), auth.user.username(), auth.user.display_name(), auth.user.email())
         .await
         .map_err(classify_error)?;
 

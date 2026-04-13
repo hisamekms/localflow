@@ -46,6 +46,7 @@ impl AuthProvider for ApiKeyProvider {
             return Ok(crate::domain::user::User::new(
                 0,
                 "master".to_string(),
+                "master".to_string(),
                 None,
                 None,
                 String::new(),
@@ -321,6 +322,16 @@ impl AuthProvider for JwtAuthProvider {
             }
         }
 
+        // Extract sub claim (required for user identity)
+        let sub = token_data
+            .claims
+            .get("sub")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                tracing::debug!("sub claim missing from JWT");
+                AuthError::InvalidToken
+            })?;
+
         let username = if let Some(ref claim_name) = self.username_claim {
             token_data
                 .claims
@@ -336,20 +347,20 @@ impl AuthProvider for JwtAuthProvider {
                 .get("preferred_username")
                 .and_then(|v| v.as_str())
                 .or_else(|| token_data.claims.get("email").and_then(|v| v.as_str()))
-                .or_else(|| token_data.claims.get("sub").and_then(|v| v.as_str()))
-                .ok_or(AuthError::InvalidToken)?
+                .unwrap_or(sub)
         };
 
-        // Try to find existing user; auto-create if not found (standard OIDC provisioning)
-        match self.backend.get_user_by_username(username).await {
+        // Try to find existing user by sub; auto-create if not found (standard OIDC provisioning)
+        match self.backend.get_user_by_sub(sub).await {
             Ok(user) => Ok(user),
             Err(_) => {
                 let display_name = token_data.claims.get("name").and_then(|v| v.as_str()).map(String::from);
                 let email = token_data.claims.get("email").and_then(|v| v.as_str()).map(String::from);
-                tracing::info!(username = %username, "auto-provisioning user from OIDC claims");
+                tracing::info!(sub = %sub, username = %username, "auto-provisioning user from OIDC claims");
                 self.backend
                     .create_user(&CreateUserParams {
                         username: username.to_string(),
+                        sub: Some(sub.to_string()),
                         display_name,
                         email,
                     })
@@ -375,6 +386,7 @@ pub struct TrustedHeadersAuthProvider {
     backend: Arc<dyn TaskBackend>,
     subject_header: String,
     name_header: Option<String>,
+    display_name_header: Option<String>,
     email_header: Option<String>,
     groups_header: Option<String>,
     scope_header: Option<String>,
@@ -385,6 +397,7 @@ impl TrustedHeadersAuthProvider {
         backend: Arc<dyn TaskBackend>,
         subject_header: String,
         name_header: Option<String>,
+        display_name_header: Option<String>,
         email_header: Option<String>,
         groups_header: Option<String>,
         scope_header: Option<String>,
@@ -393,6 +406,7 @@ impl TrustedHeadersAuthProvider {
             backend,
             subject_header,
             name_header,
+            display_name_header,
             email_header,
             groups_header,
             scope_header,
@@ -403,13 +417,20 @@ impl TrustedHeadersAuthProvider {
         &self,
         headers: &axum::http::HeaderMap,
     ) -> std::result::Result<TrustedHeadersAuthResult, AuthError> {
-        let username = headers
+        let sub = headers
             .get(&self.subject_header)
             .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
             .ok_or(AuthError::MissingToken)?;
 
-        let display_name = self
+        let name_value = self
             .name_header
+            .as_ref()
+            .and_then(|h| headers.get(h.as_str()))
+            .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
+            .map(String::from);
+
+        let display_name_value = self
+            .display_name_header
             .as_ref()
             .and_then(|h| headers.get(h.as_str()))
             .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
@@ -421,6 +442,17 @@ impl TrustedHeadersAuthProvider {
             .and_then(|h| headers.get(h.as_str()))
             .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
             .map(String::from);
+
+        // Username fallback: name_header -> email -> sub
+        let username = name_value.as_deref()
+            .or(email.as_deref())
+            .unwrap_or(sub)
+            .to_string();
+
+        // Display name fallback: display_name_header -> name_header -> email
+        let display_name = display_name_value
+            .or_else(|| name_value.clone())
+            .or_else(|| email.clone());
 
         let groups = self
             .groups_header
@@ -438,13 +470,14 @@ impl TrustedHeadersAuthProvider {
             .map(|s| s.split(',').map(|g| g.trim().to_string()).filter(|g| !g.is_empty()).collect())
             .unwrap_or_default();
 
-        let user = match self.backend.get_user_by_username(username).await {
+        let user = match self.backend.get_user_by_sub(sub).await {
             Ok(user) => user,
             Err(_) => {
-                tracing::info!(username = %username, "auto-provisioning user from trusted headers");
+                tracing::info!(sub = %sub, username = %username, "auto-provisioning user from trusted headers");
                 self.backend
                     .create_user(&CreateUserParams {
-                        username: username.to_string(),
+                        username,
+                        sub: Some(sub.to_string()),
                         display_name,
                         email,
                     })
@@ -471,6 +504,7 @@ mod tests {
         let user = backend
             .create_user(&CreateUserParams {
                 username: "testuser".to_string(),
+                sub: None,
                 display_name: None,
                 email: None,
             })
@@ -551,6 +585,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -572,6 +607,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
 
         let headers = axum::http::HeaderMap::new();
@@ -586,6 +622,7 @@ mod tests {
             backend,
             "x-senko-user-sub".to_string(),
             Some("x-senko-user-name".to_string()),
+            None,
             Some("x-senko-user-email".to_string()),
             None,
             None,
@@ -597,7 +634,8 @@ mod tests {
         headers.insert("x-senko-user-email", "bob@example.com".parse().unwrap());
 
         let result = provider.authenticate_from_headers(&headers).await.unwrap();
-        assert_eq!(result.user.username(), "bob");
+        assert_eq!(result.user.username(), "Bob Smith");
+        assert_eq!(result.user.sub(), "bob");
     }
 
     #[tokio::test]
@@ -606,6 +644,7 @@ mod tests {
         backend
             .create_user(&CreateUserParams {
                 username: "existing".to_string(),
+                sub: None,
                 display_name: Some("Existing User".to_string()),
                 email: None,
             })
@@ -615,6 +654,7 @@ mod tests {
         let provider = TrustedHeadersAuthProvider::new(
             backend,
             "x-senko-user-sub".to_string(),
+            None,
             None,
             None,
             None,
@@ -634,6 +674,7 @@ mod tests {
         let provider = TrustedHeadersAuthProvider::new(
             backend,
             "x-senko-user-sub".to_string(),
+            None,
             None,
             None,
             Some("x-senko-user-groups".to_string()),
@@ -657,6 +698,7 @@ mod tests {
         let provider = TrustedHeadersAuthProvider::new(
             backend,
             "x-senko-user-sub".to_string(),
+            None,
             None,
             None,
             Some("x-senko-user-groups".to_string()),
@@ -752,6 +794,7 @@ mod tests {
         let user = backend
             .create_user(&CreateUserParams {
                 username: "jwt-user".to_string(),
+                sub: None,
                 display_name: None,
                 email: None,
             })
@@ -971,6 +1014,7 @@ mod tests {
         backend
             .create_user(&CreateUserParams {
                 username: "jwt-user".to_string(),
+                sub: None,
                 display_name: None,
                 email: None,
             })
@@ -1017,6 +1061,7 @@ mod tests {
         backend
             .create_user(&CreateUserParams {
                 username: "jwt-user".to_string(),
+                sub: None,
                 display_name: None,
                 email: None,
             })

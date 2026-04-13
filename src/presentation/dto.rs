@@ -272,6 +272,7 @@ impl From<PreviewResult> for PreviewTransitionResponse {
 pub struct UserResponse {
     id: i64,
     username: String,
+    sub: String,
     display_name: Option<String>,
     email: Option<String>,
     created_at: String,
@@ -282,6 +283,7 @@ impl From<User> for UserResponse {
         Self {
             id: u.id(),
             username: u.username().to_owned(),
+            sub: u.sub().to_owned(),
             display_name: u.display_name().map(|s| s.to_owned()),
             email: u.email().map(|s| s.to_owned()),
             created_at: u.created_at().to_owned(),

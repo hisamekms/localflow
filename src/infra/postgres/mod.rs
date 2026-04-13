@@ -433,10 +433,12 @@ impl ProjectMemberRepository for PostgresBackend {
 impl UserRepository for PostgresBackend {
     async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
         let pool = self.pool().await?;
+        let effective_sub = params.sub.as_deref().unwrap_or(&params.username);
         let row = sqlx::query(
-            "INSERT INTO users (username, display_name, email) VALUES ($1, $2, $3) RETURNING id, created_at",
+            "INSERT INTO users (username, sub, display_name, email) VALUES ($1, $2, $3, $4) RETURNING id, created_at",
         )
         .bind(&params.username)
+        .bind(effective_sub)
         .bind(&params.display_name)
         .bind(&params.email)
         .fetch_one(pool)
@@ -444,6 +446,7 @@ impl UserRepository for PostgresBackend {
         Ok(User::new(
             row.get("id"),
             params.username.clone(),
+            effective_sub.to_string(),
             params.display_name.clone(),
             params.email.clone(),
             row.get("created_at"),
@@ -453,7 +456,7 @@ impl UserRepository for PostgresBackend {
     async fn get_user(&self, id: i64) -> Result<User> {
         let pool = self.pool().await?;
         let row = sqlx::query(
-            "SELECT username, display_name, email, created_at FROM users WHERE id = $1",
+            "SELECT username, sub, display_name, email, created_at FROM users WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(pool)
@@ -462,6 +465,7 @@ impl UserRepository for PostgresBackend {
         Ok(User::new(
             id,
             row.get("username"),
+            row.get("sub"),
             row.get("display_name"),
             row.get("email"),
             row.get("created_at"),
@@ -471,7 +475,7 @@ impl UserRepository for PostgresBackend {
     async fn get_user_by_username(&self, username: &str) -> Result<User> {
         let pool = self.pool().await?;
         let row = sqlx::query(
-            "SELECT id, display_name, email, created_at FROM users WHERE username = $1",
+            "SELECT id, sub, display_name, email, created_at FROM users WHERE username = $1",
         )
         .bind(username)
         .fetch_optional(pool)
@@ -480,6 +484,26 @@ impl UserRepository for PostgresBackend {
         Ok(User::new(
             row.get("id"),
             username.to_string(),
+            row.get("sub"),
+            row.get("display_name"),
+            row.get("email"),
+            row.get("created_at"),
+        ))
+    }
+
+    async fn get_user_by_sub(&self, sub: &str) -> Result<User> {
+        let pool = self.pool().await?;
+        let row = sqlx::query(
+            "SELECT id, username, display_name, email, created_at FROM users WHERE sub = $1",
+        )
+        .bind(sub)
+        .fetch_optional(pool)
+        .await?
+        .context("user not found")?;
+        Ok(User::new(
+            row.get("id"),
+            row.get("username"),
+            sub.to_string(),
             row.get("display_name"),
             row.get("email"),
             row.get("created_at"),
@@ -505,7 +529,7 @@ impl UserRepository for PostgresBackend {
         }
 
         let sql = format!(
-            "UPDATE users SET {} WHERE id = ${bind_idx} RETURNING id, username, display_name, email, created_at",
+            "UPDATE users SET {} WHERE id = ${bind_idx} RETURNING id, username, sub, display_name, email, created_at",
             sets.join(", "),
         );
 
@@ -526,6 +550,7 @@ impl UserRepository for PostgresBackend {
         Ok(User::new(
             row.get("id"),
             row.get("username"),
+            row.get("sub"),
             row.get("display_name"),
             row.get("email"),
             row.get("created_at"),
@@ -668,7 +693,7 @@ impl UserQueryPort for PostgresBackend {
     async fn list_users(&self) -> Result<Vec<User>> {
         let pool = self.pool().await?;
         let rows =
-            sqlx::query("SELECT id, username, display_name, email, created_at FROM users ORDER BY id")
+            sqlx::query("SELECT id, username, sub, display_name, email, created_at FROM users ORDER BY id")
                 .fetch_all(pool)
                 .await?;
         Ok(rows
@@ -676,6 +701,7 @@ impl UserQueryPort for PostgresBackend {
             .map(|r| User::new(
                 r.get("id"),
                 r.get("username"),
+                r.get("sub"),
                 r.get("display_name"),
                 r.get("email"),
                 r.get("created_at"),
@@ -1758,12 +1784,14 @@ mod tests {
         let user = backend
             .create_user(&CreateUserParams {
                 username: "testuser".to_string(),
+                sub: None,
                 display_name: Some("Test User".to_string()),
                 email: Some("test@example.com".to_string()),
             })
             .await
             .unwrap();
         assert_eq!(user.username(), "testuser");
+        assert_eq!(user.sub(), "testuser");
 
         let fetched = backend.get_user(user.id()).await.unwrap();
         assert_eq!(fetched.username(), "testuser");

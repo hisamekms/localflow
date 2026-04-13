@@ -246,6 +246,7 @@ pub struct ApiKeyConfig {
 pub struct TrustedHeadersConfig {
     pub subject_header: Option<String>,
     pub name_header: Option<String>,
+    pub display_name_header: Option<String>,
     pub email_header: Option<String>,
     pub groups_header: Option<String>,
     pub scope_header: Option<String>,
@@ -645,6 +646,7 @@ pub struct RawApiKeyConfig {
 pub struct RawTrustedHeadersConfig {
     pub subject_header: Option<String>,
     pub name_header: Option<String>,
+    pub display_name_header: Option<String>,
     pub email_header: Option<String>,
     pub groups_header: Option<String>,
     pub scope_header: Option<String>,
@@ -747,6 +749,12 @@ impl RawConfig {
                             .trusted_headers
                             .name_header
                             .or(self.server.auth.trusted_headers.name_header),
+                        display_name_header: overlay
+                            .server
+                            .auth
+                            .trusted_headers
+                            .display_name_header
+                            .or(self.server.auth.trusted_headers.display_name_header),
                         email_header: overlay
                             .server
                             .auth
@@ -937,6 +945,7 @@ impl RawConfig {
                     trusted_headers: TrustedHeadersConfig {
                         subject_header: self.server.auth.trusted_headers.subject_header,
                         name_header: self.server.auth.trusted_headers.name_header,
+                        display_name_header: self.server.auth.trusted_headers.display_name_header,
                         email_header: self.server.auth.trusted_headers.email_header,
                         groups_header: self.server.auth.trusted_headers.groups_header,
                         scope_header: self.server.auth.trusted_headers.scope_header,

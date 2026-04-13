@@ -1434,11 +1434,13 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
         }
         UserAction::Create {
             username,
+            sub,
             display_name,
             email,
         } => {
             let params = CreateUserParams {
                 username: username.clone(),
+                sub: sub.clone(),
                 display_name: display_name.clone(),
                 email: email.clone(),
             };

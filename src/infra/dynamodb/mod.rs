@@ -573,6 +573,7 @@ fn user_to_item(user: &User) -> HashMap<String, AttributeValue> {
     item.insert("SK".into(), AttributeValue::S(pk));
     item.insert("id".into(), AttributeValue::N(user.id().to_string()));
     item.insert("username".into(), AttributeValue::S(user.username().to_string()));
+    item.insert("sub".into(), AttributeValue::S(user.sub().to_string()));
     if let Some(v) = user.display_name() {
         item.insert("display_name".into(), AttributeValue::S(v.to_string()));
     }
@@ -584,9 +585,12 @@ fn user_to_item(user: &User) -> HashMap<String, AttributeValue> {
 }
 
 fn item_to_user(item: &HashMap<String, AttributeValue>) -> Result<User> {
+    let username = req_s(item, "username")?;
+    let sub = opt_s(item, "sub").unwrap_or_else(|| username.clone());
     Ok(User::new(
         opt_n(item, "id").context("missing id")?,
-        req_s(item, "username")?,
+        username,
+        sub,
         opt_s(item, "display_name"),
         opt_s(item, "email"),
         req_s(item, "created_at")?,
@@ -784,9 +788,11 @@ impl UserRepository for DynamoDbBackend {
     async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
         let id = self.next_id("USER").await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let effective_sub = params.sub.clone().unwrap_or_else(|| params.username.clone());
         let user = User::new(
             id,
             params.username.clone(),
+            effective_sub,
             params.display_name.clone(),
             params.email.clone(),
             now,
@@ -814,6 +820,14 @@ impl UserRepository for DynamoDbBackend {
         users
             .into_iter()
             .find(|u| u.username() == username)
+            .ok_or_else(|| anyhow::anyhow!("user not found"))
+    }
+
+    async fn get_user_by_sub(&self, sub: &str) -> Result<User> {
+        let users: Vec<User> = UserQueryPort::list_users(self).await?;
+        users
+            .into_iter()
+            .find(|u| u.sub() == sub)
             .ok_or_else(|| anyhow::anyhow!("user not found"))
     }
 

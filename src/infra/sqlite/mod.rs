@@ -200,6 +200,15 @@ const MIGRATIONS: &[Migration] = &[
             CREATE INDEX idx_metadata_fields_project_id ON metadata_fields(project_id);
         ",
     },
+    Migration {
+        version: 9,
+        name: "add_user_sub",
+        sql: "
+            ALTER TABLE users ADD COLUMN sub TEXT;
+            UPDATE users SET sub = username WHERE sub IS NULL;
+            CREATE UNIQUE INDEX idx_users_sub ON users(sub);
+        ",
+    },
 ];
 
 fn run_migrations(conn: &Connection) -> Result<()> {
@@ -575,41 +584,54 @@ fn delete_project(conn: &Connection, id: i64) -> Result<()> {
 // --- User CRUD ---
 
 fn create_user(conn: &Connection, params: &CreateUserParams) -> Result<User> {
+    let effective_sub = params.sub.as_deref().unwrap_or(&params.username);
     conn.execute(
-        "INSERT INTO users (username, display_name, email) VALUES (?1, ?2, ?3)",
-        rusqlite::params![params.username, params.display_name, params.email],
+        "INSERT INTO users (username, sub, display_name, email) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![params.username, effective_sub, params.display_name, params.email],
     )?;
     let id = conn.last_insert_rowid();
     get_user(conn, id)
 }
 
 fn get_user(conn: &Connection, id: i64) -> Result<User> {
-    let (username, display_name, email, created_at): (String, Option<String>, Option<String>, String) = conn
+    let (username, sub, display_name, email, created_at): (String, String, Option<String>, Option<String>, String) = conn
         .query_row(
-            "SELECT username, display_name, email, created_at FROM users WHERE id = ?1",
+            "SELECT username, sub, display_name, email, created_at FROM users WHERE id = ?1",
             rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .optional()?
         .ok_or(DomainError::UserNotFound)?;
-    Ok(User::new(id, username, display_name, email, created_at))
+    Ok(User::new(id, username, sub, display_name, email, created_at))
 }
 
 fn get_user_by_username(conn: &Connection, username: &str) -> Result<User> {
-    let (id, display_name, email, created_at): (i64, Option<String>, Option<String>, String) = conn
+    let (id, sub, display_name, email, created_at): (i64, String, Option<String>, Option<String>, String) = conn
         .query_row(
-            "SELECT id, display_name, email, created_at FROM users WHERE username = ?1",
+            "SELECT id, sub, display_name, email, created_at FROM users WHERE username = ?1",
             rusqlite::params![username],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .optional()?
         .ok_or(DomainError::UserNotFound)?;
-    Ok(User::new(id, username.to_string(), display_name, email, created_at))
+    Ok(User::new(id, username.to_string(), sub, display_name, email, created_at))
+}
+
+fn get_user_by_sub(conn: &Connection, sub: &str) -> Result<User> {
+    let (id, username, display_name, email, created_at): (i64, String, Option<String>, Option<String>, String) = conn
+        .query_row(
+            "SELECT id, username, display_name, email, created_at FROM users WHERE sub = ?1",
+            rusqlite::params![sub],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .optional()?
+        .ok_or(DomainError::UserNotFound)?;
+    Ok(User::new(id, username, sub.to_string(), display_name, email, created_at))
 }
 
 fn list_users(conn: &Connection) -> Result<Vec<User>> {
     let mut stmt = conn.prepare(
-        "SELECT id, username, display_name, email, created_at FROM users ORDER BY id",
+        "SELECT id, username, sub, display_name, email, created_at FROM users ORDER BY id",
     )?;
     let users = stmt
         .query_map([], |row| {
@@ -619,6 +641,7 @@ fn list_users(conn: &Connection) -> Result<Vec<User>> {
                 row.get(2)?,
                 row.get(3)?,
                 row.get(4)?,
+                row.get(5)?,
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -1749,6 +1772,11 @@ impl UserRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| get_user_by_username(conn, &username))
     }
 
+    async fn get_user_by_sub(&self, sub: &str) -> Result<User> {
+        let sub = sub.to_owned();
+        blocking!(self, |conn: &Connection| get_user_by_sub(conn, &sub))
+    }
+
     async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| update_user(conn, id, &params))
@@ -2877,7 +2905,7 @@ mod tests {
     fn fresh_db_records_migration_version() {
         let (_tmp, conn) = setup();
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
     }
 
     #[test]
@@ -2972,7 +3000,7 @@ mod tests {
 
         // Version should include all migrations
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
 
         // Legacy columns should have been migrated
         let has_description: bool = conn.prepare("SELECT description FROM tasks LIMIT 0").is_ok();
@@ -3016,7 +3044,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 8);
+        assert_eq!(count, 9);
     }
 
     #[test]
@@ -3171,19 +3199,25 @@ mod tests {
         let user = backend
             .create_user(&CreateUserParams {
                 username: "alice".into(),
+                sub: None,
                 display_name: Some("Alice".into()),
                 email: Some("alice@example.com".into()),
             })
             .await
             .unwrap();
         assert_eq!(user.username(), "alice");
+        assert_eq!(user.sub(), "alice"); // sub defaults to username
 
         let got = backend.get_user(user.id()).await.unwrap();
         assert_eq!(got.display_name(), Some("Alice"));
         assert_eq!(got.email(), Some("alice@example.com"));
+        assert_eq!(got.sub(), "alice");
 
         let by_name = backend.get_user_by_username("alice").await.unwrap();
         assert_eq!(by_name.id(), user.id());
+
+        let by_sub = backend.get_user_by_sub("alice").await.unwrap();
+        assert_eq!(by_sub.id(), user.id());
 
         let list = backend.list_users().await.unwrap();
         assert_eq!(list.len(), 2); // default user + alice
@@ -3198,6 +3232,7 @@ mod tests {
         let user = backend
             .create_user(&CreateUserParams {
                 username: "bob".into(),
+                sub: None,
                 display_name: None,
                 email: None,
             })
@@ -3751,6 +3786,7 @@ mod tests {
             &conn,
             &CreateUserParams {
                 username: "alice".to_string(),
+                sub: None,
                 display_name: Some("Alice".to_string()),
                 email: Some("alice@example.com".to_string()),
             },

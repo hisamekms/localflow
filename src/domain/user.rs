@@ -45,14 +45,16 @@ impl FromStr for Role {
 pub struct User {
     id: i64,
     username: String,
+    #[serde(default)]
+    sub: String,
     display_name: Option<String>,
     email: Option<String>,
     created_at: String,
 }
 
 impl User {
-    pub fn new(id: i64, username: String, display_name: Option<String>, email: Option<String>, created_at: String) -> Self {
-        Self { id, username, display_name, email, created_at }
+    pub fn new(id: i64, username: String, sub: String, display_name: Option<String>, email: Option<String>, created_at: String) -> Self {
+        Self { id, username, sub, display_name, email, created_at }
     }
 
     pub fn id(&self) -> i64 {
@@ -61,6 +63,10 @@ impl User {
 
     pub fn username(&self) -> &str {
         &self.username
+    }
+
+    pub fn sub(&self) -> &str {
+        &self.sub
     }
 
     pub fn display_name(&self) -> Option<&str> {
@@ -79,6 +85,8 @@ impl User {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateUserParams {
     pub username: String,
+    #[serde(default)]
+    pub sub: Option<String>,
     pub display_name: Option<String>,
     pub email: Option<String>,
 }
@@ -268,6 +276,7 @@ pub trait UserRepository: Send + Sync {
     async fn create_user(&self, params: &CreateUserParams) -> Result<User>;
     async fn get_user(&self, id: i64) -> Result<User>;
     async fn get_user_by_username(&self, username: &str) -> Result<User>;
+    async fn get_user_by_sub(&self, sub: &str) -> Result<User>;
     async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User>;
     async fn delete_user(&self, id: i64) -> Result<()>;
 }

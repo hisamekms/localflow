@@ -511,6 +511,8 @@ pub enum UserAction {
         #[arg(long)]
         username: String,
         #[arg(long)]
+        sub: Option<String>,
+        #[arg(long)]
         display_name: Option<String>,
         #[arg(long)]
         email: Option<String>,

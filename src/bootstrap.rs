@@ -187,6 +187,7 @@ pub fn create_auth_mode(
                 backend,
                 subject_header,
                 auth.trusted_headers.name_header.clone(),
+                auth.trusted_headers.display_name_header.clone(),
                 auth.trusted_headers.email_header.clone(),
                 auth.trusted_headers.groups_header.clone(),
                 auth.trusted_headers.scope_header.clone(),
