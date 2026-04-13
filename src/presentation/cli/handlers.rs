@@ -1625,7 +1625,15 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
             .unwrap_or_default(),
         username_claim: None,
         required_claims: Default::default(),
-        callback_ports: config.server.auth.oidc.callback_ports.clone(),
+        callback_ports: server_oidc
+            .get("callback_ports")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
         cli: config.server.auth.oidc.cli.clone(),
         session: Default::default(),
     };
