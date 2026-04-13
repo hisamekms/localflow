@@ -85,6 +85,11 @@ const MIGRATIONS: &[Migration] = &[
         description: "add_metadata_fields",
         sql: include_str!("migrations/20260412000000_add_metadata_fields.sql"),
     },
+    Migration {
+        version: 5,
+        description: "add_user_sub",
+        sql: include_str!("migrations/20260413000000_add_user_sub.sql"),
+    },
 ];
 
 async fn run_migrations(pool: &PgPool) -> Result<()> {
