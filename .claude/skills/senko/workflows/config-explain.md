@@ -78,11 +78,11 @@ Stage-specific keys:
 | `scopes` | `["openid", "profile"]` | list of strings | OIDC scopes to request. |
 | `username_claim` | `null` | string | JWT claim to use as username. |
 | `required_claims` | `{}` | map of string to string | Required JWT claims (key-value pairs that must match). |
+| `callback_ports` | `[]` (empty) | list of port strings | Local ports for OIDC callback during CLI login. Supports individual ports and ranges (e.g., `["8400", "9000-9010"]`). |
 
 **server.auth.oidc.cli**
 | Key | Default | Options | Description |
 |---|---|---|---|
-| `callback_ports` | `[]` (empty) | list of port strings | Local ports for OIDC callback during CLI login. |
 | `browser` | `true` | `true`, `false` | Auto-open browser for OIDC login. |
 
 **server.auth.oidc.session**
@@ -170,6 +170,7 @@ Higher-priority sources override lower ones. The `senko config` output shows the
 | `SENKO_OIDC_ISSUER_URL` | `server.auth.oidc.issuer_url` | |
 | `SENKO_OIDC_CLIENT_ID` | `server.auth.oidc.client_id` | |
 | `SENKO_OIDC_USERNAME_CLAIM` | `server.auth.oidc.username_claim` | |
+| `SENKO_OIDC_CALLBACK_PORTS` | `server.auth.oidc.callback_ports` | Comma-separated |
 | `SENKO_AUTH_OIDC_SESSION_TTL` | `server.auth.oidc.session.ttl` | |
 | `SENKO_AUTH_OIDC_SESSION_INACTIVE_TTL` | `server.auth.oidc.session.inactive_ttl` | |
 | `SENKO_AUTH_OIDC_SESSION_MAX_PER_USER` | `server.auth.oidc.session.max_per_user` | Parsed as u32 |
@@ -186,8 +187,8 @@ Higher-priority sources override lower ones. The `senko config` output shows the
 | `SENKO_LOG_DIR` | `log.dir` | |
 | `SENKO_LOG_LEVEL` | `log.level` | |
 | `SENKO_LOG_FORMAT` | `log.format` | |
-| `SENKO_HOST` | `web.host` | |
-| `SENKO_PORT` | `web.port` | |
+| `SENKO_HOST` | `web.host` + `server.host` | Applies to both web and server |
+| `SENKO_PORT` | `web.port` + `server.port` | Applies to both web and server |
 
 ### Step 4: Present to User
 

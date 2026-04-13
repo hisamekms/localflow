@@ -220,6 +220,10 @@ senko supports three authentication modes: Local, Remote + API Key, and Remote +
 
 For direct CLI usage, see [CLI Reference](docs/CLI.md).
 
+## Configuration
+
+See [Configuration Reference](docs/CONFIGURATION.md) for all config keys, environment variables, and layering.
+
 ## Development
 
 See [Development Guide](docs/DEVELOPMENT.md) for status transitions, data storage, and testing.

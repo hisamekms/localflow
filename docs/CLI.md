@@ -207,8 +207,10 @@ senko serve --host 0.0.0.0 # Listen on 0.0.0.0:3142 (all interfaces)
 
 | Option | Description |
 |--------|-------------|
-| `--port <PORT>` | Port to listen on (env: `SENKO_PORT`, default: `3142`) |
-| `--host <ADDR>` | Bind address, e.g. `0.0.0.0` or `192.168.1.5` (env: `SENKO_HOST`, default: `127.0.0.1`) |
+| `--port <PORT>` | Port to listen on (env: `SENKO_SERVER_PORT` or `SENKO_PORT`, default: `3142`) |
+| `--host <ADDR>` | Bind address, e.g. `0.0.0.0` or `192.168.1.5` (env: `SENKO_SERVER_HOST` or `SENKO_HOST`, default: `127.0.0.1`) |
+
+> `SENKO_SERVER_PORT`/`SENKO_SERVER_HOST` affect only `senko serve`. `SENKO_PORT`/`SENKO_HOST` affect both `senko serve` and `senko web`.
 
 Provides a full JSON REST API under `/api/v1/...` for all task operations (CRUD, status transitions, dependencies, DoD, config, stats). Hooks fire the same way as CLI commands.
 
@@ -475,6 +477,8 @@ All settings follow the precedence: **CLI flag > environment variable > config.t
 |----------|-------------|---------|
 | `SENKO_PORT` | Port for `web` and `serve` commands | `3141` (web) / `3142` (serve) |
 | `SENKO_HOST` | Bind address (e.g. `0.0.0.0`, `192.168.1.5`) | `127.0.0.1` |
+| `SENKO_SERVER_PORT` | Port for `serve` command only | `3142` |
+| `SENKO_SERVER_HOST` | Bind address for `serve` command only | `127.0.0.1` |
 | `SENKO_PROJECT_ROOT` | Project root directory | Auto-detected |
 | `SENKO_CONFIG` | Path to config file | `.senko/config.toml` |
 
@@ -484,6 +488,8 @@ All settings follow the precedence: **CLI flag > environment variable > config.t
 |----------|-------------|---------|
 | `SENKO_MERGE_VIA` | `direct` or `pr` | `direct` |
 | `SENKO_AUTO_MERGE` | `true` or `false` | `true` |
+| `SENKO_BRANCH_MODE` | `worktree` or `branch` | `worktree` |
+| `SENKO_MERGE_STRATEGY` | `rebase` or `squash` | `rebase` |
 
 ### Connection
 

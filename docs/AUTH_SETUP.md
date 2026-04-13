@@ -231,7 +231,7 @@ export SENKO_OIDC_ISSUER_URL="https://cognito-idp.ap-northeast-1.amazonaws.com/a
 export SENKO_OIDC_CLIENT_ID="1a2b3c4d5e6f7g8h9i0j"
 ```
 
-> **Note**: You can configure both OIDC and a master API key simultaneously. This enables dual authentication — OIDC for human users and API keys for services.
+> **Note**: Only one authentication mode (API key, OIDC, or trusted headers) can be active at a time. To support both human users (OIDC) and services (API keys), configure OIDC as the primary mode — users and services can then authenticate using the API keys issued through the OIDC login flow.
 
 #### 3. Start the Server
 
@@ -454,7 +454,7 @@ The remote server validates the client's token directly. No special configuratio
 | `[server.auth.oidc]` | `client_id` | string | - | OIDC client ID | - | - | Required | - |
 | `[server.auth.oidc]` | `scopes` | array | `["openid", "profile"]` | OIDC scopes | - | - | Optional | - |
 | `[server.auth.oidc]` | `required_claims` | table | - | Required JWT claims (key-value pairs) | - | - | Optional | - |
-| `[server.auth.oidc.cli]` | `callback_ports` | array | `[]` (empty) | Local callback ports for CLI login | - | - | Optional | - |
+| `[server.auth.oidc]` | `callback_ports` | array | `[]` (empty) | Local callback ports for CLI login | - | - | Optional | - |
 | `[server.auth.oidc.cli]` | `browser` | bool | `true` | Auto-open browser | - | - | Optional | - |
 | `[server.auth.oidc.session]` | `ttl` | string | No expiration | Session lifetime (e.g., `"24h"`, `"30d"`) | - | Optional | Optional | - |
 | `[server.auth.oidc.session]` | `inactive_ttl` | string | No expiration | Inactivity timeout | - | Optional | Optional | - |
@@ -500,6 +500,8 @@ The remote server validates the client's token directly. No special configuratio
 | `SENKO_OIDC_CLIENT_ID` | `server.auth.oidc.client_id` | OIDC client ID |
 | `SENKO_AUTH_OIDC_SESSION_TTL` | `server.auth.oidc.session.ttl` | Session lifetime |
 | `SENKO_AUTH_OIDC_SESSION_INACTIVE_TTL` | `server.auth.oidc.session.inactive_ttl` | Inactivity timeout |
+| `SENKO_OIDC_USERNAME_CLAIM` | `server.auth.oidc.username_claim` | OIDC username claim |
+| `SENKO_OIDC_CALLBACK_PORTS` | `server.auth.oidc.callback_ports` | OIDC callback ports (comma-separated) |
 | `SENKO_AUTH_OIDC_SESSION_MAX_PER_USER` | `server.auth.oidc.session.max_per_user` | Max sessions per user |
 | `SENKO_SERVER_URL` | `cli.remote.url` | API server URL |
 | `SENKO_TOKEN` | `cli.remote.token` | API token (client-side) |
@@ -517,11 +519,13 @@ Configuration values are applied in the following order (highest priority first)
 
 1. CLI flags (`--config`, `--project-root`, etc.)
 2. Environment variables (`SENKO_*`)
-3. Project configuration (`.senko/config.toml`)
-4. User configuration (`~/.config/senko/config.toml`)
-5. Built-in defaults
+3. Local configuration (`.senko/config.local.toml` — git-ignored, per-user overrides)
+4. Project configuration (`.senko/config.toml`)
+5. User configuration (`~/.config/senko/config.toml`)
+6. Built-in defaults
 
 ## Related Documentation
 
+- [Configuration Reference](CONFIGURATION.md) — All config keys and environment variables
 - [CLI Reference](CLI.md) — Full command details
 - [README](../README.md) — Project overview and quickstart
