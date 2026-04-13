@@ -38,19 +38,36 @@ LIST_OUTPUT="$(run_lf user list)"
 USER_COUNT="$(echo "$LIST_OUTPUT" | jq 'length')"
 assert_eq "3" "$USER_COUNT" "list has 3 users"
 
-# 5. Delete user
-echo "[5] Delete user"
+# 5. Update user username
+echo "[5] Update user username"
+UPDATE_OUTPUT="$(run_lf user update "$USER_ID" --username "updateduser")"
+assert_json_field "$UPDATE_OUTPUT" '.username' "updateduser" "updated username"
+assert_json_field "$UPDATE_OUTPUT" '.display_name' "Test User" "display_name unchanged"
+
+# 6. Update user display_name
+echo "[6] Update user display_name"
+UPDATE_OUTPUT="$(run_lf user update "$USER_ID" --display-name "Updated Name")"
+assert_json_field "$UPDATE_OUTPUT" '.display_name' "Updated Name" "updated display_name"
+assert_json_field "$UPDATE_OUTPUT" '.username' "updateduser" "username unchanged"
+
+# 7. Update user text output
+echo "[7] Update user text output"
+TEXT_UPDATE="$(run_lf --output text user update "$USER_ID" --username "textuser")"
+assert_contains "$TEXT_UPDATE" "Updated user" "text update output"
+
+# 8. Delete user
+echo "[8] Delete user"
 run_lf user delete "$USER_ID" >/dev/null
 LIST_OUTPUT="$(run_lf user list)"
 REMAINING="$(echo "$LIST_OUTPUT" | jq -r --arg id "$USER_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
 assert_eq "0" "$REMAINING" "deleted user not in list"
 
-# 6. Delete non-existent user (error)
-echo "[6] Delete non-existent user"
+# 9. Delete non-existent user (error)
+echo "[9] Delete non-existent user"
 assert_exit_code 1 run_lf user delete 9999
 
-# 7. Text output
-echo "[7] Text output"
+# 10. Text output
+echo "[10] Text output"
 TEXT_LIST="$(run_lf --output text user list)"
 assert_contains "$TEXT_LIST" "default" "text list contains default user"
 

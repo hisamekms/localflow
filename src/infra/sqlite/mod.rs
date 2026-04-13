@@ -3742,4 +3742,71 @@ mod tests {
             .collect();
         assert!(tables.contains(&"metadata_fields".to_string()));
     }
+
+    #[test]
+    fn test_update_user() {
+        let (_tmp, conn) = setup();
+
+        let user = create_user(
+            &conn,
+            &CreateUserParams {
+                username: "alice".to_string(),
+                display_name: Some("Alice".to_string()),
+                email: Some("alice@example.com".to_string()),
+            },
+        )
+        .unwrap();
+        assert_eq!(user.username(), "alice");
+        assert_eq!(user.display_name(), Some("Alice"));
+
+        // Update username only
+        let updated = update_user(
+            &conn,
+            user.id(),
+            &UpdateUserParams {
+                username: Some("alice2".to_string()),
+                display_name: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.username(), "alice2");
+        assert_eq!(updated.display_name(), Some("Alice"));
+
+        // Update display_name only
+        let updated = update_user(
+            &conn,
+            user.id(),
+            &UpdateUserParams {
+                username: None,
+                display_name: Some(Some("Alice Updated".to_string())),
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.username(), "alice2");
+        assert_eq!(updated.display_name(), Some("Alice Updated"));
+
+        // Clear display_name
+        let updated = update_user(
+            &conn,
+            user.id(),
+            &UpdateUserParams {
+                username: None,
+                display_name: Some(None),
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.username(), "alice2");
+        assert_eq!(updated.display_name(), None);
+
+        // Update non-existent user
+        let err = update_user(
+            &conn,
+            9999,
+            &UpdateUserParams {
+                username: Some("ghost".to_string()),
+                display_name: None,
+            },
+        );
+        assert!(err.is_err());
+    }
 }

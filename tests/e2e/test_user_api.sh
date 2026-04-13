@@ -60,4 +60,35 @@ USER_API_KEY=$(echo "$API_KEY_RESP" | jq -r '.key')
 STATUS=$(status_with_token "$USER_API_KEY" -X POST "$BASE/users" -d '{"username":"forbidden-user"}')
 assert_eq "403" "$STATUS" "POST /users with user API key returns 403"
 
+echo ""
+echo "=== PUT /users/{id} self-update with user API key returns 200 ==="
+STATUS=$(status_with_token "$USER_API_KEY" -X PUT "$BASE/users/$USER_ID" -d '{"username":"updated-user"}')
+assert_eq "200" "$STATUS" "PUT /users/{id} self-update returns 200"
+
+echo ""
+echo "=== PUT /users/{id} verify updated username ==="
+UPDATED_USER=$(curl -sf -H "Authorization: Bearer $USER_API_KEY" "$BASE/users/$USER_ID")
+UPDATED_USERNAME=$(echo "$UPDATED_USER" | jq -r '.username')
+assert_eq "updated-user" "$UPDATED_USERNAME" "username was updated"
+
+echo ""
+echo "=== PUT /users/{id} update other user with user API key returns 403 ==="
+# Create another user
+OTHER_USER=$(curl -sf -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -X POST "$BASE/users" -d '{"username":"other-user"}')
+OTHER_USER_ID=$(echo "$OTHER_USER" | jq -r '.id')
+STATUS=$(status_with_token "$USER_API_KEY" -X PUT "$BASE/users/$OTHER_USER_ID" -d '{"username":"hacked"}')
+assert_eq "403" "$STATUS" "PUT /users/{other_id} with user API key returns 403"
+
+echo ""
+echo "=== PUT /users/{id} with master key can update any user ==="
+STATUS=$(status_with_token "$MASTER_KEY" -X PUT "$BASE/users/$OTHER_USER_ID" -d '{"username":"master-updated"}')
+assert_eq "200" "$STATUS" "PUT /users/{id} with master key returns 200"
+
+echo ""
+echo "=== PUT /users/{id} without auth returns 401 ==="
+STATUS=$(status_no_auth -X PUT "$BASE/users/$USER_ID" -d '{"username":"no-auth"}')
+assert_eq "401" "$STATUS" "PUT /users/{id} without auth returns 401"
+
 test_summary
