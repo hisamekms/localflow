@@ -7,6 +7,7 @@ use super::{
     Cli, DepsCommand, DodCommand, DryRunOperation, HooksCommand, MemberAction,
     MetadataFieldAction, OutputFormat, ProjectAction, UserAction, CONFIG_TEMPLATE, print_dry_run,
 };
+use crate::application::UserOperations;
 use crate::bootstrap::{
     create_backend, create_hook_test_service, create_project_service,
     create_task_operations, create_user_service,

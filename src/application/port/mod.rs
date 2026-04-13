@@ -8,6 +8,7 @@ pub mod project_query;
 pub mod task_operations;
 pub mod task_query;
 pub mod task_transition;
+pub mod user_operations;
 pub mod user_query;
 
 pub use auth::{AuthError, AuthProvider};
@@ -20,6 +21,7 @@ pub use project_query::ProjectQueryPort;
 pub use task_operations::{CompleteResult, PreviewResult, TaskOperations};
 pub use task_query::TaskQueryPort;
 pub use task_transition::TaskTransitionPort;
+pub use user_operations::UserOperations;
 pub use user_query::UserQueryPort;
 
 use crate::domain::{ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};

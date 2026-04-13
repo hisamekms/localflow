@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use async_trait::async_trait;
 
+use crate::application::port::user_operations::UserOperations;
 use crate::application::port::TaskBackend;
 use crate::domain::duration::parse_duration;
 use crate::domain::user::{
@@ -17,38 +19,43 @@ impl UserService {
     pub fn new(backend: Arc<dyn TaskBackend>) -> Self {
         Self { backend }
     }
+}
 
-    pub async fn list_users(&self) -> Result<Vec<User>> {
+#[async_trait]
+impl UserOperations for UserService {
+    // --- User management ---
+
+    async fn list_users(&self) -> Result<Vec<User>> {
         self.backend.list_users().await
     }
 
-    pub async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
+    async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
         self.backend.create_user(params).await
     }
 
-    pub async fn get_user(&self, id: i64) -> Result<User> {
+    async fn get_user(&self, id: i64) -> Result<User> {
         self.backend.get_user(id).await
     }
 
-    pub async fn get_user_by_username(&self, username: &str) -> Result<User> {
+    async fn get_user_by_username(&self, username: &str) -> Result<User> {
         self.backend.get_user_by_username(username).await
     }
 
-    pub async fn get_user_by_sub(&self, sub: &str) -> Result<User> {
+    async fn get_user_by_sub(&self, sub: &str) -> Result<User> {
         self.backend.get_user_by_sub(sub).await
     }
 
-    pub async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User> {
+    async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User> {
         self.backend.update_user(id, params).await
     }
 
-    pub async fn delete_user(&self, id: i64) -> Result<()> {
+    async fn delete_user(&self, id: i64) -> Result<()> {
         self.backend.delete_user(id).await
     }
 
     // --- API Key management ---
 
-    pub async fn create_api_key(
+    async fn create_api_key(
         &self,
         user_id: i64,
         name: &str,
@@ -58,18 +65,18 @@ impl UserService {
         self.backend.create_api_key(user_id, name, device_name, &new_key).await
     }
 
-    pub async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
+    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
         self.backend.list_api_keys(user_id).await
     }
 
-    pub async fn delete_api_key(&self, key_id: i64) -> Result<()> {
+    async fn delete_api_key(&self, key_id: i64) -> Result<()> {
         self.backend.delete_api_key(key_id).await
     }
 
     // --- Session management ---
 
     /// Get a user by sub, creating them if they don't exist.
-    pub async fn get_or_create_user(
+    async fn get_or_create_user(
         &self,
         sub: &str,
         username: &str,
@@ -92,7 +99,7 @@ impl UserService {
 
     /// Create a session token (API key) for a user, enforcing `max_per_user`.
     /// When the limit is reached, the oldest key is revoked to make room.
-    pub async fn create_session_token(
+    async fn create_session_token(
         &self,
         user_id: i64,
         device_name: Option<&str>,
@@ -116,7 +123,7 @@ impl UserService {
     }
 
     /// List active (non-expired) sessions for a user.
-    pub async fn list_active_sessions(
+    async fn list_active_sessions(
         &self,
         user_id: i64,
         session_config: &SessionConfig,
@@ -131,12 +138,12 @@ impl UserService {
     }
 
     /// Revoke a specific session, verifying ownership.
-    pub async fn revoke_session(&self, key_id: i64, user_id: i64) -> Result<()> {
+    async fn revoke_session(&self, key_id: i64, user_id: i64) -> Result<()> {
         self.backend.delete_api_key_for_user(key_id, user_id).await
     }
 
     /// Revoke all sessions for a user.
-    pub async fn revoke_all_sessions(&self, user_id: i64) -> Result<()> {
+    async fn revoke_all_sessions(&self, user_id: i64) -> Result<()> {
         self.backend.delete_all_api_keys_for_user(user_id).await
     }
 }
