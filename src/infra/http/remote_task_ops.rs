@@ -16,6 +16,7 @@ use crate::domain::task::{
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 
+use super::client::HttpClient;
 use super::{
     array_params_to_json, check_success, extract_error, read_json_or_error, update_params_to_json,
 };
@@ -26,9 +27,7 @@ use super::{
 /// server-side; this client only handles HTTP transport and optional
 /// client-side hook firing.
 pub struct RemoteTaskOperations {
-    base_url: String,
-    client: reqwest::Client,
-    api_key: Option<String>,
+    http: HttpClient,
     hooks: Arc<dyn HookExecutor>,
 }
 
@@ -72,27 +71,22 @@ impl RemoteTaskOperations {
         api_key: Option<String>,
         hooks: Arc<dyn HookExecutor>,
     ) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .expect("failed to build HTTP client");
         Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
-            client,
-            api_key,
+            http: HttpClient::new(base_url, api_key),
             hooks,
         }
     }
 
     fn project_url(&self, project_id: i64, path: &str) -> String {
-        format!("{}/api/v1/projects/{project_id}{path}", self.base_url)
+        self.http.project_url(project_id, path)
     }
 
     fn auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match &self.api_key {
-            Some(key) => builder.bearer_auth(key),
-            None => builder,
-        }
+        self.http.auth(builder)
+    }
+
+    fn client(&self) -> &reqwest::Client {
+        self.http.reqwest()
     }
 }
 
@@ -113,7 +107,7 @@ impl TaskOperations for RemoteTaskOperations {
     async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .post(self.project_url(project_id, "/tasks"))
                     .json(params),
             )
@@ -138,7 +132,7 @@ impl TaskOperations for RemoteTaskOperations {
 
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .post(self.project_url(project_id, &format!("/tasks/{id}/ready"))),
             )
             .send()
@@ -169,7 +163,7 @@ impl TaskOperations for RemoteTaskOperations {
 
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .post(self.project_url(project_id, &format!("/tasks/{id}/start")))
                     .json(&json!({ "session_id": session_id, "user_id": user_id, "metadata": metadata })),
             )
@@ -198,7 +192,7 @@ impl TaskOperations for RemoteTaskOperations {
     ) -> Result<Task> {
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .post(self.project_url(project_id, "/tasks/next"))
                     .json(&json!({ "session_id": session_id, "user_id": user_id, "metadata": metadata })),
             )
@@ -250,7 +244,7 @@ impl TaskOperations for RemoteTaskOperations {
         };
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .post(self.project_url(project_id, &format!("/tasks/{id}/complete")))
                     .json(&body),
             )
@@ -288,7 +282,7 @@ impl TaskOperations for RemoteTaskOperations {
         };
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .post(self.project_url(project_id, &format!("/tasks/{id}/cancel")))
                     .json(&body),
             )
@@ -319,7 +313,7 @@ impl TaskOperations for RemoteTaskOperations {
         let task = self.get_task(project_id, task_id).await?;
 
         let resp = self
-            .auth(self.client.get(self.project_url(
+            .auth(self.client().get(self.project_url(
                 project_id,
                 &format!("/tasks/{task_id}/preview-transition?target={target}"),
             )))
@@ -364,7 +358,7 @@ impl TaskOperations for RemoteTaskOperations {
     async fn preview_next(&self, project_id: i64) -> Result<PreviewResult> {
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .get(self.project_url(project_id, "/tasks/preview-next")),
             )
             .send()
@@ -400,7 +394,7 @@ impl TaskOperations for RemoteTaskOperations {
     async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .get(self.project_url(project_id, &format!("/tasks/{id}"))),
             )
             .send()
@@ -433,7 +427,7 @@ impl TaskOperations for RemoteTaskOperations {
             url = format!("{url}?{}", params.join("&"));
         }
 
-        let resp = self.auth(self.client.get(&url)).send().await?;
+        let resp = self.auth(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 
@@ -454,7 +448,7 @@ impl TaskOperations for RemoteTaskOperations {
     async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .get(self.project_url(project_id, "/stats")),
             )
             .send()
@@ -473,7 +467,7 @@ impl TaskOperations for RemoteTaskOperations {
         let body = update_params_to_json(params);
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .put(self.project_url(project_id, &format!("/tasks/{id}")))
                     .json(&body),
             )
@@ -491,7 +485,7 @@ impl TaskOperations for RemoteTaskOperations {
         let body = array_params_to_json(params);
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .put(self.project_url(project_id, &format!("/tasks/{id}")))
                     .json(&body),
             )
@@ -504,7 +498,7 @@ impl TaskOperations for RemoteTaskOperations {
     async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .delete(self.project_url(project_id, &format!("/tasks/{id}"))),
             )
             .send()
@@ -522,7 +516,7 @@ impl TaskOperations for RemoteTaskOperations {
     ) -> Result<Task> {
         let resp = self
             .auth(
-                self.client.post(self.project_url(
+                self.client().post(self.project_url(
                     project_id,
                     &format!("/tasks/{task_id}/dod/{index}/check"),
                 )),
@@ -540,7 +534,7 @@ impl TaskOperations for RemoteTaskOperations {
     ) -> Result<Task> {
         let resp = self
             .auth(
-                self.client.post(self.project_url(
+                self.client().post(self.project_url(
                     project_id,
                     &format!("/tasks/{task_id}/dod/{index}/uncheck"),
                 )),
@@ -560,7 +554,7 @@ impl TaskOperations for RemoteTaskOperations {
     ) -> Result<Task> {
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .post(self.project_url(project_id, &format!("/tasks/{task_id}/deps")))
                     .json(&json!({ "dep_id": dep_id })),
             )
@@ -577,7 +571,7 @@ impl TaskOperations for RemoteTaskOperations {
     ) -> Result<Task> {
         let resp = self
             .auth(
-                self.client.delete(self.project_url(
+                self.client().delete(self.project_url(
                     project_id,
                     &format!("/tasks/{task_id}/deps/{dep_id}"),
                 )),
@@ -595,7 +589,7 @@ impl TaskOperations for RemoteTaskOperations {
     ) -> Result<Task> {
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .put(self.project_url(project_id, &format!("/tasks/{task_id}/deps")))
                     .json(&json!({ "dep_ids": dep_ids })),
             )
@@ -611,7 +605,7 @@ impl TaskOperations for RemoteTaskOperations {
     ) -> Result<Vec<Task>> {
         let resp = self
             .auth(
-                self.client
+                self.client()
                     .get(self.project_url(project_id, &format!("/tasks/{task_id}/deps"))),
             )
             .send()
