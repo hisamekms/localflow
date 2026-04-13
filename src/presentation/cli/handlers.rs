@@ -38,7 +38,31 @@ fn build_cli_overrides(cli: &Cli) -> CliOverrides {
 fn load_config(cli: &Cli, root: &std::path::Path) -> Result<Config> {
     let mut config = crate::bootstrap::load_config(root, cli.config.as_deref())?;
     config.apply_cli(&build_cli_overrides(cli));
+    ensure_cli_token(&mut config);
     Ok(config)
+}
+
+/// If the config targets a remote server and no token is set yet,
+/// look up the cached auth_mode and load the appropriate token from the keychain.
+fn ensure_cli_token(config: &mut Config) {
+    let api_url = match config.cli.remote.url.as_deref() {
+        Some(url) if config.cli.remote.token.is_none() => url.to_string(),
+        _ => return,
+    };
+
+    let auth_mode = match super::auth_cache::get_cached_auth_mode(&api_url) {
+        Some(mode) => mode,
+        None => return,
+    };
+
+    let token = match auth_mode.as_str() {
+        "trusted_headers" => super::keychain::load_access_token(&api_url).ok(),
+        _ => super::keychain::load(&api_url).ok(),
+    };
+
+    if let Some(t) = token {
+        config.cli.remote.token = Some(t);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1586,6 +1610,9 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
     )
     .await?;
 
+    // Cache auth_mode so regular CLI commands know which token to load
+    super::auth_cache::cache_auth_mode(api_url, auth_mode)?;
+
     match result {
         super::oidc_login::LoginResult::Oidc { key_prefix, expires_at } => {
             match cli.output {
@@ -1641,7 +1668,13 @@ fn require_api_url_and_token(cli: &Cli) -> Result<(String, String)> {
         .as_deref()
         .context("cli.remote.url is not configured. Set it in config to point to the senko API server.")?
         .to_string();
+    // ensure_cli_token (called by load_config) may have already resolved the token
+    if let Some(token) = config.cli.remote.token {
+        return Ok((api_url, token));
+    }
+    // Fallback: try API key, then access token
     let token = super::keychain::load(&api_url)
+        .or_else(|_| super::keychain::load_access_token(&api_url))
         .context("Not logged in. Run `senko auth login` first.")?;
     Ok((api_url, token))
 }
@@ -1802,6 +1835,8 @@ pub async fn cmd_auth_logout(cli: &Cli) -> Result<()> {
     super::keychain::delete(&api_url)?;
     // Also delete access token if present (ignore error if not found)
     let _ = super::keychain::delete_access_token(&api_url);
+    // Delete cached auth_mode
+    let _ = super::auth_cache::delete_cached_auth_mode(&api_url);
 
     match cli.output {
         OutputFormat::Json => {

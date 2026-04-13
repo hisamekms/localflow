@@ -1,3 +1,4 @@
+mod auth_cache;
 pub mod handlers;
 pub mod keychain;
 mod oidc_login;
