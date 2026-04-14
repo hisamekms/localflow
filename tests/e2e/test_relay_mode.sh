@@ -151,7 +151,7 @@ echo "[2.5] Next task (auto-select)"
 TASK4=$(run_relay add --title "Next Candidate" --priority p0)
 TASK4_ID=$(echo "$TASK4" | jq -r '.id')
 run_relay ready "$TASK4_ID" >/dev/null
-NEXT=$(run_relay next)
+NEXT=$(run_relay next --include-unassigned)
 assert_json_field "$NEXT" '.status' "in_progress" "next: auto-starts task"
 assert_json_field "$NEXT" '.title' "Next Candidate" "next: picks correct task"
 
@@ -249,7 +249,7 @@ echo "[7.2] Ready task"
 run_relay ready "$META_TASK_ID" >/dev/null
 
 echo "[7.3] Start via next --metadata"
-NEXT_META=$(run_relay next --metadata '{"sprint":"v1","points":5}')
+NEXT_META=$(run_relay next --include-unassigned --metadata '{"sprint":"v1","points":5}')
 assert_json_field "$NEXT_META" '.status' "in_progress" "meta: next starts task"
 assert_json_field "$NEXT_META" '.metadata.sprint' "v1" "meta: metadata.sprint set via next"
 assert_json_field "$NEXT_META" '.metadata.points' "5" "meta: metadata.points set via next"

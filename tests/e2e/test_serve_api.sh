@@ -171,7 +171,7 @@ TASK5=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Next Candidate","priority"
 TASK5_ID=$(echo "$TASK5" | jq -r '.id')
 api_json -X POST "$PBASE/tasks/$TASK5_ID/ready" -d '{}' >/dev/null
 
-NEXT=$(api_json -X POST "$PBASE/tasks/next" -d '{}')
+NEXT=$(api_json -X POST "$PBASE/tasks/next" -d '{"include_unassigned":true}')
 assert_json_field "$NEXT" '.status' "in_progress" "next auto-starts task"
 assert_json_field "$NEXT" '.title' "Next Candidate" "next picks highest priority"
 
@@ -311,7 +311,7 @@ api_json -X POST "$PBASE/tasks/$TASK7_ID/cancel" -d '{"reason":"cleanup"}' >/dev
 api_json -X POST "$PBASE/tasks/$TASK8_ID/cancel" -d '{"reason":"cleanup"}' >/dev/null 2>&1 || true
 api_json -X POST "$PBASE/tasks/$PT_TASK_ID/cancel" -d '{"reason":"cleanup"}' >/dev/null 2>&1 || true
 api_json -X POST "$PBASE/tasks/$PT_DOD_ID/cancel" -d '{"reason":"cleanup"}' >/dev/null 2>&1 || true
-STATUS_NEXT_EMPTY=$(api_status -X POST "$PBASE/tasks/next" -d '{}')
+STATUS_NEXT_EMPTY=$(api_status -X POST "$PBASE/tasks/next" -d '{"include_unassigned":true}')
 assert_eq "404" "$STATUS_NEXT_EMPTY" "next with no eligible task returns 404"
 
 echo ""

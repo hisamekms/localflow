@@ -110,7 +110,7 @@ echo "[15] Next task via HTTP backend"
 TASK5=$(run_http add --title "Next Candidate" --priority p0)
 TASK5_ID=$(echo "$TASK5" | jq -r '.id')
 run_http ready "$TASK5_ID" >/dev/null
-NEXT=$(run_http next)
+NEXT=$(run_http next --include-unassigned)
 assert_json_field "$NEXT" '.status' "in_progress" "next: auto-starts task"
 assert_json_field "$NEXT" '.title' "Next Candidate" "next: picks correct task"
 

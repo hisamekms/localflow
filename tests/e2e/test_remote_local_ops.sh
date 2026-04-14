@@ -121,7 +121,7 @@ echo "[1.5] Next task (auto-select)"
 T6=$(run_lf add --title "Local next" --priority p0)
 T6_ID=$(echo "$T6" | jq -r '.id')
 run_lf ready "$T6_ID" >/dev/null
-NEXT=$(run_lf next)
+NEXT=$(run_lf next --include-unassigned)
 assert_json_field "$NEXT" '.status' "in_progress" "local: next auto-starts"
 assert_json_field "$NEXT" '.title' "Local next" "local: next picks correct task"
 run_lf complete "$T6_ID" >/dev/null
@@ -198,7 +198,7 @@ echo "[2.5] Next task via HTTP"
 T6=$(run_http add --title "Remote next" --priority p0)
 T6_ID=$(echo "$T6" | jq -r '.id')
 run_http ready "$T6_ID" >/dev/null
-NEXT=$(run_http next)
+NEXT=$(run_http next --include-unassigned)
 assert_json_field "$NEXT" '.status' "in_progress" "remote: next auto-starts"
 assert_json_field "$NEXT" '.title' "Remote next" "remote: next picks correct task"
 
