@@ -235,6 +235,40 @@ assert_eq "1" "$(echo "$MF_LIST2" | jq 'length')" "metadata-field list: 1 field 
 run_relay project metadata-field remove --name points >/dev/null
 
 # ========================================
+# Section 7: Metadata happy path via relay (regression)
+# ========================================
+echo "--- Section 7: Metadata happy path via relay ---"
+
+echo "[7.1] Create task with DoD"
+META_TASK=$(run_relay add --title "Metadata Relay Task" \
+  --definition-of-done "Write tests" --definition-of-done "Review code")
+META_TASK_ID=$(echo "$META_TASK" | jq -r '.id')
+assert_json_field "$META_TASK" '.status' "draft" "meta: created as draft"
+
+echo "[7.2] Ready task"
+run_relay ready "$META_TASK_ID" >/dev/null
+
+echo "[7.3] Start via next --metadata"
+NEXT_META=$(run_relay next --metadata '{"sprint":"v1","points":5}')
+assert_json_field "$NEXT_META" '.status' "in_progress" "meta: next starts task"
+assert_json_field "$NEXT_META" '.metadata.sprint' "v1" "meta: metadata.sprint set via next"
+assert_json_field "$NEXT_META" '.metadata.points' "5" "meta: metadata.points set via next"
+
+echo "[7.4] Verify metadata persisted (get)"
+META_GOT=$(run_relay get "$META_TASK_ID")
+assert_json_field "$META_GOT" '.metadata.sprint' "v1" "meta: metadata.sprint persisted"
+assert_json_field "$META_GOT" '.metadata.points' "5" "meta: metadata.points persisted"
+
+echo "[7.5] Check DoD items"
+run_relay dod check "$META_TASK_ID" 1 >/dev/null
+run_relay dod check "$META_TASK_ID" 2 >/dev/null
+
+echo "[7.6] Complete task"
+META_COMPLETED=$(run_relay complete "$META_TASK_ID")
+assert_json_field "$META_COMPLETED" '.status' "completed" "meta: task completed"
+assert_json_field "$META_COMPLETED" '.metadata.sprint' "v1" "meta: metadata survives complete"
+
+# ========================================
 # Section 6: Hook firing via relay (DoD #6)
 # ========================================
 echo "--- Section 6: Hook firing via relay ---"
