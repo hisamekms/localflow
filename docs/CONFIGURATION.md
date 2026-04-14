@@ -128,6 +128,13 @@ Used for deployments behind a reverse proxy (e.g., API Gateway) that injects val
 
 > **Note**: Only one authentication mode (API key, OIDC, or trusted headers) can be active at a time.
 
+### `[server.relay]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `url` | string | `null` | Upstream relay server URL. When set, the server operates in relay mode and forwards requests to this URL. |
+| `token` | string | `null` | API token for authentication with the upstream relay server. |
+
 ### `[cli]`
 
 | Key | Type | Default | Description |
@@ -215,13 +222,15 @@ Each hook entry has:
 
 | Variable | Config Key | Description |
 |----------|-----------|-------------|
-| `SENKO_SERVER_URL` | `cli.remote.url` | Remote server URL |
-| `SENKO_TOKEN` | `cli.remote.token` | API token |
+| `SENKO_CLI_REMOTE_URL` | `cli.remote.url` | Remote server URL |
+| `SENKO_CLI_REMOTE_TOKEN` | `cli.remote.token` | API token |
 
 ### Server
 
 | Variable | Config Key | Description |
 |----------|-----------|-------------|
+| `SENKO_SERVER_RELAY_URL` | `server.relay.url` | Upstream relay server URL |
+| `SENKO_SERVER_RELAY_TOKEN` | `server.relay.token` | API token for upstream relay server |
 | `SENKO_SERVER_HOST` | `server.host` | Bind address for `senko serve` only |
 | `SENKO_SERVER_PORT` | `server.port` | Port for `senko serve` only |
 | `SENKO_HOST` | `web.host` + `server.host` | Bind address for both `senko web` and `senko serve` |

@@ -437,8 +437,8 @@ pub async fn serve_proxy(
 ) -> Result<()> {
     bootstrap::init_tracing(&config.log);
 
-    let remote_url = config.cli.remote.url.as_ref().expect("cli.remote.url required for proxy mode");
-    let api_key = config.cli.remote.token.clone();
+    let remote_url = config.server.relay.url.as_ref().expect("server.relay.url required for proxy mode");
+    let api_key = config.server.relay.token.clone();
     let backend_info = bootstrap::resolve_backend_info(config, &project_root);
     let hook_executor = bootstrap::create_api_hook_executor(config.clone(), backend_info, hook_data);
 

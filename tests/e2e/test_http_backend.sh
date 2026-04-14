@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E2E tests for remote CLI mode: CLI commands via SENKO_SERVER_URL (remote server)
+# E2E tests for remote CLI mode: CLI commands via SENKO_CLI_REMOTE_URL (remote server)
 source "$(dirname "$0")/helpers.sh"
 
 setup_test_env
@@ -22,7 +22,7 @@ TEST_TOKEN=$(create_test_user_key "$API_URL" "$MASTER_KEY")
 
 # Helper: run senko CLI in HTTP backend mode
 run_http() {
-  SENKO_SERVER_URL="$API_URL" SENKO_TOKEN="$TEST_TOKEN" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
+  SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
 echo "--- Test: HTTP Backend Mode ---"

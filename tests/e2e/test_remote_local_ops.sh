@@ -34,7 +34,7 @@ cleanup_all() {
 trap cleanup_all EXIT
 
 run_http() {
-  SENKO_SERVER_URL="$API_URL" SENKO_TOKEN="$TEST_TOKEN" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
+  SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
 clear_hook_log() {

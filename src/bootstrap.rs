@@ -82,6 +82,9 @@ pub fn resolve_backend_info(config: &Config, project_root: &Path) -> BackendInfo
     if let Some(ref url) = config.cli.remote.url {
         return BackendInfo::Http { api_url: url.clone() };
     }
+    if let Some(ref url) = config.server.relay.url {
+        return BackendInfo::Http { api_url: url.clone() };
+    }
     #[cfg(feature = "dynamodb")]
     if config.backend.dynamodb.as_ref().and_then(|d| d.table_name.as_ref()).is_some() {
         return BackendInfo::Dynamodb;
@@ -285,6 +288,10 @@ pub fn create_remote_hook_data(config: &Config) -> Arc<dyn HookDataSource> {
     let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
     Arc::new(RemoteHookDataSource::new(url, api_key))
+}
+
+pub fn create_hook_data_from(url: &str, token: Option<String>) -> Arc<dyn HookDataSource> {
+    Arc::new(RemoteHookDataSource::new(url, token))
 }
 
 pub fn create_remote_metadata_field_operations(config: &Config) -> RemoteMetadataFieldOperations {

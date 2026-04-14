@@ -49,14 +49,14 @@ echo "{\"${API_URL}\": \"trusted_headers\"}" > "$XDG_CACHE_HOME/senko/auth_mode.
 
 # [1] CLI project list should succeed (not 401) using cached auth_mode + keychain token
 echo "[1] project list succeeds with trusted_headers cached auth"
-OUTPUT=$(SENKO_SERVER_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
+OUTPUT=$(SENKO_CLI_REMOTE_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
   --output json project list 2>&1)
 EXIT_CODE=$?
 assert_eq "0" "$EXIT_CODE" "project list exits 0"
 
 # [2] CLI user list should succeed
 echo "[2] user list succeeds with trusted_headers cached auth"
-OUTPUT=$(SENKO_SERVER_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
+OUTPUT=$(SENKO_CLI_REMOTE_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
   --output json user list 2>&1)
 EXIT_CODE=$?
 assert_eq "0" "$EXIT_CODE" "user list exits 0"
@@ -64,7 +64,7 @@ assert_eq "0" "$EXIT_CODE" "user list exits 0"
 # [3] Without the cache, the same commands should fail (no token sent)
 echo "[3] project list fails without auth_mode cache"
 rm -f "$XDG_CACHE_HOME/senko/auth_mode.json"
-OUTPUT=$(SENKO_SERVER_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
+OUTPUT=$(SENKO_CLI_REMOTE_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
   --output json project list 2>&1 || true)
 # Without the cache, ensure_cli_token won't load the token → server returns 401
 assert_contains "$OUTPUT" "401\|Unauthorized\|unauthorized\|missing" \

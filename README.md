@@ -207,9 +207,9 @@ curl -s -X POST http://localhost:3142/api/v1/users/1/api-keys \
   -d '{"name": "default"}' | jq .
 
 # 5. Use the returned API key for subsequent requests
-export SENKO_TOKEN="<key from step 4>"
+export SENKO_CLI_REMOTE_TOKEN="<key from step 4>"
 curl -s http://localhost:3142/api/v1/projects \
-  -H "Authorization: Bearer $SENKO_TOKEN" | jq .
+  -H "Authorization: Bearer $SENKO_CLI_REMOTE_TOKEN" | jq .
 ```
 
 ## Authentication

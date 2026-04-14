@@ -1698,17 +1698,17 @@ on_task_added = "echo added"
     }
 
     #[test]
-    fn env_override_server_url() {
+    fn env_override_cli_remote_url() {
         let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
-            let orig = std::env::var("SENKO_SERVER_URL").ok();
-            std::env::set_var("SENKO_SERVER_URL", "http://remote:3142");
+            let orig = std::env::var("SENKO_CLI_REMOTE_URL").ok();
+            std::env::set_var("SENKO_CLI_REMOTE_URL", "http://remote:3142");
             let mut config = Config::default();
             config.apply_env();
             assert_eq!(config.cli.remote.url, Some("http://remote:3142".to_string()));
             match orig {
-                Some(v) => std::env::set_var("SENKO_SERVER_URL", v),
-                None => std::env::remove_var("SENKO_SERVER_URL"),
+                Some(v) => std::env::set_var("SENKO_CLI_REMOTE_URL", v),
+                None => std::env::remove_var("SENKO_CLI_REMOTE_URL"),
             }
         }
     }
@@ -1740,17 +1740,17 @@ on_task_added = "echo added"
     fn env_override_empty_values_ignored() {
         let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
-            let orig_url = std::env::var("SENKO_SERVER_URL").ok();
+            let orig_url = std::env::var("SENKO_CLI_REMOTE_URL").ok();
             let orig_hook = std::env::var("SENKO_HOOK_ON_TASK_ADDED").ok();
-            std::env::set_var("SENKO_SERVER_URL", "");
+            std::env::set_var("SENKO_CLI_REMOTE_URL", "");
             std::env::set_var("SENKO_HOOK_ON_TASK_ADDED", "");
             let mut config = Config::default();
             config.apply_env();
             assert_eq!(config.cli.remote.url, None);
             assert!(config.hooks.on_task_added.is_empty());
             match orig_url {
-                Some(v) => std::env::set_var("SENKO_SERVER_URL", v),
-                None => std::env::remove_var("SENKO_SERVER_URL"),
+                Some(v) => std::env::set_var("SENKO_CLI_REMOTE_URL", v),
+                None => std::env::remove_var("SENKO_CLI_REMOTE_URL"),
             }
             match orig_hook {
                 Some(v) => std::env::set_var("SENKO_HOOK_ON_TASK_ADDED", v),

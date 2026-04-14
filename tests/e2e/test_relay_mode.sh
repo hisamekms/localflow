@@ -28,7 +28,7 @@ start_servers() {
   wait_for "upstream server ready" 10 "curl -sf $UPSTREAM_URL/api/v1/health >/dev/null"
 
   # Start relay server (HTTP backend forwarding to upstream)
-  SENKO_SERVER_URL="$UPSTREAM_URL" \
+  SENKO_SERVER_RELAY_URL="$UPSTREAM_URL" \
     "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
     serve --port "$RELAY_PORT" >/dev/null 2>&1 &
   RELAY_PID=$!
@@ -60,7 +60,7 @@ trap cleanup_all EXIT
 
 # Helper: run senko CLI through the relay server
 run_relay() {
-  SENKO_SERVER_URL="$RELAY_URL" SENKO_TOKEN="$TEST_TOKEN" \
+  SENKO_CLI_REMOTE_URL="$RELAY_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" \
     "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 

@@ -495,8 +495,10 @@ All settings follow the precedence: **CLI flag > environment variable > config.t
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SENKO_SERVER_URL` | API server URL (enables HTTP backend instead of SQLite) | _(unset = SQLite)_ |
-| `SENKO_TOKEN` | API token for server authentication | _(unset)_ |
+| `SENKO_CLI_REMOTE_URL` | API server URL (enables HTTP backend instead of SQLite) | _(unset = SQLite)_ |
+| `SENKO_CLI_REMOTE_TOKEN` | API token for server authentication | _(unset)_ |
+| `SENKO_SERVER_RELAY_URL` | Upstream server URL for relay mode | _(unset)_ |
+| `SENKO_SERVER_RELAY_TOKEN` | Authentication token for relay upstream | _(unset)_ |
 
 ### Log
 

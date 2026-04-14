@@ -156,8 +156,8 @@ token = "api-key-from-administrator"
 Using environment variables:
 
 ```bash
-export SENKO_SERVER_URL="http://senko-server:3142"
-export SENKO_TOKEN="api-key-from-administrator"
+export SENKO_CLI_REMOTE_URL="http://senko-server:3142"
+export SENKO_CLI_REMOTE_TOKEN="api-key-from-administrator"
 ```
 
 #### 2. Verify Connection
@@ -171,8 +171,8 @@ senko --output text list
 ```yaml
 # GitHub Actions example
 env:
-  SENKO_SERVER_URL: ${{ secrets.SENKO_SERVER_URL }}
-  SENKO_TOKEN: ${{ secrets.SENKO_TOKEN }}
+  SENKO_CLI_REMOTE_URL: ${{ secrets.SENKO_CLI_REMOTE_URL }}
+  SENKO_CLI_REMOTE_TOKEN: ${{ secrets.SENKO_CLI_REMOTE_TOKEN }}
 
 steps:
   - name: List tasks
@@ -293,12 +293,12 @@ In environments where the OS keychain is not available (e.g., containers), use `
 
 ```bash
 # Retrieve token on the host machine
-export SENKO_TOKEN=$(senko auth token)
+export SENKO_CLI_REMOTE_TOKEN=$(senko auth token)
 
 # Pass to container
 docker run --rm \
-  -e SENKO_SERVER_URL="http://senko-server:3142" \
-  -e SENKO_TOKEN="$SENKO_TOKEN" \
+  -e SENKO_CLI_REMOTE_URL="http://senko-server:3142" \
+  -e SENKO_CLI_REMOTE_TOKEN="$SENKO_CLI_REMOTE_TOKEN" \
   senko list
 ```
 
@@ -328,15 +328,15 @@ Run a senko instance as a relay that forwards requests to a remote senko server.
 
 ```
 CLI ──→ Relay Server (senko serve) ──→ Remote Server
-         [cli.remote.url configured]    [auth enabled]
+         [server.relay.url configured]  [auth enabled]
 ```
 
-When `cli.remote.url` is configured and `senko serve` is run, the instance operates in relay mode:
+When `server.relay.url` is configured and `senko serve` is run, the instance operates in relay mode:
 
 - Local authentication is skipped (delegated to the upstream server)
 - The relay captures the client's Bearer token from the `Authorization` header
 - Requests are forwarded to the remote server with either:
-  - The relay's own `cli.remote.token` (if configured) — takes priority
+  - The relay's own `server.relay.token` (if configured) — takes priority
   - The client's original token (passthrough)
 
 ### Pattern A: Token Injection (AI Sandbox)
@@ -348,7 +348,7 @@ The relay injects its own token into forwarded requests. Clients do not need any
 `.senko/config.toml` on the relay:
 
 ```toml
-[cli.remote]
+[server.relay]
 url = "http://remote-senko:3142"
 token = "relay-api-key-issued-by-remote-server"
 ```
@@ -356,8 +356,8 @@ token = "relay-api-key-issued-by-remote-server"
 Using environment variables:
 
 ```bash
-export SENKO_SERVER_URL="http://remote-senko:3142"
-export SENKO_TOKEN="relay-api-key-issued-by-remote-server"
+export SENKO_SERVER_RELAY_URL="http://remote-senko:3142"
+export SENKO_SERVER_RELAY_TOKEN="relay-api-key-issued-by-remote-server"
 ```
 
 Start the relay:
@@ -378,7 +378,7 @@ url = "http://relay-server:3142"
 Using environment variables:
 
 ```bash
-export SENKO_SERVER_URL="http://relay-server:3142"
+export SENKO_CLI_REMOTE_URL="http://relay-server:3142"
 ```
 
 #### Verify
@@ -396,14 +396,14 @@ The relay forwards the client's original token to the remote server. Each client
 `.senko/config.toml` on the relay (no `token` — only `url`):
 
 ```toml
-[cli.remote]
+[server.relay]
 url = "http://remote-senko:3142"
 ```
 
 Using environment variables:
 
 ```bash
-export SENKO_SERVER_URL="http://remote-senko:3142"
+export SENKO_SERVER_RELAY_URL="http://remote-senko:3142"
 ```
 
 Start the relay:
@@ -425,8 +425,8 @@ token = "client-own-api-key"
 Using environment variables:
 
 ```bash
-export SENKO_SERVER_URL="http://relay-server:3142"
-export SENKO_TOKEN="client-own-api-key"
+export SENKO_CLI_REMOTE_URL="http://relay-server:3142"
+export SENKO_CLI_REMOTE_TOKEN="client-own-api-key"
 ```
 
 #### Remote Server
@@ -439,7 +439,7 @@ The remote server validates the client's token directly. No special configuratio
 |-|----------------------------|-------------------------------|
 | **Use case** | AI sandbox, shared service account | Per-user auth via relay |
 | **Client token** | Not required | Required (API key or OIDC token) |
-| **Relay config** | `cli.remote.url` + `cli.remote.token` | `cli.remote.url` only |
+| **Relay config** | `server.relay.url` + `server.relay.token` | `server.relay.url` only |
 | **Remote validates** | Relay's token | Client's original token |
 
 ## config.toml Reference
@@ -468,6 +468,8 @@ The remote server validates the client's token directly. No special configuratio
 |---------|-----|------|---------|-------------|
 | `[cli.remote]` | `url` | string | - | API server URL (enables HTTP backend) |
 | `[cli.remote]` | `token` | string | - | API token (client-side) |
+| `[server.relay]` | `url` | string | - | Upstream remote server URL (enables relay mode) |
+| `[server.relay]` | `token` | string | - | Upstream API token (injected into forwarded requests) |
 | `[server]` | `host` | string | `"127.0.0.1"` | Server bind address |
 | `[server]` | `port` | integer | `3142` | Server listen port |
 | `[web]` | `host` | string | `"127.0.0.1"` | Web UI bind address |
@@ -476,7 +478,7 @@ The remote server validates the client's token directly. No special configuratio
 | `[user]` | `name` | string | `"default"` | User name |
 | `[backend.sqlite]` | `db_path` | string | `.senko/senko.db` | SQLite database path |
 
-> **Note**: In relay mode, the `[cli.remote]` section on the relay server specifies the upstream remote server. `cli.remote.url` enables relay mode when `senko serve` is run; `cli.remote.token` (if set) is injected into forwarded requests instead of passing through the client's token.
+> **Note**: In relay mode, the `[server.relay]` section on the relay server specifies the upstream remote server. `server.relay.url` enables relay mode when `senko serve` is run; `server.relay.token` (if set) is injected into forwarded requests instead of passing through the client's token.
 
 ### API Endpoints
 
@@ -503,8 +505,10 @@ The remote server validates the client's token directly. No special configuratio
 | `SENKO_OIDC_USERNAME_CLAIM` | `server.auth.oidc.username_claim` | OIDC username claim |
 | `SENKO_OIDC_CALLBACK_PORTS` | `server.auth.oidc.callback_ports` | OIDC callback ports (comma-separated) |
 | `SENKO_AUTH_OIDC_SESSION_MAX_PER_USER` | `server.auth.oidc.session.max_per_user` | Max sessions per user |
-| `SENKO_SERVER_URL` | `cli.remote.url` | API server URL |
-| `SENKO_TOKEN` | `cli.remote.token` | API token (client-side) |
+| `SENKO_CLI_REMOTE_URL` | `cli.remote.url` | API server URL |
+| `SENKO_CLI_REMOTE_TOKEN` | `cli.remote.token` | API token (client-side) |
+| `SENKO_SERVER_RELAY_URL` | `server.relay.url` | Upstream remote server URL (relay mode) |
+| `SENKO_SERVER_RELAY_TOKEN` | `server.relay.token` | Upstream API token (relay mode) |
 | `SENKO_SERVER_HOST` | `server.host` | Server bind address |
 | `SENKO_SERVER_PORT` | `server.port` | Server port |
 | `SENKO_HOST` | `web.host` | Web UI bind address |

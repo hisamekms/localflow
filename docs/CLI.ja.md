@@ -434,8 +434,10 @@ command = "curl https://example.com/done"
 
 | 変数 | 説明 | デフォルト |
 |------|------|----------|
-| `SENKO_SERVER_URL` | APIサーバーURL（設定するとSQLiteの代わりにHTTPバックエンドを使用） | _（未設定 = SQLite）_ |
-| `SENKO_TOKEN` | サーバー認証用APIトークン | _（未設定）_ |
+| `SENKO_CLI_REMOTE_URL` | APIサーバーURL（設定するとSQLiteの代わりにHTTPバックエンドを使用） | _（未設定 = SQLite）_ |
+| `SENKO_CLI_REMOTE_TOKEN` | サーバー認証用APIトークン | _（未設定）_ |
+| `SENKO_SERVER_RELAY_URL` | リレーモードの上流サーバーURL | _（未設定）_ |
+| `SENKO_SERVER_RELAY_TOKEN` | リレー上流への認証トークン | _（未設定）_ |
 
 ### ログ
 

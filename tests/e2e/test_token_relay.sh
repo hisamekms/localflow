@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E2E tests for SENKO_TOKEN relay: forwarding, auth failures, and token leak prevention
+# E2E tests for SENKO_CLI_REMOTE_TOKEN relay: forwarding, auth failures, and token leak prevention
 source "$(dirname "$0")/helpers.sh"
 
 setup_test_env
@@ -22,47 +22,47 @@ wait_for "API server ready" 10 "curl -sf $API_URL/api/v1/health >/dev/null"
 
 TEST_TOKEN=$(create_test_user_key "$API_URL" "$MASTER_KEY")
 
-# Helper: run CLI with SENKO_TOKEN
+# Helper: run CLI with SENKO_CLI_REMOTE_TOKEN
 run_with_token() {
-  SENKO_SERVER_URL="$API_URL" SENKO_TOKEN="$TEST_TOKEN" \
+  SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" \
     "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
-# Helper: run CLI without SENKO_TOKEN
+# Helper: run CLI without SENKO_CLI_REMOTE_TOKEN
 run_without_token() {
-  SENKO_SERVER_URL="$API_URL" \
+  SENKO_CLI_REMOTE_URL="$API_URL" \
     "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
-echo "=== Section 1: SENKO_TOKEN forwarded to upstream ==="
+echo "=== Section 1: SENKO_CLI_REMOTE_TOKEN forwarded to upstream ==="
 
-echo "[1] list with SENKO_TOKEN succeeds"
+echo "[1] list with SENKO_CLI_REMOTE_TOKEN succeeds"
 LIST=$(run_with_token list)
 assert_eq "0" "$(echo "$LIST" | jq 'length')" "list: empty initially"
 
-echo "[2] add with SENKO_TOKEN succeeds"
+echo "[2] add with SENKO_CLI_REMOTE_TOKEN succeeds"
 TASK=$(run_with_token add --title "Token Relay Task")
 TASK_ID=$(echo "$TASK" | jq -r '.id')
 assert_json_field "$TASK" '.title' "Token Relay Task" "add: title"
 
-echo "[3] get with SENKO_TOKEN succeeds"
+echo "[3] get with SENKO_CLI_REMOTE_TOKEN succeeds"
 GOT=$(run_with_token get "$TASK_ID")
 assert_json_field "$GOT" '.title' "Token Relay Task" "get: title matches"
 
 echo ""
-echo "=== Section 2: Without SENKO_TOKEN, operations fail ==="
+echo "=== Section 2: Without SENKO_CLI_REMOTE_TOKEN, operations fail ==="
 
-echo "[4] list without SENKO_TOKEN fails"
+echo "[4] list without SENKO_CLI_REMOTE_TOKEN fails"
 OUTPUT=$(run_without_token list 2>&1 || true)
 assert_contains "$OUTPUT" "authentication required" "list without token: auth error"
 
-echo "[5] empty SENKO_TOKEN fails"
-OUTPUT=$(SENKO_SERVER_URL="$API_URL" SENKO_TOKEN="" \
+echo "[5] empty SENKO_CLI_REMOTE_TOKEN fails"
+OUTPUT=$(SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="" \
   "$SENKO" --project-root "$TEST_PROJECT_ROOT" list 2>&1 || true)
 assert_contains "$OUTPUT" "authentication required" "list with empty token: auth error"
 
-echo "[6] invalid SENKO_TOKEN fails"
-OUTPUT=$(SENKO_SERVER_URL="$API_URL" SENKO_TOKEN="invalid-token-xxxxx" \
+echo "[6] invalid SENKO_CLI_REMOTE_TOKEN fails"
+OUTPUT=$(SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="invalid-token-xxxxx" \
   "$SENKO" --project-root "$TEST_PROJECT_ROOT" list 2>&1 || true)
 assert_contains "$OUTPUT" "authentication required" "list with invalid token: auth error"
 

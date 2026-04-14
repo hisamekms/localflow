@@ -156,8 +156,10 @@ Higher-priority sources override lower ones. The `senko config` output shows the
 | `SENKO_AUTO_MERGE` | `workflow.auto_merge` | |
 | `SENKO_BRANCH_MODE` | `workflow.branch_mode` | |
 | `SENKO_MERGE_STRATEGY` | `workflow.merge_strategy` | |
-| `SENKO_SERVER_URL` | `cli.remote.url` | |
-| `SENKO_TOKEN` | `cli.remote.token` | |
+| `SENKO_CLI_REMOTE_URL` | `cli.remote.url` | |
+| `SENKO_CLI_REMOTE_TOKEN` | `cli.remote.token` | |
+| `SENKO_SERVER_RELAY_URL` | `server.relay.url` | |
+| `SENKO_SERVER_RELAY_TOKEN` | `server.relay.token` | |
 | `SENKO_HOOKS_ENABLED` | `hooks.enabled` | |
 | `SENKO_HOOK_ON_TASK_ADDED` | `hooks.on_task_added` | Shell command |
 | `SENKO_HOOK_ON_TASK_READY` | `hooks.on_task_ready` | Shell command |

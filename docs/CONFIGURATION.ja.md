@@ -128,6 +128,13 @@ senko config --init
 
 > **補足**: 認証モード（APIキー、OIDC、trusted headers）は同時に1つのみ有効にできます。
 
+### `[server.relay]`
+
+| キー | 型 | デフォルト | 説明 |
+|------|------|----------|------|
+| `url` | string | `null` | 上流リレーサーバーURL。設定するとサーバーはリレーモードで動作し、このURLにリクエストを転送。 |
+| `token` | string | `null` | 上流リレーサーバー認証用APIトークン。 |
+
 ### `[cli]`
 
 | キー | 型 | デフォルト | 説明 |
@@ -215,13 +222,15 @@ requires_env = ["WEBHOOK_URL"]
 
 | 変数 | 対応する設定キー | 説明 |
 |------|-----------------|------|
-| `SENKO_SERVER_URL` | `cli.remote.url` | リモートサーバーURL |
-| `SENKO_TOKEN` | `cli.remote.token` | APIトークン |
+| `SENKO_CLI_REMOTE_URL` | `cli.remote.url` | リモートサーバーURL |
+| `SENKO_CLI_REMOTE_TOKEN` | `cli.remote.token` | APIトークン |
 
 ### サーバー
 
 | 変数 | 対応する設定キー | 説明 |
 |------|-----------------|------|
+| `SENKO_SERVER_RELAY_URL` | `server.relay.url` | 上流リレーサーバーURL |
+| `SENKO_SERVER_RELAY_TOKEN` | `server.relay.token` | 上流リレーサーバー認証用APIトークン |
 | `SENKO_SERVER_HOST` | `server.host` | `senko serve` 専用バインドアドレス |
 | `SENKO_SERVER_PORT` | `server.port` | `senko serve` 専用ポート |
 | `SENKO_HOST` | `web.host` + `server.host` | `senko web` と `senko serve` の両方のバインドアドレス |

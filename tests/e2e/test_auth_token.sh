@@ -36,7 +36,7 @@ wait_for "API server ready" 10 "curl -sf $API_URL/api/v1/health >/dev/null"
 
 # [2] With URL but no keychain entry → error
 echo "[2] auth token fails when not logged in"
-OUTPUT=$(SENKO_SERVER_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
+OUTPUT=$(SENKO_CLI_REMOTE_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
   auth token 2>&1 || true)
 assert_contains "$OUTPUT" "Not logged in" "not logged in error"
 
@@ -58,7 +58,7 @@ keyctl add user "keyring-rs:${API_URL}@senko" "$TEST_TOKEN" @s >/dev/null
 
 # [3] Text mode: raw token, no decoration
 echo "[3] auth token --output text: raw token only"
-TEXT_OUTPUT=$(SENKO_SERVER_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
+TEXT_OUTPUT=$(SENKO_CLI_REMOTE_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
   --output text auth token 2>/dev/null)
 # print! in Rust has no trailing newline; $() strips trailing newlines → direct comparison
 assert_eq "$TEST_TOKEN" "$TEXT_OUTPUT" "text: token matches exactly"
@@ -70,7 +70,7 @@ assert_not_contains "$TEXT_OUTPUT" ":" "text: no colon (no key-value format)"
 
 # [4] JSON mode: valid JSON with token field
 echo "[4] auth token --output json: JSON output"
-JSON_OUTPUT=$(SENKO_SERVER_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
+JSON_OUTPUT=$(SENKO_CLI_REMOTE_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" \
   --output json auth token 2>/dev/null)
 # Verify it's valid JSON
 echo "$JSON_OUTPUT" | jq . >/dev/null 2>&1

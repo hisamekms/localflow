@@ -188,9 +188,17 @@ pub struct CliConfig {
 // --- Server config ---
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServerRelayConfig {
+    pub url: Option<String>,
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ServerConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
+    #[serde(default)]
+    pub relay: ServerRelayConfig,
     #[serde(default)]
     pub auth: AuthConfig,
 }
@@ -580,9 +588,17 @@ pub struct RawLogConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawServerRelayConfig {
+    pub url: Option<String>,
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawServerConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
+    #[serde(default)]
+    pub relay: RawServerRelayConfig,
     #[serde(default)]
     pub auth: RawAuthConfig,
 }
@@ -710,6 +726,10 @@ impl RawConfig {
             server: RawServerConfig {
                 host: overlay.server.host.or(self.server.host),
                 port: overlay.server.port.or(self.server.port),
+                relay: RawServerRelayConfig {
+                    url: overlay.server.relay.url.or(self.server.relay.url),
+                    token: overlay.server.relay.token.or(self.server.relay.token),
+                },
                 auth: RawAuthConfig {
                     api_key: RawApiKeyConfig {
                         master_key: overlay
@@ -891,6 +911,10 @@ impl RawConfig {
             server: ServerConfig {
                 host: self.server.host,
                 port: self.server.port,
+                relay: ServerRelayConfig {
+                    url: self.server.relay.url,
+                    token: self.server.relay.token,
+                },
                 auth: AuthConfig {
                     api_key: ApiKeyConfig {
                         master_key: self.server.auth.api_key.master_key,
@@ -1039,12 +1063,22 @@ impl Config {
             }
         }
 
+        // Server relay settings
+        if let Ok(val) = std::env::var("SENKO_SERVER_RELAY_URL")
+            && !val.is_empty() {
+                self.server.relay.url = Some(val);
+            }
+        if let Ok(val) = std::env::var("SENKO_SERVER_RELAY_TOKEN")
+            && !val.is_empty() {
+                self.server.relay.token = Some(val);
+            }
+
         // CLI remote settings
-        if let Ok(val) = std::env::var("SENKO_SERVER_URL")
+        if let Ok(val) = std::env::var("SENKO_CLI_REMOTE_URL")
             && !val.is_empty() {
                 self.cli.remote.url = Some(val);
             }
-        if let Ok(val) = std::env::var("SENKO_TOKEN")
+        if let Ok(val) = std::env::var("SENKO_CLI_REMOTE_TOKEN")
             && !val.is_empty() {
                 self.cli.remote.token = Some(val);
             }

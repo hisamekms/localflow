@@ -703,12 +703,16 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 # inactive_ttl = "7d"                    # session inactive timeout (env: SENKO_AUTH_OIDC_SESSION_INACTIVE_TTL)
 # max_per_user = 10                      # max sessions per user (env: SENKO_AUTH_OIDC_SESSION_MAX_PER_USER)
 
+# [server.relay]
+# url = "http://upstream:3142"           # upstream server URL for relay mode (env: SENKO_SERVER_RELAY_URL)
+# token = "relay-api-token"              # API token for relay authentication (env: SENKO_SERVER_RELAY_TOKEN)
+
 [cli]
 # browser = true                         # auto-open browser for OIDC login (default: true)
 
 [cli.remote]
-# url = "http://127.0.0.1:3142"   # remote server URL for CLI client mode
-# token = "your-api-token"        # API token for authentication with remote server
+# url = "http://127.0.0.1:3142"   # remote server URL for CLI client mode (env: SENKO_CLI_REMOTE_URL)
+# token = "your-api-token"        # API token for authentication with remote server (env: SENKO_CLI_REMOTE_TOKEN)
 
 [web]
 # host = "127.0.0.1"  # bind address for `senko web` (default: 127.0.0.1, env: SENKO_HOST)
@@ -865,14 +869,17 @@ pub async fn run(cli: Cli) -> Result<()> {
             });
             #[cfg(feature = "aws-secrets")]
             config.resolve_secrets().await?;
-            let is_proxy = config.cli.remote.url.is_some();
+            let is_proxy = config.server.relay.url.is_some();
             if !is_proxy {
                 crate::bootstrap::validate_serve_auth(&config)?;
             }
             let port_is_explicit = config.server_port_is_explicit();
             let effective_port = config.server_port_or(3142);
             if is_proxy {
-                let hook_data = crate::bootstrap::create_remote_hook_data(&config);
+                let hook_data = crate::bootstrap::create_hook_data_from(
+                    config.server.relay.url.as_ref().unwrap(),
+                    config.server.relay.token.clone(),
+                );
                 crate::presentation::api::serve_proxy(root, effective_port, port_is_explicit, &config, cli.config.clone(), hook_data).await?;
             } else {
                 let backend = crate::bootstrap::create_backend(&root, &config)?;

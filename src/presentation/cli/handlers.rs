@@ -542,6 +542,11 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                 Some(ref url) => println!("    url: {url}"),
                 None => println!("    url: (none, using local backend)"),
             }
+            println!("  [server.relay]");
+            match config.server.relay.url {
+                Some(ref url) => println!("    url: {url}"),
+                None => println!("    url: (none, relay mode disabled)"),
+            }
             println!("  [server.auth.oidc]");
             match config.server.auth.oidc.issuer_url {
                 Some(ref url) => println!("    issuer_url: {url}"),

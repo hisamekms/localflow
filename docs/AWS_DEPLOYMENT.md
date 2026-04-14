@@ -196,7 +196,7 @@ url = "https://<api-id>.execute-api.{region}.amazonaws.com"
 Or using environment variables:
 
 ```bash
-export SENKO_SERVER_URL="https://<api-id>.execute-api.{region}.amazonaws.com"
+export SENKO_CLI_REMOTE_URL="https://<api-id>.execute-api.{region}.amazonaws.com"
 ```
 
 Log in via Cognito:
@@ -214,11 +214,11 @@ For environments where the CLI cannot open a browser (e.g., AI sandboxes, CI/CD,
 ```bash
 # On a machine with browser access, log in and retrieve the token
 senko auth login
-export SENKO_TOKEN=$(senko auth token)
+export SENKO_CLI_REMOTE_TOKEN=$(senko auth token)
 
 # Start the relay
-SENKO_SERVER_URL="https://<api-id>.execute-api.{region}.amazonaws.com" \
-SENKO_TOKEN="$SENKO_TOKEN" \
+SENKO_SERVER_RELAY_URL="https://<api-id>.execute-api.{region}.amazonaws.com" \
+SENKO_SERVER_RELAY_TOKEN="$SENKO_CLI_REMOTE_TOKEN" \
 senko serve --host 127.0.0.1 --port 3142
 ```
 
@@ -226,7 +226,7 @@ Clients connecting to the relay do not need any credentials — the relay inject
 
 ```bash
 # On the client (e.g., inside a container)
-export SENKO_SERVER_URL="http://localhost:3142"
+export SENKO_CLI_REMOTE_URL="http://localhost:3142"
 senko --output text list
 ```
 

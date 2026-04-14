@@ -20,8 +20,8 @@ echo "[3] SENKO_HOOKS_ENABLED overrides default"
 JSON_OUT="$(SENKO_HOOKS_ENABLED=false run_lf config)"
 assert_json_field "$JSON_OUT" '.hooks.enabled' "false" "env overrides hooks.enabled"
 
-echo "[4] SENKO_SERVER_URL overrides default"
-JSON_OUT="$(SENKO_SERVER_URL=http://remote:9999 run_lf config)"
+echo "[4] SENKO_CLI_REMOTE_URL overrides default"
+JSON_OUT="$(SENKO_CLI_REMOTE_URL=http://remote:9999 run_lf config)"
 assert_json_field "$JSON_OUT" '.cli.remote.url' "http://remote:9999" "env overrides cli.remote.url"
 
 echo "[5] Env vars override config.toml values"
