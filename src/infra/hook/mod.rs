@@ -1911,29 +1911,24 @@ auto_merge = false
         assert_eq!(with_dir, original);
     }
 
+    /// Merged into a single test to avoid env-var races between parallel tests.
     #[test]
     fn env_override_log_dir() {
         unsafe {
             let orig = std::env::var("SENKO_LOG_DIR").ok();
+
+            // Non-empty value is applied
             std::env::set_var("SENKO_LOG_DIR", "/tmp/custom-logs");
             let mut config = Config::default();
             config.apply_env();
             assert_eq!(config.log.dir, Some("/tmp/custom-logs".into()));
-            match orig {
-                Some(v) => std::env::set_var("SENKO_LOG_DIR", v),
-                None => std::env::remove_var("SENKO_LOG_DIR"),
-            }
-        }
-    }
 
-    #[test]
-    fn env_override_log_dir_empty_ignored() {
-        unsafe {
-            let orig = std::env::var("SENKO_LOG_DIR").ok();
+            // Empty value is ignored
             std::env::set_var("SENKO_LOG_DIR", "");
-            let mut config = Config::default();
-            config.apply_env();
-            assert_eq!(config.log.dir, None);
+            let mut config2 = Config::default();
+            config2.apply_env();
+            assert_eq!(config2.log.dir, None);
+
             match orig {
                 Some(v) => std::env::set_var("SENKO_LOG_DIR", v),
                 None => std::env::remove_var("SENKO_LOG_DIR"),

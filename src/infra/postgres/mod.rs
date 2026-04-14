@@ -245,11 +245,17 @@ async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
 }
 
 /// Resolve a user-facing task_number to internal id, verifying project ownership.
-async fn resolve_task_number(pool: &PgPool, project_id: i64, task_number: i64) -> Result<i64> {
+///
+/// Accepts any sqlx executor (pool or transaction) so callers inside a
+/// transaction can avoid acquiring a second connection from the pool.
+async fn resolve_task_number<'e, E>(executor: E, project_id: i64, task_number: i64) -> Result<i64>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     let row = sqlx::query("SELECT id FROM tasks WHERE project_id = $1 AND task_number = $2")
         .bind(project_id)
         .bind(task_number)
-        .fetch_optional(pool)
+        .fetch_optional(executor)
         .await?
         .context("task not found")?;
     Ok(row.get("id"))
@@ -817,7 +823,7 @@ impl TaskRepository for PostgresBackend {
                 .await?;
         }
         for &dep_task_number in &params.dependencies {
-            let dep_internal_id = resolve_task_number(&pool, project_id, dep_task_number).await?;
+            let dep_internal_id = resolve_task_number(&mut *tx, project_id, dep_task_number).await?;
             sqlx::query(
                 "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2)",
             )
@@ -1169,7 +1175,7 @@ impl TaskRepository for PostgresBackend {
             .execute(&mut *tx)
             .await?;
         for &dep_task_number in task.dependencies() {
-            let dep_internal_id = resolve_task_number(pool, task.project_id(), dep_task_number).await?;
+            let dep_internal_id = resolve_task_number(&mut *tx, task.project_id(), dep_task_number).await?;
             sqlx::query(
                 "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2)",
             )
