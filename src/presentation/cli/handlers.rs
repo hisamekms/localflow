@@ -403,7 +403,7 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, metadata: Option<St
         return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
     }
 
-    let updated = task_ops.next_task(project_id, session_id, user_id, metadata).await?;
+    let updated = task_ops.next_task(project_id, session_id, user_id, false, metadata).await?;
 
     match cli.output {
         OutputFormat::Json => {

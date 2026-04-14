@@ -151,12 +151,13 @@ impl TaskOperations for LocalTaskOperations {
         project_id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
+        include_unassigned: bool,
         metadata: Option<serde_json::Value>,
     ) -> Result<Task> {
         if let Some(ref metadata) = metadata {
             validate_metadata(metadata)?;
         }
-        let task = match self.backend.next_task(project_id).await? {
+        let task = match self.backend.next_task(project_id, user_id, include_unassigned).await? {
             Some(t) => t,
             None => {
                 self.hooks
@@ -381,7 +382,7 @@ impl TaskOperations for LocalTaskOperations {
     }
 
     async fn preview_next(&self, project_id: i64) -> Result<PreviewResult> {
-        let task = match self.backend.next_task(project_id).await? {
+        let task = match self.backend.next_task(project_id, None, false).await? {
             Some(t) => t,
             None => return Err(DomainError::NoEligibleTask.into()),
         };

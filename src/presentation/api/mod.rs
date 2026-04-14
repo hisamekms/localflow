@@ -290,6 +290,10 @@ struct ListTasksQuery {
     depends_on: Option<i64>,
     #[serde(default)]
     ready: Option<bool>,
+    #[serde(default)]
+    assignee_user_id: Option<i64>,
+    #[serde(default)]
+    include_unassigned: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -314,6 +318,8 @@ struct CancelBody {
 struct NextBody {
     session_id: Option<String>,
     user_id: Option<i64>,
+    #[serde(default)]
+    include_unassigned: bool,
     metadata: Option<serde_json::Value>,
 }
 
@@ -717,8 +723,8 @@ async fn list_tasks(
         tags: query.tag,
         depends_on: query.depends_on,
         ready: query.ready.unwrap_or(false),
-        assignee_user_id: None,
-        include_unassigned: false,
+        assignee_user_id: query.assignee_user_id,
+        include_unassigned: query.include_unassigned.unwrap_or(false),
     };
     let tasks = state.task_service.list_tasks(project_id, &filter).await.map_err(classify_error)?;
     Ok(Json(tasks.into_iter().map(TaskResponse::from).collect()))
@@ -908,11 +914,11 @@ async fn next_task(
     body: Option<Json<NextBody>>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let (session_id, user_id, metadata) = body
-        .map(|b| (b.0.session_id, b.0.user_id, b.0.metadata))
-        .unwrap_or((None, None, None));
+    let (session_id, user_id, include_unassigned, metadata) = body
+        .map(|b| (b.0.session_id, b.0.user_id, b.0.include_unassigned, b.0.metadata))
+        .unwrap_or((None, None, false, None));
     let user_id = user_id.or_else(|| auth.0.as_ref().map(|a| a.user.id()));
-    let updated = state.task_service.next_task(project_id, session_id, user_id, metadata).await.map_err(classify_error)?;
+    let updated = state.task_service.next_task(project_id, session_id, user_id, include_unassigned, metadata).await.map_err(classify_error)?;
     Ok(Json(TaskResponse::from(updated)))
 }
 

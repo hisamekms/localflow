@@ -188,13 +188,14 @@ impl TaskOperations for RemoteTaskOperations {
         project_id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
+        include_unassigned: bool,
         metadata: Option<serde_json::Value>,
     ) -> Result<Task> {
         let resp = self
             .auth(
                 self.client()
                     .post(self.project_url(project_id, "/tasks/next"))
-                    .json(&json!({ "session_id": session_id, "user_id": user_id, "metadata": metadata })),
+                    .json(&json!({ "session_id": session_id, "user_id": user_id, "include_unassigned": include_unassigned, "metadata": metadata })),
             )
             .send()
             .await?;
@@ -421,6 +422,12 @@ impl TaskOperations for RemoteTaskOperations {
         }
         if filter.ready {
             params.push("ready=true".into());
+        }
+        if let Some(uid) = filter.assignee_user_id {
+            params.push(format!("assignee_user_id={uid}"));
+        }
+        if filter.include_unassigned {
+            params.push("include_unassigned=true".into());
         }
 
         if !params.is_empty() {

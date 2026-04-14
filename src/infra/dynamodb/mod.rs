@@ -942,7 +942,7 @@ impl TaskRepository for DynamoDbBackend {
             priority,
             TaskStatus::Draft,
             None,
-            None,
+            params.assignee_user_id,
             now.clone(),
             now,
             None,
@@ -1049,6 +1049,12 @@ impl TaskQueryPort for DynamoDbBackend {
                 if filter.ready && task.status() != TaskStatus::Todo {
                     return false;
                 }
+                if let Some(uid) = filter.assignee_user_id {
+                    let assigned = task.assignee_user_id();
+                    if !(assigned == Some(uid) || (filter.include_unassigned && assigned.is_none())) {
+                        return false;
+                    }
+                }
                 true
             })
             .collect();
@@ -1071,11 +1077,22 @@ impl TaskQueryPort for DynamoDbBackend {
         Ok(result)
     }
 
-    async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
+    async fn next_task(&self, project_id: i64, user_id: Option<i64>, include_unassigned: bool) -> Result<Option<Task>> {
         let all = self.scan_all_tasks().await?;
         let todo_tasks: Vec<Task> = all
             .into_iter()
-            .filter(|t| t.project_id() == project_id && t.status() == TaskStatus::Todo)
+            .filter(|t| {
+                if t.project_id() != project_id || t.status() != TaskStatus::Todo {
+                    return false;
+                }
+                if let Some(uid) = user_id {
+                    let assigned = t.assignee_user_id();
+                    if !(assigned == Some(uid) || (include_unassigned && assigned.is_none())) {
+                        return false;
+                    }
+                }
+                true
+            })
             .collect();
 
         if todo_tasks.is_empty() {

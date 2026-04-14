@@ -885,8 +885,8 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
         )?;
 
     conn.execute(
-        "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        rusqlite::params![params.title, params.background, params.description, priority, params.branch, params.pr_url, metadata_str, project_id, task_number],
+        "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number, assignee_user_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        rusqlite::params![params.title, params.background, params.description, priority, params.branch, params.pr_url, metadata_str, project_id, task_number, params.assignee_user_id],
     )?;
     let task_id = conn.last_insert_rowid();
 
@@ -1349,6 +1349,15 @@ fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> R
         );
     }
 
+    if let Some(uid) = filter.assignee_user_id {
+        if filter.include_unassigned {
+            conditions.push("(t.assignee_user_id = ? OR t.assignee_user_id IS NULL)".to_string());
+        } else {
+            conditions.push("t.assignee_user_id = ?".to_string());
+        }
+        param_values.push(Box::new(uid));
+    }
+
     let where_clause = if conditions.is_empty() {
         String::new()
     } else {
@@ -1373,22 +1382,31 @@ fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> R
 
 /// SQL-optimized implementation of [`crate::domain::task::select_next`].
 /// Equivalence with domain logic is verified by integration tests.
-fn next_task(conn: &Connection, project_id: i64) -> Result<Option<Task>> {
-    let sql = "
-        SELECT t.id FROM tasks t
-        WHERE t.project_id = ?1
-          AND t.status = 'todo'
-          AND NOT EXISTS (
-            SELECT 1 FROM task_dependencies td
-            JOIN tasks dep ON dep.id = td.depends_on_task_id
-            WHERE td.task_id = t.id AND dep.status != 'completed'
-          )
-        ORDER BY t.priority ASC, t.created_at ASC, t.id ASC
-        LIMIT 1
-    ";
-    let id: Option<i64> = conn
-        .query_row(sql, params![project_id], |row| row.get(0))
-        .optional()?;
+fn next_task(conn: &Connection, project_id: i64, user_id: Option<i64>, include_unassigned: bool) -> Result<Option<Task>> {
+    let assignee_clause = match user_id {
+        Some(_) if include_unassigned => " AND (t.assignee_user_id = ?2 OR t.assignee_user_id IS NULL)",
+        Some(_) => " AND t.assignee_user_id = ?2",
+        None => "",
+    };
+    let sql = format!(
+        "SELECT t.id FROM tasks t
+         WHERE t.project_id = ?1
+           AND t.status = 'todo'
+           AND NOT EXISTS (
+             SELECT 1 FROM task_dependencies td
+             JOIN tasks dep ON dep.id = td.depends_on_task_id
+             WHERE td.task_id = t.id AND dep.status != 'completed'
+           ){assignee_clause}
+         ORDER BY t.priority ASC, t.created_at ASC, t.id ASC
+         LIMIT 1"
+    );
+    let id: Option<i64> = if let Some(uid) = user_id {
+        conn.query_row(&sql, params![project_id, uid], |row| row.get(0))
+            .optional()?
+    } else {
+        conn.query_row(&sql, params![project_id], |row| row.get(0))
+            .optional()?
+    };
     match id {
         Some(id) => Ok(Some(get_task(conn, id)?)),
         None => Ok(None),
@@ -1892,8 +1910,8 @@ impl TaskQueryPort for SqliteBackend {
         blocking!(self, |conn: &Connection| list_tasks(conn, project_id, &filter))
     }
 
-    async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
-        blocking!(self, |conn: &Connection| next_task(conn, project_id))
+    async fn next_task(&self, project_id: i64, user_id: Option<i64>, include_unassigned: bool) -> Result<Option<Task>> {
+        blocking!(self, |conn: &Connection| next_task(conn, project_id, user_id, include_unassigned))
     }
 
     async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
@@ -2670,7 +2688,7 @@ mod tests {
     #[test]
     fn next_task_returns_none_when_empty() {
         let (_tmp, conn) = setup();
-        assert!(next_task(&conn, 1).unwrap().is_none());
+        assert!(next_task(&conn, 1, None, false).unwrap().is_none());
     }
 
     #[test]
@@ -2692,7 +2710,7 @@ mod tests {
         ).unwrap();
         transition_to(&conn, task.id(), TaskStatus::Todo);
 
-        assert!(next_task(&conn, 1).unwrap().is_none());
+        assert!(next_task(&conn, 1, None, false).unwrap().is_none());
     }
 
     #[test]
@@ -2703,7 +2721,7 @@ mod tests {
         make_todo(&conn, "high", Some(Priority::P0));
         make_todo(&conn, "mid", Some(Priority::P1));
 
-        let task = next_task(&conn, 1).unwrap().unwrap();
+        let task = next_task(&conn, 1, None, false).unwrap().unwrap();
         assert_eq!(task.title(), "high");
     }
 
@@ -2716,7 +2734,7 @@ mod tests {
         make_todo(&conn, "first", Some(Priority::P2));
         make_todo(&conn, "second", Some(Priority::P2));
 
-        let task = next_task(&conn, 1).unwrap().unwrap();
+        let task = next_task(&conn, 1, None, false).unwrap().unwrap();
         assert_eq!(task.title(), "first");
     }
 
@@ -2729,7 +2747,7 @@ mod tests {
         let t1 = make_todo(&conn, "t1", Some(Priority::P2));
         let t2 = make_todo(&conn, "t2", Some(Priority::P2));
 
-        let task = next_task(&conn, 1).unwrap().unwrap();
+        let task = next_task(&conn, 1, None, false).unwrap().unwrap();
         // t1 was created first, so it has lower id
         assert!(t1.id() < t2.id());
         assert_eq!(task.id(), t1.id());
@@ -2752,8 +2770,143 @@ mod tests {
         ).unwrap();
         transition_to(&conn, task.id(), TaskStatus::Todo);
 
-        let result = next_task(&conn, 1).unwrap().unwrap();
+        let result = next_task(&conn, 1, None, false).unwrap().unwrap();
         assert_eq!(result.title(), "ready");
+    }
+
+    #[test]
+    fn next_task_filters_by_user_id() {
+        let (_tmp, conn) = setup();
+        let user2 = create_user(&conn, &CreateUserParams {
+            username: "user2".to_string(), sub: None, display_name: None, email: None,
+        }).unwrap();
+        let t1 = create_task(&conn, 1, &CreateTaskParams {
+            assignee_user_id: Some(1),
+            ..default_create_params("user1-task")
+        }).unwrap();
+        let t2 = create_task(&conn, 1, &CreateTaskParams {
+            assignee_user_id: Some(user2.id()),
+            ..default_create_params("user2-task")
+        }).unwrap();
+        transition_to(&conn, t1.id(), TaskStatus::Todo);
+        transition_to(&conn, t2.id(), TaskStatus::Todo);
+
+        let result = next_task(&conn, 1, Some(1), false).unwrap().unwrap();
+        assert_eq!(result.title(), "user1-task");
+    }
+
+    #[test]
+    fn next_task_includes_unassigned_when_flag_set() {
+        let (_tmp, conn) = setup();
+        // Lower priority (P2) assigned task
+        let t1 = create_task(&conn, 1, &CreateTaskParams {
+            assignee_user_id: Some(1),
+            priority: Some(Priority::P2),
+            ..default_create_params("assigned")
+        }).unwrap();
+        // Higher priority (P1) unassigned task
+        let t2 = create_task(&conn, 1, &CreateTaskParams {
+            assignee_user_id: None,
+            priority: Some(Priority::P1),
+            ..default_create_params("unassigned")
+        }).unwrap();
+        transition_to(&conn, t1.id(), TaskStatus::Todo);
+        transition_to(&conn, t2.id(), TaskStatus::Todo);
+
+        let result = next_task(&conn, 1, Some(1), true).unwrap().unwrap();
+        assert_eq!(result.title(), "unassigned");
+    }
+
+    #[test]
+    fn next_task_excludes_unassigned_when_flag_unset() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, 1, &CreateTaskParams {
+            assignee_user_id: Some(1),
+            priority: Some(Priority::P2),
+            ..default_create_params("assigned")
+        }).unwrap();
+        let t2 = create_task(&conn, 1, &CreateTaskParams {
+            assignee_user_id: None,
+            priority: Some(Priority::P1),
+            ..default_create_params("unassigned")
+        }).unwrap();
+        transition_to(&conn, t1.id(), TaskStatus::Todo);
+        transition_to(&conn, t2.id(), TaskStatus::Todo);
+
+        let result = next_task(&conn, 1, Some(1), false).unwrap().unwrap();
+        assert_eq!(result.title(), "assigned");
+    }
+
+    #[test]
+    fn next_task_no_filter_when_user_id_none() {
+        let (_tmp, conn) = setup();
+        let t1 = create_task(&conn, 1, &CreateTaskParams {
+            assignee_user_id: Some(1),
+            priority: Some(Priority::P2),
+            ..default_create_params("assigned")
+        }).unwrap();
+        let t2 = create_task(&conn, 1, &CreateTaskParams {
+            assignee_user_id: None,
+            priority: Some(Priority::P1),
+            ..default_create_params("unassigned")
+        }).unwrap();
+        transition_to(&conn, t1.id(), TaskStatus::Todo);
+        transition_to(&conn, t2.id(), TaskStatus::Todo);
+
+        let result = next_task(&conn, 1, None, false).unwrap().unwrap();
+        assert_eq!(result.title(), "unassigned");
+    }
+
+    #[test]
+    fn create_task_sets_assignee_user_id() {
+        let (_tmp, conn) = setup();
+        let task = create_task(&conn, 1, &CreateTaskParams {
+            assignee_user_id: Some(1),
+            ..default_create_params("with-assignee")
+        }).unwrap();
+        assert_eq!(task.assignee_user_id(), Some(1));
+    }
+
+    #[test]
+    fn list_tasks_filters_by_assignee() {
+        let (_tmp, conn) = setup();
+        let user2 = create_user(&conn, &CreateUserParams {
+            username: "user2".to_string(), sub: None, display_name: None, email: None,
+        }).unwrap();
+        let _t1 = create_task(&conn, 1, &CreateTaskParams {
+            assignee_user_id: Some(1),
+            ..default_create_params("user1-task")
+        }).unwrap();
+        let _t2 = create_task(&conn, 1, &CreateTaskParams {
+            assignee_user_id: Some(user2.id()),
+            ..default_create_params("user2-task")
+        }).unwrap();
+        let _t3 = create_task(&conn, 1, &CreateTaskParams {
+            assignee_user_id: None,
+            ..default_create_params("unassigned-task")
+        }).unwrap();
+
+        // Exact match (no unassigned)
+        let filter = ListTasksFilter {
+            assignee_user_id: Some(1),
+            include_unassigned: false,
+            ..Default::default()
+        };
+        let tasks = list_tasks(&conn, 1, &filter).unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].title(), "user1-task");
+
+        // With unassigned included
+        let filter = ListTasksFilter {
+            assignee_user_id: Some(1),
+            include_unassigned: true,
+            ..Default::default()
+        };
+        let tasks = list_tasks(&conn, 1, &filter).unwrap();
+        assert_eq!(tasks.len(), 2);
+        let titles: Vec<&str> = tasks.iter().map(|t| t.title()).collect();
+        assert!(titles.contains(&"user1-task"));
+        assert!(titles.contains(&"unassigned-task"));
     }
 
     // --- Dependency tests (via domain methods + save) ---
@@ -3297,7 +3450,7 @@ mod tests {
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].id(), t1.id());
 
-        let next = backend.next_task(1).await.unwrap();
+        let next = backend.next_task(1, None, false).await.unwrap();
         assert!(next.is_none() || next.unwrap().id() == t1.id());
 
         let (t2, _) = t2.remove_dependency(t1.id(), Some("2026-01-01T00:00:02Z".into())).unwrap();
@@ -3403,7 +3556,7 @@ mod tests {
         make_todo(&conn, "high", Some(Priority::P0));
         make_todo(&conn, "mid", Some(Priority::P1));
 
-        let sql_result = next_task(&conn, 1).unwrap().unwrap();
+        let sql_result = next_task(&conn, 1, None, false).unwrap().unwrap();
 
         let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
         let domain_result =
@@ -3433,7 +3586,7 @@ mod tests {
 
         let free = make_todo(&conn, "free", Some(Priority::P1));
 
-        let sql_result = next_task(&conn, 1).unwrap().unwrap();
+        let sql_result = next_task(&conn, 1, None, false).unwrap().unwrap();
 
         let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
         let dep_statuses: HashMap<i64, TaskStatus> = all_tasks

@@ -764,8 +764,8 @@ impl TaskRepository for PostgresBackend {
         let mut tx = pool.begin().await?;
 
         let row = sqlx::query(
-            "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM tasks WHERE project_id = $8))
+            "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number, assignee_user_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM tasks WHERE project_id = $8), $9)
              RETURNING id, task_number",
         )
         .bind(&params.title)
@@ -776,6 +776,7 @@ impl TaskRepository for PostgresBackend {
         .bind(&params.pr_url)
         .bind(&metadata_str)
         .bind(project_id)
+        .bind(params.assignee_user_id)
         .fetch_one(&mut *tx)
         .await?;
         let task_id: i64 = row.get("id");
@@ -1256,8 +1257,7 @@ impl TaskQueryPort for PostgresBackend {
                 "EXISTS (SELECT 1 FROM task_dependencies td WHERE td.task_id = t.id AND td.depends_on_task_id = ${param_idx})"
             ));
             binds.push(BindVal::Int(dep_id));
-            #[allow(unused_assignments)]
-            { param_idx += 1; }
+            param_idx += 1;
         }
 
         // SQL-optimized implementation of `crate::domain::task::filter_ready`.
@@ -1267,6 +1267,17 @@ impl TaskQueryPort for PostgresBackend {
                 "NOT EXISTS (SELECT 1 FROM task_dependencies td JOIN tasks dep ON dep.id = td.depends_on_task_id WHERE td.task_id = t.id AND dep.status != 'completed')"
                     .to_string(),
             );
+        }
+
+        if let Some(uid) = filter.assignee_user_id {
+            if filter.include_unassigned {
+                conditions.push(format!("(t.assignee_user_id = ${param_idx} OR t.assignee_user_id IS NULL)"));
+            } else {
+                conditions.push(format!("t.assignee_user_id = ${param_idx}"));
+            }
+            binds.push(BindVal::Int(uid));
+            #[allow(unused_assignments)]
+            { param_idx += 1; }
         }
 
         let where_clause = if conditions.is_empty() {
@@ -1296,9 +1307,14 @@ impl TaskQueryPort for PostgresBackend {
     }
 
     /// SQL-optimized implementation of [`crate::domain::task::select_next`].
-    async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
+    async fn next_task(&self, project_id: i64, user_id: Option<i64>, include_unassigned: bool) -> Result<Option<Task>> {
         let pool = self.pool().await?;
-        let row = sqlx::query(
+        let assignee_clause = match user_id {
+            Some(_) if include_unassigned => " AND (t.assignee_user_id = $2 OR t.assignee_user_id IS NULL)",
+            Some(_) => " AND t.assignee_user_id = $2",
+            None => "",
+        };
+        let sql = format!(
             "SELECT t.id FROM tasks t
              WHERE t.project_id = $1
                AND t.status = 'todo'
@@ -1306,13 +1322,15 @@ impl TaskQueryPort for PostgresBackend {
                  SELECT 1 FROM task_dependencies td
                  JOIN tasks dep ON dep.id = td.depends_on_task_id
                  WHERE td.task_id = t.id AND dep.status != 'completed'
-               )
+               ){assignee_clause}
              ORDER BY t.priority ASC, t.created_at ASC, t.id ASC
-             LIMIT 1",
-        )
-        .bind(project_id)
-        .fetch_optional(pool)
-        .await?;
+             LIMIT 1"
+        );
+        let mut query = sqlx::query(&sql).bind(project_id);
+        if let Some(uid) = user_id {
+            query = query.bind(uid);
+        }
+        let row = query.fetch_optional(pool).await?;
         match row {
             Some(r) => {
                 let id: i64 = r.get("id");
@@ -1746,14 +1764,14 @@ mod tests {
         let backend = setup().await;
 
         // No tasks → None
-        let next = backend.next_task(1).await.unwrap();
+        let next = backend.next_task(1, None, false).await.unwrap();
         assert!(next.is_none());
 
         let t1 = backend.create_task(1, &params("High priority")).await.unwrap();
         let (t1, _) = t1.ready(now_utc()).unwrap();
         backend.save(&t1).await.unwrap();
 
-        let next = backend.next_task(1).await.unwrap();
+        let next = backend.next_task(1, None, false).await.unwrap();
         assert!(next.is_some());
         assert_eq!(next.unwrap().title(), "High priority");
     }

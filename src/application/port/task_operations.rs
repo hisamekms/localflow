@@ -50,6 +50,7 @@ pub trait TaskOperations: Send + Sync {
         project_id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
+        include_unassigned: bool,
         metadata: Option<serde_json::Value>,
     ) -> Result<Task>;
     async fn complete_task(
