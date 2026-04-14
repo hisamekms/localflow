@@ -19,10 +19,12 @@ wait_for "API server ready" 10 "curl -sf $API_URL/api/v1/health >/dev/null"
 
 # Create a real user and API key (master key is only for user creation)
 TEST_TOKEN=$(create_test_user_key "$API_URL" "$MASTER_KEY")
+# Capture username so --assignee-user-id self resolves via remote user lookup
+TEST_USERNAME=$(curl -sf -H "Authorization: Bearer $TEST_TOKEN" "$API_URL/api/v1/users" | jq -r '.[-1].username')
 
 # Helper: run senko CLI in HTTP backend mode
 run_http() {
-  SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
+  SENKO_USER="$TEST_USERNAME" SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
 echo "--- Test: HTTP Backend Mode ---"
@@ -106,13 +108,15 @@ CANCELED=$(run_http cancel "$TASK3_ID" --reason "not needed")
 assert_json_field "$CANCELED" '.status' "canceled" "cancel: status is canceled"
 assert_json_field "$CANCELED" '.cancel_reason' "not needed" "cancel: reason set"
 
-echo "[15] Next task via HTTP backend"
-TASK5=$(run_http add --title "Next Candidate" --priority p0)
+echo "[15] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
+TASK5=$(run_http add --title "Next Candidate" --priority p0 --assignee-user-id self --definition-of-done "Next DoD")
 TASK5_ID=$(echo "$TASK5" | jq -r '.id')
 run_http ready "$TASK5_ID" >/dev/null
-NEXT=$(run_http next --include-unassigned)
+NEXT=$(run_http next)
 assert_json_field "$NEXT" '.status' "in_progress" "next: auto-starts task"
 assert_json_field "$NEXT" '.title' "Next Candidate" "next: picks correct task"
+run_http dod check "$TASK5_ID" 1 >/dev/null
+run_http complete "$TASK5_ID" >/dev/null
 
 echo "[16] Config via HTTP backend"
 CONFIG=$(run_http config)
@@ -121,6 +125,6 @@ assert_json_field "$CONFIG" '.workflow.merge_via' "direct" "config: merge_via"
 echo "[17] List with filters via HTTP backend"
 LIST_COMPLETED=$(run_http list --status completed)
 COMPLETED_COUNT=$(echo "$LIST_COMPLETED" | jq 'length')
-assert_eq "2" "$COMPLETED_COUNT" "list filter: 2 completed tasks"
+assert_eq "3" "$COMPLETED_COUNT" "list filter: 3 completed tasks"
 
 test_summary

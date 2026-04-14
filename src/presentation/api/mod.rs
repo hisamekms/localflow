@@ -360,7 +360,7 @@ struct EditTaskBody {
     metadata: Option<serde_json::Value>,
     #[serde(default)]
     clear_metadata: bool,
-    assignee_user_id: Option<i64>,
+    assignee_user_id: Option<serde_json::Value>,
     #[serde(default)]
     clear_assignee_user_id: bool,
     // Array operations
@@ -730,14 +730,30 @@ async fn list_tasks(
     Ok(Json(tasks.into_iter().map(TaskResponse::from).collect()))
 }
 
+/// Resolve `"self"` in `assignee_user_id` to the authenticated user's numeric ID.
+fn resolve_assignee_self(body: &mut serde_json::Value, auth: &OptionalAuthUser) -> Result<(), ApiError> {
+    if let Some(value) = body.get("assignee_user_id") {
+        if value.as_str() == Some("self") {
+            let user_id = auth.0.as_ref()
+                .map(|a| a.user.id())
+                .ok_or_else(|| ApiError::BadRequest("assignee_user_id \"self\" requires authentication".into()))?;
+            body["assignee_user_id"] = serde_json::Value::Number(user_id.into());
+        }
+    }
+    Ok(())
+}
+
 // POST /api/v1/projects/{project_id}/tasks
 async fn create_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path(project_id): Path<i64>,
-    Json(params): Json<CreateTaskParams>,
+    Json(mut body): Json<serde_json::Value>,
 ) -> Result<(StatusCode, Json<TaskResponse>), ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
+    resolve_assignee_self(&mut body, &auth)?;
+    let params: CreateTaskParams = serde_json::from_value(body)
+        .map_err(|e| ApiError::BadRequest(format!("invalid request body: {e}")))?;
     let task = state.task_service.create_task(project_id, &params).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(TaskResponse::from(task))))
 }
@@ -790,7 +806,20 @@ async fn edit_task(
         assignee_user_id: if body.clear_assignee_user_id {
             Some(None)
         } else {
-            body.assignee_user_id.map(Some)
+            match body.assignee_user_id {
+                Some(ref v) if v.as_str() == Some("self") => {
+                    let uid = auth.0.as_ref()
+                        .map(|a| a.user.id())
+                        .ok_or_else(|| ApiError::BadRequest("assignee_user_id \"self\" requires authentication".into()))?;
+                    Some(Some(uid))
+                }
+                Some(ref v) => {
+                    let uid = v.as_i64()
+                        .ok_or_else(|| ApiError::BadRequest("assignee_user_id must be \"self\" or integer".into()))?;
+                    Some(Some(uid))
+                }
+                None => None,
+            }
         },
         started_at: None,
         completed_at: None,

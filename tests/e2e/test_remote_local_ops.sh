@@ -17,6 +17,7 @@ start_server() {
   SERVER_PID=$!
   wait_for "API server ready" 10 "curl -sf $API_URL/api/v1/health >/dev/null"
   TEST_TOKEN=$(create_test_user_key "$API_URL" "$MASTER_KEY")
+  TEST_USERNAME=$(curl -sf -H "Authorization: Bearer $TEST_TOKEN" "$API_URL/api/v1/users" | jq -r '.[-1].username')
 }
 
 stop_server() {
@@ -34,7 +35,7 @@ cleanup_all() {
 trap cleanup_all EXIT
 
 run_http() {
-  SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
+  SENKO_USER="$TEST_USERNAME" SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
 clear_hook_log() {
@@ -117,14 +118,17 @@ assert_eq "1" "$(echo "$DEPS_LIST" | jq 'length')" "local: deps list"
 DEP_RM=$(run_lf deps remove "$T5_ID" --on "$T4_ID")
 assert_eq "0" "$(echo "$DEP_RM" | jq '.dependencies | length')" "local: deps remove"
 
-echo "[1.5] Next task (auto-select)"
-T6=$(run_lf add --title "Local next" --priority p0)
+echo "[1.5] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
+export SENKO_USER="default"
+T6=$(run_lf add --title "Local next" --priority p0 --assignee-user-id self --definition-of-done "Local DoD")
 T6_ID=$(echo "$T6" | jq -r '.id')
 run_lf ready "$T6_ID" >/dev/null
-NEXT=$(run_lf next --include-unassigned)
+NEXT=$(run_lf next)
 assert_json_field "$NEXT" '.status' "in_progress" "local: next auto-starts"
 assert_json_field "$NEXT" '.title' "Local next" "local: next picks correct task"
+run_lf dod check "$T6_ID" 1 >/dev/null
 run_lf complete "$T6_ID" >/dev/null
+unset SENKO_USER
 
 # ========================================
 # Section 2: Remote mode (CLI → API server)
@@ -194,13 +198,15 @@ assert_eq "1" "$(echo "$DEPS_LIST" | jq 'length')" "remote: deps list"
 DEP_RM=$(run_http deps remove "$T5_ID" --on "$T4_ID")
 assert_eq "0" "$(echo "$DEP_RM" | jq '.dependencies | length')" "remote: deps remove"
 
-echo "[2.5] Next task via HTTP"
-T6=$(run_http add --title "Remote next" --priority p0)
+echo "[2.5] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
+T6=$(run_http add --title "Remote next" --priority p0 --assignee-user-id self --definition-of-done "Remote DoD")
 T6_ID=$(echo "$T6" | jq -r '.id')
 run_http ready "$T6_ID" >/dev/null
-NEXT=$(run_http next --include-unassigned)
+NEXT=$(run_http next)
 assert_json_field "$NEXT" '.status' "in_progress" "remote: next auto-starts"
 assert_json_field "$NEXT" '.title' "Remote next" "remote: next picks correct task"
+run_http dod check "$T6_ID" 1 >/dev/null
+run_http complete "$T6_ID" >/dev/null
 
 stop_server
 

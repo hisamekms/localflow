@@ -37,6 +37,8 @@ start_servers() {
 
   # Create test user and API key on upstream
   TEST_TOKEN=$(create_test_user_key "$UPSTREAM_URL" "$MASTER_KEY")
+  # Capture username so --assignee-user-id self resolves via remote user lookup
+  TEST_USERNAME=$(curl -sf -H "Authorization: Bearer $TEST_TOKEN" "$UPSTREAM_URL/api/v1/users" | jq -r '.[-1].username')
 }
 
 stop_servers() {
@@ -60,7 +62,7 @@ trap cleanup_all EXIT
 
 # Helper: run senko CLI through the relay server
 run_relay() {
-  SENKO_CLI_REMOTE_URL="$RELAY_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" \
+  SENKO_USER="$TEST_USERNAME" SENKO_CLI_REMOTE_URL="$RELAY_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" \
     "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
@@ -147,13 +149,15 @@ CANCELED=$(run_relay cancel "$TASK3_ID" --reason "not needed")
 assert_json_field "$CANCELED" '.status' "canceled" "cancel: status is canceled"
 assert_json_field "$CANCELED" '.cancel_reason' "not needed" "cancel: reason set"
 
-echo "[2.5] Next task (auto-select)"
-TASK4=$(run_relay add --title "Next Candidate" --priority p0)
+echo "[2.5] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
+TASK4=$(run_relay add --title "Next Candidate" --priority p0 --assignee-user-id self --definition-of-done "Next DoD")
 TASK4_ID=$(echo "$TASK4" | jq -r '.id')
 run_relay ready "$TASK4_ID" >/dev/null
-NEXT=$(run_relay next --include-unassigned)
+NEXT=$(run_relay next)
 assert_json_field "$NEXT" '.status' "in_progress" "next: auto-starts task"
 assert_json_field "$NEXT" '.title' "Next Candidate" "next: picks correct task"
+run_relay dod check "$TASK4_ID" 1 >/dev/null
+run_relay complete "$TASK4_ID" >/dev/null
 
 # ========================================
 # Section 3: Dependencies (DoD #3)
@@ -239,8 +243,9 @@ run_relay project metadata-field remove --name points >/dev/null
 # ========================================
 echo "--- Section 7: Metadata happy path via relay ---"
 
-echo "[7.1] Create task with DoD"
+echo "[7.1] Create task with DoD and assignee=self"
 META_TASK=$(run_relay add --title "Metadata Relay Task" \
+  --assignee-user-id self \
   --definition-of-done "Write tests" --definition-of-done "Review code")
 META_TASK_ID=$(echo "$META_TASK" | jq -r '.id')
 assert_json_field "$META_TASK" '.status' "draft" "meta: created as draft"
@@ -249,7 +254,7 @@ echo "[7.2] Ready task"
 run_relay ready "$META_TASK_ID" >/dev/null
 
 echo "[7.3] Start via next --metadata"
-NEXT_META=$(run_relay next --include-unassigned --metadata '{"sprint":"v1","points":5}')
+NEXT_META=$(run_relay next --metadata '{"sprint":"v1","points":5}')
 assert_json_field "$NEXT_META" '.status' "in_progress" "meta: next starts task"
 assert_json_field "$NEXT_META" '.metadata.sprint' "v1" "meta: metadata.sprint set via next"
 assert_json_field "$NEXT_META" '.metadata.points' "5" "meta: metadata.points set via next"
