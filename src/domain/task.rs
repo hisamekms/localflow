@@ -500,7 +500,9 @@ impl Task {
             changed = true;
         }
         if let Some(ref assignee_user_id) = params.assignee_user_id {
-            self.assignee_user_id = *assignee_user_id;
+            self.assignee_user_id = assignee_user_id
+                .as_ref()
+                .map(|a| a.as_id().expect("AssigneeUserId::SelfUser must be resolved before apply_update"));
             changed = true;
         }
         if let Some(ref started_at) = params.started_at {
@@ -790,6 +792,64 @@ pub fn select_next(tasks: Vec<Task>, dep_statuses: &HashMap<i64, TaskStatus>) ->
     ready.into_iter().next()
 }
 
+/// Assignee user ID that can be either a resolved numeric ID or the "self" sentinel.
+///
+/// When serialized to JSON, `SelfUser` becomes `"self"` and `Id(n)` becomes `n`.
+/// The API layer resolves `SelfUser` to the authenticated user's ID.
+/// In local (non-remote) mode, the CLI resolves `SelfUser` before it reaches the backend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssigneeUserId {
+    /// The current authenticated user (resolved by the API or CLI).
+    SelfUser,
+    /// A specific numeric user ID.
+    Id(i64),
+}
+
+impl AssigneeUserId {
+    /// Returns the numeric ID, or `None` if this is `SelfUser`.
+    pub fn as_id(&self) -> Option<i64> {
+        match self {
+            AssigneeUserId::Id(id) => Some(*id),
+            AssigneeUserId::SelfUser => None,
+        }
+    }
+}
+
+impl Serialize for AssigneeUserId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            AssigneeUserId::SelfUser => serializer.serialize_str("self"),
+            AssigneeUserId::Id(id) => serializer.serialize_i64(*id),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AssigneeUserId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = AssigneeUserId;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("\"self\" or an integer user ID")
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                if v == "self" {
+                    Ok(AssigneeUserId::SelfUser)
+                } else {
+                    Err(E::custom(format!("expected \"self\" or integer, got \"{v}\"")))
+                }
+            }
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
+                Ok(AssigneeUserId::Id(v))
+            }
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
+                Ok(AssigneeUserId::Id(v as i64))
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateTaskParams {
     pub title: String,
@@ -811,7 +871,7 @@ pub struct CreateTaskParams {
     #[serde(default)]
     pub dependencies: Vec<i64>,
     #[serde(default)]
-    pub assignee_user_id: Option<i64>,
+    pub assignee_user_id: Option<AssigneeUserId>,
 }
 
 #[derive(Clone)]
@@ -822,7 +882,7 @@ pub struct UpdateTaskParams {
     pub plan: Option<Option<String>>,
     pub priority: Option<Priority>,
     pub assignee_session_id: Option<Option<String>>,
-    pub assignee_user_id: Option<Option<i64>>,
+    pub assignee_user_id: Option<Option<AssigneeUserId>>,
     pub started_at: Option<Option<String>>,
     pub completed_at: Option<Option<String>>,
     pub canceled_at: Option<Option<String>>,

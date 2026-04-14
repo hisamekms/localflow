@@ -9,7 +9,7 @@ use crate::domain::metadata_field::{
 };
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
-    self, CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus,
+    self, AssigneeUserId, CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
@@ -886,7 +886,7 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
 
     conn.execute(
         "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number, assignee_user_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        rusqlite::params![params.title, params.background, params.description, priority, params.branch, params.pr_url, metadata_str, project_id, task_number, params.assignee_user_id],
+        rusqlite::params![params.title, params.background, params.description, priority, params.branch, params.pr_url, metadata_str, project_id, task_number, params.assignee_user_id.as_ref().and_then(|a| a.as_id())],
     )?;
     let task_id = conn.last_insert_rowid();
 
@@ -1043,7 +1043,7 @@ fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<
     }
     if let Some(ref assignee_user_id) = params.assignee_user_id {
         columns.push(TaskColumn::AssigneeUserId);
-        values.push(Box::new(*assignee_user_id));
+        values.push(Box::new(assignee_user_id.as_ref().and_then(|a| a.as_id())));
     }
     if let Some(ref started_at) = params.started_at {
         columns.push(TaskColumn::StartedAt);
@@ -2781,11 +2781,11 @@ mod tests {
             username: "user2".to_string(), sub: None, display_name: None, email: None,
         }).unwrap();
         let t1 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(1),
+            assignee_user_id: Some(AssigneeUserId::Id(1)),
             ..default_create_params("user1-task")
         }).unwrap();
         let t2 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(user2.id()),
+            assignee_user_id: Some(AssigneeUserId::Id(user2.id())),
             ..default_create_params("user2-task")
         }).unwrap();
         transition_to(&conn, t1.id(), TaskStatus::Todo);
@@ -2800,7 +2800,7 @@ mod tests {
         let (_tmp, conn) = setup();
         // Lower priority (P2) assigned task
         let t1 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(1),
+            assignee_user_id: Some(AssigneeUserId::Id(1)),
             priority: Some(Priority::P2),
             ..default_create_params("assigned")
         }).unwrap();
@@ -2821,7 +2821,7 @@ mod tests {
     fn next_task_excludes_unassigned_when_flag_unset() {
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(1),
+            assignee_user_id: Some(AssigneeUserId::Id(1)),
             priority: Some(Priority::P2),
             ..default_create_params("assigned")
         }).unwrap();
@@ -2841,7 +2841,7 @@ mod tests {
     fn next_task_no_filter_when_user_id_none() {
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(1),
+            assignee_user_id: Some(AssigneeUserId::Id(1)),
             priority: Some(Priority::P2),
             ..default_create_params("assigned")
         }).unwrap();
@@ -2861,7 +2861,7 @@ mod tests {
     fn create_task_sets_assignee_user_id() {
         let (_tmp, conn) = setup();
         let task = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(1),
+            assignee_user_id: Some(AssigneeUserId::Id(1)),
             ..default_create_params("with-assignee")
         }).unwrap();
         assert_eq!(task.assignee_user_id(), Some(1));
@@ -2874,11 +2874,11 @@ mod tests {
             username: "user2".to_string(), sub: None, display_name: None, email: None,
         }).unwrap();
         let _t1 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(1),
+            assignee_user_id: Some(AssigneeUserId::Id(1)),
             ..default_create_params("user1-task")
         }).unwrap();
         let _t2 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(user2.id()),
+            assignee_user_id: Some(AssigneeUserId::Id(user2.id())),
             ..default_create_params("user2-task")
         }).unwrap();
         let _t3 = create_task(&conn, 1, &CreateTaskParams {

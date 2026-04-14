@@ -37,8 +37,6 @@ start_servers() {
 
   # Create test user and API key on upstream
   TEST_TOKEN=$(create_test_user_key "$UPSTREAM_URL" "$MASTER_KEY")
-  # Capture username so --assignee-user-id self resolves via remote user lookup
-  TEST_USERNAME=$(curl -sf -H "Authorization: Bearer $TEST_TOKEN" "$UPSTREAM_URL/api/v1/users" | jq -r '.[-1].username')
 }
 
 stop_servers() {
@@ -62,7 +60,7 @@ trap cleanup_all EXIT
 
 # Helper: run senko CLI through the relay server
 run_relay() {
-  SENKO_USER="$TEST_USERNAME" SENKO_CLI_REMOTE_URL="$RELAY_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" \
+  SENKO_CLI_REMOTE_URL="$RELAY_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" \
     "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 

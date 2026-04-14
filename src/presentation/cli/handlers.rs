@@ -21,7 +21,7 @@ use crate::application::{HookTrigger, ProjectOperations};
 use crate::infra::config::{CliOverrides, Config};
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
-    CreateTaskParams, ListTasksFilter, Priority, TaskStatus,
+    AssigneeUserId, CreateTaskParams, ListTasksFilter, Priority, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::metadata_field::{CreateMetadataFieldParams, MetadataFieldType, validate_field_name};
@@ -82,15 +82,25 @@ async fn resolve_current_user_id(root: &Path, config: &Config) -> Result<Option<
     Ok(Some(resolve_user_id(&*user_ops, config).await?))
 }
 
-async fn parse_assignee_user_id(value: &str, root: &Path, config: &Config) -> Result<i64> {
+fn parse_assignee_user_id(value: &str) -> Result<AssigneeUserId> {
     if value == "self" {
-        resolve_current_user_id(root, config)
-            .await?
-            .context("'self' を解決できません: user.name が未設定です")
+        Ok(AssigneeUserId::SelfUser)
     } else {
         value
             .parse::<i64>()
+            .map(AssigneeUserId::Id)
             .context("--assignee-user-id は 'self' または数値IDです")
+    }
+}
+
+/// Resolve [`AssigneeUserId::SelfUser`] to a numeric ID.
+/// Only needed in local mode; in remote mode the API resolves "self".
+async fn resolve_assignee(value: AssigneeUserId, root: &Path, config: &Config) -> Result<i64> {
+    match value {
+        AssigneeUserId::Id(id) => Ok(id),
+        AssigneeUserId::SelfUser => resolve_current_user_id(root, config)
+            .await?
+            .context("'self' を解決できません: user.name が未設定です"),
     }
 }
 
@@ -117,8 +127,8 @@ pub async fn cmd_add(
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
-    let resolved_assignee = match assignee_user_id {
-        Some(ref val) => Some(parse_assignee_user_id(val, &root, &config).await?),
+    let parsed_assignee = match assignee_user_id {
+        Some(ref val) => Some(parse_assignee_user_id(val)?),
         None => None,
     };
 
@@ -161,13 +171,23 @@ pub async fn cmd_add(
             metadata: metadata_val,
             tags: tag,
             dependencies: depends_on,
-            assignee_user_id: resolved_assignee,
+            assignee_user_id: parsed_assignee.clone(),
         }
     };
 
     // CLI --assignee-user-id overrides JSON input
-    if resolved_assignee.is_some() {
-        params.assignee_user_id = resolved_assignee;
+    if parsed_assignee.is_some() {
+        params.assignee_user_id = parsed_assignee;
+    }
+
+    // In local mode, resolve SelfUser to numeric ID before passing to backend
+    if config.cli.remote.url.is_none() {
+        if let Some(AssigneeUserId::SelfUser) = &params.assignee_user_id {
+            let uid = resolve_current_user_id(&root, &config)
+                .await?
+                .context("'self' を解決できません: user.name が未設定です")?;
+            params.assignee_user_id = Some(AssigneeUserId::Id(uid));
+        }
     }
 
     if cli.dry_run {
@@ -1131,7 +1151,14 @@ pub async fn cmd_edit(
         assignee_user_id: if clear_assignee_user_id {
             Some(None)
         } else if let Some(val) = assignee_user_id {
-            Some(Some(parse_assignee_user_id(val, &project_root, &config).await?))
+            let parsed = parse_assignee_user_id(val)?;
+            if config.cli.remote.url.is_none() {
+                // Local mode: resolve SelfUser to numeric ID
+                Some(Some(AssigneeUserId::Id(resolve_assignee(parsed, &project_root, &config).await?)))
+            } else {
+                // Remote mode: send as-is (API resolves "self")
+                Some(Some(parsed))
+            }
         } else {
             None
         },

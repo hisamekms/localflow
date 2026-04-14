@@ -27,7 +27,7 @@ use crate::infra::config::Config;
 use crate::domain::metadata_field::CreateMetadataFieldParams;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
-    CompletionPolicy, CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus,
+    AssigneeUserId, CompletionPolicy, CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
@@ -731,16 +731,17 @@ async fn list_tasks(
 }
 
 /// Resolve `"self"` in `assignee_user_id` to the authenticated user's numeric ID.
-fn resolve_assignee_self(body: &mut serde_json::Value, auth: &OptionalAuthUser) -> Result<(), ApiError> {
+/// If no auth user is available (e.g. on a relay server), `"self"` is left as-is
+/// for the upstream to resolve.
+fn resolve_assignee_self(body: &mut serde_json::Value, auth: &OptionalAuthUser) {
     if let Some(value) = body.get("assignee_user_id") {
         if value.as_str() == Some("self") {
-            let user_id = auth.0.as_ref()
-                .map(|a| a.user.id())
-                .ok_or_else(|| ApiError::BadRequest("assignee_user_id \"self\" requires authentication".into()))?;
-            body["assignee_user_id"] = serde_json::Value::Number(user_id.into());
+            if let Some(user_id) = auth.0.as_ref().map(|a| a.user.id()) {
+                body["assignee_user_id"] = serde_json::Value::Number(user_id.into());
+            }
+            // No auth (relay): leave "self" for upstream to resolve
         }
     }
-    Ok(())
 }
 
 // POST /api/v1/projects/{project_id}/tasks
@@ -751,7 +752,7 @@ async fn create_task(
     Json(mut body): Json<serde_json::Value>,
 ) -> Result<(StatusCode, Json<TaskResponse>), ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    resolve_assignee_self(&mut body, &auth)?;
+    resolve_assignee_self(&mut body, &auth);
     let params: CreateTaskParams = serde_json::from_value(body)
         .map_err(|e| ApiError::BadRequest(format!("invalid request body: {e}")))?;
     let task = state.task_service.create_task(project_id, &params).await.map_err(classify_error)?;
@@ -811,12 +812,12 @@ async fn edit_task(
                     let uid = auth.0.as_ref()
                         .map(|a| a.user.id())
                         .ok_or_else(|| ApiError::BadRequest("assignee_user_id \"self\" requires authentication".into()))?;
-                    Some(Some(uid))
+                    Some(Some(AssigneeUserId::Id(uid)))
                 }
                 Some(ref v) => {
                     let uid = v.as_i64()
                         .ok_or_else(|| ApiError::BadRequest("assignee_user_id must be \"self\" or integer".into()))?;
-                    Some(Some(uid))
+                    Some(Some(AssigneeUserId::Id(uid)))
                 }
                 None => None,
             }

@@ -17,7 +17,6 @@ start_server() {
   SERVER_PID=$!
   wait_for "API server ready" 10 "curl -sf $API_URL/api/v1/health >/dev/null"
   TEST_TOKEN=$(create_test_user_key "$API_URL" "$MASTER_KEY")
-  TEST_USERNAME=$(curl -sf -H "Authorization: Bearer $TEST_TOKEN" "$API_URL/api/v1/users" | jq -r '.[-1].username')
 }
 
 stop_server() {
@@ -35,7 +34,7 @@ cleanup_all() {
 trap cleanup_all EXIT
 
 run_http() {
-  SENKO_USER="$TEST_USERNAME" SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
+  SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
 clear_hook_log() {

@@ -19,12 +19,11 @@ wait_for "API server ready" 10 "curl -sf $API_URL/api/v1/health >/dev/null"
 
 # Create a real user and API key (master key is only for user creation)
 TEST_TOKEN=$(create_test_user_key "$API_URL" "$MASTER_KEY")
-# Capture username so --assignee-user-id self resolves via remote user lookup
-TEST_USERNAME=$(curl -sf -H "Authorization: Bearer $TEST_TOKEN" "$API_URL/api/v1/users" | jq -r '.[-1].username')
 
 # Helper: run senko CLI in HTTP backend mode
+# SENKO_USER is not needed: --assignee-user-id self is resolved by the API from auth token
 run_http() {
-  SENKO_USER="$TEST_USERNAME" SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
+  SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="$TEST_TOKEN" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
 echo "--- Test: HTTP Backend Mode ---"
