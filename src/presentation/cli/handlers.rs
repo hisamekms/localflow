@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 
 use super::{
@@ -13,7 +14,7 @@ use crate::bootstrap::{
     create_remote_hook_data, create_remote_metadata_field_operations,
     create_remote_project_operations, create_remote_user_operations,
     create_task_operations, create_user_service,
-    resolve_project_id, DEFAULT_PROJECT_ID,
+    resolve_project_id, resolve_user_id, DEFAULT_PROJECT_ID,
 };
 use crate::bootstrap::hook as hooks;
 use crate::application::{HookTrigger, ProjectOperations};
@@ -68,6 +69,31 @@ fn ensure_cli_token(config: &mut Config) {
     }
 }
 
+async fn resolve_current_user_id(root: &Path, config: &Config) -> Result<Option<i64>> {
+    if config.user.name.is_none() {
+        return Ok(None);
+    }
+    let user_ops: Arc<dyn UserOperations> = if config.cli.remote.url.is_some() {
+        Arc::new(create_remote_user_operations(config))
+    } else {
+        let backend = create_backend(root, config)?;
+        Arc::new(create_user_service(backend))
+    };
+    Ok(Some(resolve_user_id(&*user_ops, config).await?))
+}
+
+async fn parse_assignee_user_id(value: &str, root: &Path, config: &Config) -> Result<i64> {
+    if value == "self" {
+        resolve_current_user_id(root, config)
+            .await?
+            .context("'self' を解決できません: user.name が未設定です")
+    } else {
+        value
+            .parse::<i64>()
+            .context("--assignee-user-id は 'self' または数値IDです")
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_add(
     cli: &Cli,
@@ -84,13 +110,19 @@ pub async fn cmd_add(
     metadata: Option<String>,
     from_json: bool,
     from_json_file: Option<PathBuf>,
+    assignee_user_id: Option<String>,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
-    let params = if from_json {
+    let resolved_assignee = match assignee_user_id {
+        Some(ref val) => Some(parse_assignee_user_id(val, &root, &config).await?),
+        None => None,
+    };
+
+    let mut params = if from_json {
         let mut buf = String::new();
         std::io::stdin()
             .read_to_string(&mut buf)
@@ -129,9 +161,14 @@ pub async fn cmd_add(
             metadata: metadata_val,
             tags: tag,
             dependencies: depends_on,
-            assignee_user_id: None,
+            assignee_user_id: resolved_assignee,
         }
     };
+
+    // CLI --assignee-user-id overrides JSON input
+    if resolved_assignee.is_some() {
+        params.assignee_user_id = resolved_assignee;
+    }
 
     if cli.dry_run {
         let mut operations = vec![format!("Create task with title \"{}\"", params.title)];
@@ -189,6 +226,7 @@ pub async fn cmd_list(
     tag: Vec<String>,
     depends_on: Option<i64>,
     ready: bool,
+    include_unassigned: bool,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
@@ -201,13 +239,19 @@ pub async fn cmd_list(
         .collect::<std::result::Result<Vec<_>, _>>()
         .context("invalid status value")?;
 
+    let assignee_user_id = if ready {
+        resolve_current_user_id(&root, &config).await?
+    } else {
+        None
+    };
+
     let filter = ListTasksFilter {
         statuses,
         tags: tag,
         depends_on,
         ready,
-        assignee_user_id: None,
-        include_unassigned: false,
+        assignee_user_id,
+        include_unassigned,
     };
 
     let tasks = task_ops.list_tasks(project_id, &filter).await?;
@@ -346,7 +390,7 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, metadata:
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
-    let user_id = None;
+    let user_id = resolve_current_user_id(&root, &config).await?;
     let metadata: Option<serde_json::Value> = metadata
         .map(|s| serde_json::from_str(&s))
         .transpose()
@@ -380,12 +424,12 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, metadata:
     Ok(())
 }
 
-pub async fn cmd_next(cli: &Cli, session_id: Option<String>, metadata: Option<String>) -> Result<()> {
+pub async fn cmd_next(cli: &Cli, session_id: Option<String>, metadata: Option<String>, include_unassigned: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
-    let user_id = None;
+    let user_id = resolve_current_user_id(&root, &config).await?;
     let metadata: Option<serde_json::Value> = metadata
         .map(|s| serde_json::from_str(&s))
         .transpose()
@@ -403,7 +447,7 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, metadata: Option<St
         return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
     }
 
-    let updated = task_ops.next_task(project_id, session_id, user_id, false, metadata).await?;
+    let updated = task_ops.next_task(project_id, session_id, user_id, include_unassigned, metadata).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -976,6 +1020,8 @@ pub async fn cmd_edit(
     clear_pr_url: bool,
     metadata: &Option<String>,
     clear_metadata: bool,
+    assignee_user_id: &Option<String>,
+    clear_assignee_user_id: bool,
     set_tags: &Option<Vec<String>>,
     set_definition_of_done: &Option<Vec<String>>,
     set_in_scope: &Option<Vec<String>>,
@@ -1082,7 +1128,13 @@ pub async fn cmd_edit(
         },
         priority: *priority,
         assignee_session_id: None,
-        assignee_user_id: None,
+        assignee_user_id: if clear_assignee_user_id {
+            Some(None)
+        } else if let Some(val) = assignee_user_id {
+            Some(Some(parse_assignee_user_id(val, &project_root, &config).await?))
+        } else {
+            None
+        },
         started_at: None,
         completed_at: None,
         canceled_at: None,
@@ -2055,6 +2107,7 @@ mod tests {
                 branch: None,
                 metadata: None,
                 from_json_file: None,
+                assignee_user_id: None,
             },
         };
         cmd_add(
@@ -2071,6 +2124,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
         )
         .await
@@ -2117,6 +2171,7 @@ mod tests {
                 branch: None,
                 metadata: None,
                 from_json_file: None,
+                assignee_user_id: None,
             },
         };
         cmd_add(
@@ -2134,6 +2189,7 @@ mod tests {
             None,
             false,
             Some(json_path),
+            None,
         )
         .await
         .unwrap();
@@ -2171,6 +2227,7 @@ mod tests {
                 branch: None,
                 metadata: None,
                 from_json_file: None,
+                assignee_user_id: None,
             },
         };
         let result = cmd_add(
@@ -2187,6 +2244,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
         ).await;
         assert!(result.is_err());
@@ -2223,6 +2281,7 @@ mod tests {
                 branch: None,
                 metadata: None,
                 from_json_file: None,
+                assignee_user_id: None,
             },
         };
         cmd_add(
@@ -2239,6 +2298,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
         )
         .await
@@ -2275,6 +2335,7 @@ mod tests {
                 branch: None,
                 metadata: None,
                 from_json_file: None,
+                assignee_user_id: None,
             },
         };
         cmd_add(
@@ -2291,6 +2352,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
         )
         .await

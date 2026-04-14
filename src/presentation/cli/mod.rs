@@ -141,6 +141,9 @@ pub enum Command {
         /// Read JSON from file
         #[arg(long, conflicts_with_all = ["title", "background", "description", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on", "branch", "metadata", "from_json"])]
         from_json_file: Option<PathBuf>,
+        /// Assign to user ("self" for current user, or numeric user ID)
+        #[arg(long)]
+        assignee_user_id: Option<String>,
     },
     /// List tasks
     List {
@@ -156,6 +159,9 @@ pub enum Command {
         /// Show only ready tasks (todo with all deps completed)
         #[arg(long)]
         ready: bool,
+        /// Include unassigned tasks (with --ready)
+        #[arg(long)]
+        include_unassigned: bool,
     },
     /// Get task details
     Get {
@@ -169,6 +175,9 @@ pub enum Command {
         /// JSON string to set as task metadata
         #[arg(long)]
         metadata: Option<String>,
+        /// Include unassigned tasks
+        #[arg(long)]
+        include_unassigned: bool,
     },
     /// Transition a task from draft to todo
     Ready {
@@ -223,6 +232,12 @@ pub enum Command {
         metadata: Option<String>,
         #[arg(long)]
         clear_metadata: bool,
+        /// Assign to user ("self" for current user, or numeric user ID)
+        #[arg(long)]
+        assignee_user_id: Option<String>,
+        /// Remove assignee
+        #[arg(long)]
+        clear_assignee_user_id: bool,
         // Array set
         #[arg(long, num_args = 0..)]
         set_tags: Option<Vec<String>>,
@@ -747,6 +762,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             ref metadata,
             from_json,
             ref from_json_file,
+            ref assignee_user_id,
         } => handlers::cmd_add(
             &cli,
             title.clone(),
@@ -762,15 +778,17 @@ pub async fn run(cli: Cli) -> Result<()> {
             metadata.clone(),
             from_json,
             from_json_file.clone(),
+            assignee_user_id.clone(),
         ).await,
         Command::List {
             ref status,
             ref tag,
             ref depends_on,
             ready,
-        } => handlers::cmd_list(&cli, status.clone(), tag.clone(), *depends_on, ready).await,
+            include_unassigned,
+        } => handlers::cmd_list(&cli, status.clone(), tag.clone(), *depends_on, ready, include_unassigned).await,
         Command::Get { task_id } => handlers::cmd_get(&cli, task_id).await,
-        Command::Next { ref session_id, ref metadata } => handlers::cmd_next(&cli, session_id.clone(), metadata.clone()).await,
+        Command::Next { ref session_id, ref metadata, include_unassigned } => handlers::cmd_next(&cli, session_id.clone(), metadata.clone(), include_unassigned).await,
         Command::Ready { id } => handlers::cmd_ready(&cli, id).await,
         Command::Start { id, ref session_id, ref metadata } => handlers::cmd_start(&cli, id, session_id.clone(), metadata.clone()).await,
         Command::Edit {
@@ -790,6 +808,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             clear_pr_url,
             ref metadata,
             clear_metadata,
+            ref assignee_user_id,
+            clear_assignee_user_id,
             ref set_tags,
             ref set_definition_of_done,
             ref set_in_scope,
@@ -822,6 +842,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             clear_pr_url,
             metadata,
             clear_metadata,
+            assignee_user_id,
+            clear_assignee_user_id,
             set_tags,
             set_definition_of_done,
             set_in_scope,
@@ -978,6 +1000,7 @@ mod tests {
                 metadata: _,
                 from_json,
                 from_json_file,
+                assignee_user_id,
             } => {
                 assert_eq!(title, Some("task".to_string()));
                 assert_eq!(background, Some("bg".to_string()));
@@ -991,6 +1014,7 @@ mod tests {
                 assert!(branch.is_none());
                 assert!(!from_json);
                 assert!(from_json_file.is_none());
+                assert!(assignee_user_id.is_none());
             }
             _ => panic!("expected Add"),
         }
@@ -1047,11 +1071,13 @@ mod tests {
                 tag,
                 depends_on,
                 ready,
+                include_unassigned,
             } => {
                 assert_eq!(status, vec!["todo", "in_progress"]);
                 assert_eq!(tag, vec!["rust", "web"]);
                 assert_eq!(depends_on, Some(3));
                 assert!(ready);
+                assert!(!include_unassigned);
             }
             _ => panic!("expected List"),
         }
@@ -1438,6 +1464,66 @@ mod tests {
                 assert_eq!(name, "sprint");
             }
             _ => panic!("expected Project MetadataField Remove"),
+        }
+    }
+
+    #[test]
+    fn parse_add_with_assignee_user_id() {
+        let cli = Cli::parse_from(["senko", "add", "--title", "test", "--assignee-user-id", "self"]);
+        match cli.command {
+            Command::Add { assignee_user_id, .. } => {
+                assert_eq!(assignee_user_id, Some("self".to_string()));
+            }
+            _ => panic!("expected Add"),
+        }
+    }
+
+    #[test]
+    fn parse_edit_with_assignee_user_id() {
+        let cli = Cli::parse_from(["senko", "edit", "1", "--assignee-user-id", "42"]);
+        match cli.command {
+            Command::Edit { id, assignee_user_id, clear_assignee_user_id, .. } => {
+                assert_eq!(id, 1);
+                assert_eq!(assignee_user_id, Some("42".to_string()));
+                assert!(!clear_assignee_user_id);
+            }
+            _ => panic!("expected Edit"),
+        }
+    }
+
+    #[test]
+    fn parse_edit_clear_assignee() {
+        let cli = Cli::parse_from(["senko", "edit", "1", "--clear-assignee-user-id"]);
+        match cli.command {
+            Command::Edit { id, assignee_user_id, clear_assignee_user_id, .. } => {
+                assert_eq!(id, 1);
+                assert!(assignee_user_id.is_none());
+                assert!(clear_assignee_user_id);
+            }
+            _ => panic!("expected Edit"),
+        }
+    }
+
+    #[test]
+    fn parse_next_with_include_unassigned() {
+        let cli = Cli::parse_from(["senko", "next", "--include-unassigned"]);
+        match cli.command {
+            Command::Next { include_unassigned, .. } => {
+                assert!(include_unassigned);
+            }
+            _ => panic!("expected Next"),
+        }
+    }
+
+    #[test]
+    fn parse_list_with_include_unassigned() {
+        let cli = Cli::parse_from(["senko", "list", "--ready", "--include-unassigned"]);
+        match cli.command {
+            Command::List { ready, include_unassigned, .. } => {
+                assert!(ready);
+                assert!(include_unassigned);
+            }
+            _ => panic!("expected List"),
         }
     }
 }
