@@ -636,7 +636,15 @@ impl Task {
     pub fn start(mut self, assignee_session_id: Option<String>, assignee_user_id: Option<i64>, started_at: String, metadata: Option<serde_json::Value>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         self.status = self.status.transition_to(TaskStatus::InProgress)?;
         self.assignee_session_id = assignee_session_id;
-        self.assignee_user_id = assignee_user_id;
+        if let Some(starting_uid) = assignee_user_id {
+            if let Some(current_uid) = self.assignee_user_id {
+                if current_uid != starting_uid {
+                    anyhow::bail!("task is assigned to user {current_uid}, cannot be started by user {starting_uid}");
+                }
+            } else {
+                self.assignee_user_id = Some(starting_uid);
+            }
+        }
         if let Some(m) = metadata {
             self.metadata = Some(m);
         }
@@ -802,6 +810,8 @@ pub struct CreateTaskParams {
     pub tags: Vec<String>,
     #[serde(default)]
     pub dependencies: Vec<i64>,
+    #[serde(default)]
+    pub assignee_user_id: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -829,6 +839,8 @@ pub struct ListTasksFilter {
     pub tags: Vec<String>,
     pub depends_on: Option<i64>,
     pub ready: bool,
+    pub assignee_user_id: Option<i64>,
+    pub include_unassigned: bool,
 }
 
 #[derive(Clone)]
@@ -1096,6 +1108,61 @@ mod tests {
     fn task_start_from_draft_fails() {
         let task = make_task(TaskStatus::Draft);
         assert!(task.start(None, None, "2026-01-02T00:00:00Z".to_string(), None).is_err());
+    }
+
+    #[test]
+    fn start_unassigned_task_sets_assignee() {
+        let task = make_task(TaskStatus::Todo);
+        assert_eq!(task.assignee_user_id(), None);
+        let (task, _) = task.start(None, Some(5), "2026-01-02T00:00:00Z".to_string(), None).unwrap();
+        assert_eq!(task.assignee_user_id(), Some(5));
+    }
+
+    #[test]
+    fn start_self_assigned_task_succeeds() {
+        let task = Task::new(
+            1, 1, 1, "test".to_string(), None, None, None, Priority::P2, TaskStatus::Todo,
+            None, Some(5),
+            "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        );
+        let (task, _) = task.start(None, Some(5), "2026-01-02T00:00:00Z".to_string(), None).unwrap();
+        assert_eq!(task.assignee_user_id(), Some(5));
+    }
+
+    #[test]
+    fn start_other_assigned_task_fails() {
+        let task = Task::new(
+            1, 1, 1, "test".to_string(), None, None, None, Priority::P2, TaskStatus::Todo,
+            None, Some(5),
+            "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        );
+        let err = task.start(None, Some(99), "2026-01-02T00:00:00Z".to_string(), None).unwrap_err();
+        assert!(err.to_string().contains("assigned to user 5"));
+        assert!(err.to_string().contains("cannot be started by user 99"));
+    }
+
+    #[test]
+    fn start_with_none_user_preserves_assignee() {
+        let task = Task::new(
+            1, 1, 1, "test".to_string(), None, None, None, Priority::P2, TaskStatus::Todo,
+            None, Some(5),
+            "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        );
+        let (task, _) = task.start(None, None, "2026-01-02T00:00:00Z".to_string(), None).unwrap();
+        assert_eq!(task.assignee_user_id(), Some(5));
+    }
+
+    #[test]
+    fn start_with_none_user_unassigned_stays_none() {
+        let task = make_task(TaskStatus::Todo);
+        let (task, _) = task.start(None, None, "2026-01-02T00:00:00Z".to_string(), None).unwrap();
+        assert_eq!(task.assignee_user_id(), None);
     }
 
     #[test]

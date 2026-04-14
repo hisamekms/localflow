@@ -1623,6 +1623,7 @@ mod tests {
             metadata: None,
             tags: vec![],
             dependencies: vec![],
+            assignee_user_id: None,
         }
     }
 

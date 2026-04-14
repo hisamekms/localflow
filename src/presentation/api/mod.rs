@@ -717,6 +717,8 @@ async fn list_tasks(
         tags: query.tag,
         depends_on: query.depends_on,
         ready: query.ready.unwrap_or(false),
+        assignee_user_id: None,
+        include_unassigned: false,
     };
     let tasks = state.task_service.list_tasks(project_id, &filter).await.map_err(classify_error)?;
     Ok(Json(tasks.into_iter().map(TaskResponse::from).collect()))

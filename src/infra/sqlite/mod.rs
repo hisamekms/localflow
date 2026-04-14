@@ -1984,6 +1984,7 @@ mod tests {
             metadata: None,
             tags: vec![],
             dependencies: vec![],
+            assignee_user_id: None,
         }
     }
 
@@ -2100,6 +2101,7 @@ mod tests {
                 metadata: None,
                 tags: vec!["rust".to_string(), "cli".to_string()],
                 dependencies: vec![],
+                assignee_user_id: None,
             },
         )
         .unwrap();
@@ -2254,6 +2256,7 @@ mod tests {
                 metadata: None,
                 tags: vec!["tag".to_string()],
                 dependencies: vec![],
+                assignee_user_id: None,
             },
         )
         .unwrap();
@@ -2314,6 +2317,8 @@ mod tests {
                 tags: vec![],
                 depends_on: None,
                 ready: false,
+                assignee_user_id: None,
+                include_unassigned: false,
             },
         )
         .unwrap();
@@ -2328,6 +2333,8 @@ mod tests {
                 tags: vec![],
                 depends_on: None,
                 ready: false,
+                assignee_user_id: None,
+                include_unassigned: false,
             },
         )
         .unwrap();
@@ -2361,6 +2368,8 @@ mod tests {
                 tags: vec!["rust".to_string()],
                 depends_on: None,
                 ready: false,
+                assignee_user_id: None,
+                include_unassigned: false,
             },
         )
         .unwrap();
@@ -2409,6 +2418,8 @@ mod tests {
                 tags: vec![],
                 depends_on: None,
                 ready: true,
+                assignee_user_id: None,
+                include_unassigned: false,
             },
         ).unwrap();
 
@@ -3082,6 +3093,7 @@ mod tests {
             metadata: None,
             tags: vec![],
             dependencies: vec![],
+            assignee_user_id: None,
         }
     }
 
@@ -3104,6 +3116,7 @@ mod tests {
                     metadata: Some(serde_json::json!({"key": "value"})),
                     tags: vec!["backend".into()],
                     dependencies: vec![],
+                    assignee_user_id: None,
                 },
             )
             .await

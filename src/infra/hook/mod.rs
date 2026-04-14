@@ -825,6 +825,7 @@ command = "echo completed"
                 metadata: None,
                 tags: vec![],
                 dependencies: vec![],
+                assignee_user_id: None,
             },
         )
         .await
@@ -853,6 +854,7 @@ command = "echo completed"
                 metadata: None,
                 tags: vec![],
                 dependencies: vec![],
+                assignee_user_id: None,
             },
         )
         .await
@@ -885,6 +887,7 @@ command = "echo completed"
                 metadata: None,
                 tags: vec![],
                 dependencies: vec![],
+                assignee_user_id: None,
             },
         )
         .await
@@ -909,6 +912,7 @@ command = "echo completed"
                 metadata: None,
                 tags: vec![],
                 dependencies: vec![],
+                assignee_user_id: None,
             },
         )
         .await

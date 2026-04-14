@@ -129,6 +129,7 @@ pub async fn cmd_add(
             metadata: metadata_val,
             tags: tag,
             dependencies: depends_on,
+            assignee_user_id: None,
         }
     };
 
@@ -205,6 +206,8 @@ pub async fn cmd_list(
         tags: tag,
         depends_on,
         ready,
+        assignee_user_id: None,
+        include_unassigned: false,
     };
 
     let tasks = task_ops.list_tasks(project_id, &filter).await?;
