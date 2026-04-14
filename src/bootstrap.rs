@@ -12,6 +12,7 @@ use crate::application::port::TaskBackend;
 use crate::infra::config::{Config, LogConfig, LogFormat, RawConfig};
 use crate::infra::http::HttpBackend;
 use crate::infra::http::remote_metadata_field_ops::RemoteMetadataFieldOperations;
+use crate::infra::http::remote_project_ops::RemoteProjectOperations;
 use crate::infra::http::remote_task_ops::RemoteTaskOperations;
 use crate::infra::http::remote_user_ops::RemoteUserOperations;
 use crate::infra::hook::executor::ShellHookExecutor;
@@ -260,6 +261,12 @@ pub fn create_remote_user_operations(config: &Config) -> RemoteUserOperations {
     let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
     RemoteUserOperations::new(url, api_key)
+}
+
+pub fn create_remote_project_operations(config: &Config) -> RemoteProjectOperations {
+    let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
+    let api_key = config.cli.remote.token.clone();
+    RemoteProjectOperations::new(url, api_key)
 }
 
 pub fn create_metadata_field_service(backend: Arc<dyn TaskBackend>) -> MetadataFieldService {

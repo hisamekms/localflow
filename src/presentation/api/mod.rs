@@ -17,7 +17,6 @@ mod auth;
 
 use crate::domain::error::DomainError;
 use crate::application::{LocalTaskOperations, MetadataFieldOperations, MetadataFieldService, ProjectOperations, ProjectService, TaskOperations, UserOperations, UserService};
-use crate::application::auth as app_auth;
 use crate::application::auth::Permission;
 use crate::application::port::auth::AuthError;
 use crate::application::port::TaskBackend;
@@ -34,6 +33,10 @@ use crate::domain::task::{
 use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role, UpdateUserParams,
 };
+use crate::infra::http::remote_task_ops::RemoteTaskOperations;
+use crate::infra::http::remote_project_ops::RemoteProjectOperations;
+use crate::infra::http::remote_user_ops::RemoteUserOperations;
+use crate::infra::http::remote_metadata_field_ops::RemoteMetadataFieldOperations;
 use super::dto::{
     ApiKeyResponse, ApiKeyWithSecretResponse, AuthConfigOidc, AuthConfigResponse,
     CompleteTaskResponse, ConfigResponse, MeResponse, MetadataFieldResponse,
@@ -45,11 +48,10 @@ use super::dto::{
 struct AppState {
     project_root: Arc<PathBuf>,
     config_path: Option<Arc<PathBuf>>,
-    backend: Arc<dyn TaskBackend>,
-    task_service: Arc<LocalTaskOperations>,
-    project_service: Arc<ProjectService>,
-    user_service: Arc<UserService>,
-    metadata_field_ops: Arc<dyn MetadataFieldOperations>,
+    task_service: Arc<dyn TaskOperations>,
+    project_service: Arc<dyn ProjectOperations>,
+    user_service: Arc<dyn UserOperations>,
+    metadata_service: Arc<dyn MetadataFieldOperations>,
     auth_mode: Option<Arc<AuthMode>>,
     master_key_configured: bool,
     proxy_mode: bool,
@@ -82,9 +84,26 @@ async fn check_project_permission(
         if user.id() == 0 {
             return Ok(());
         }
-        app_auth::require_project_role(state.backend.as_ref(), user.id(), project_id, permission)
+        let member = state.project_service
+            .get_project_member(project_id, user.id())
             .await
-            .map_err(ApiError::from)?;
+            .map_err(|_| {
+                AuthError::Forbidden(format!(
+                    "user {} is not a member of project {}",
+                    user.id(), project_id
+                ))
+            })?;
+        let allowed = match permission {
+            Permission::View => true,
+            Permission::Edit => matches!(member.role(), Role::Owner | Role::Member),
+            Permission::Admin => matches!(member.role(), Role::Owner),
+        };
+        if !allowed {
+            return Err(ApiError::from(AuthError::Forbidden(format!(
+                "insufficient permissions: {:?} role cannot perform {:?} operations",
+                member.role(), permission
+            ))));
+        }
     }
     Ok(())
 }
@@ -380,29 +399,42 @@ pub async fn serve(
         );
     }
 
-    // Server always fires hooks (should_fire = true)
-    let backend_info = bootstrap::resolve_backend_info(config, &project_root);
-    let hook_executor = bootstrap::create_api_hook_executor(config.clone(), backend_info, backend.clone());
-    let pr_verifier = bootstrap::create_pr_verifier();
-    let completion_policy = CompletionPolicy::new(config.workflow.merge_via);
-    let task_service = Arc::new(LocalTaskOperations::new(
-        backend.clone(),
-        hook_executor,
-        pr_verifier,
-        completion_policy,
-    ));
-    let project_service = Arc::new(ProjectService::new(backend.clone()));
-    let user_service = Arc::new(UserService::new(backend.clone()));
-    let metadata_field_ops: Arc<dyn MetadataFieldOperations> = Arc::new(MetadataFieldService::new(backend.clone()));
+    // Build service implementations: Remote for relay mode, Local for standalone.
+    let (task_service, project_service, user_service, metadata_service): (
+        Arc<dyn TaskOperations>,
+        Arc<dyn ProjectOperations>,
+        Arc<dyn UserOperations>,
+        Arc<dyn MetadataFieldOperations>,
+    ) = if let Some(ref remote_url) = config.cli.remote.url {
+        let api_key = config.cli.remote.token.clone();
+        let backend_info = bootstrap::resolve_backend_info(config, &project_root);
+        let hook_executor = bootstrap::create_api_hook_executor(config.clone(), backend_info, backend);
+        (
+            Arc::new(RemoteTaskOperations::new(remote_url, api_key.clone(), hook_executor)),
+            Arc::new(RemoteProjectOperations::new(remote_url, api_key.clone())),
+            Arc::new(RemoteUserOperations::new(remote_url, api_key.clone())),
+            Arc::new(RemoteMetadataFieldOperations::new(remote_url, api_key)),
+        )
+    } else {
+        let backend_info = bootstrap::resolve_backend_info(config, &project_root);
+        let hook_executor = bootstrap::create_api_hook_executor(config.clone(), backend_info, backend.clone());
+        let pr_verifier = bootstrap::create_pr_verifier();
+        let completion_policy = CompletionPolicy::new(config.workflow.merge_via);
+        (
+            Arc::new(LocalTaskOperations::new(backend.clone(), hook_executor, pr_verifier, completion_policy)),
+            Arc::new(ProjectService::new(backend.clone())),
+            Arc::new(UserService::new(backend.clone())),
+            Arc::new(MetadataFieldService::new(backend)),
+        )
+    };
 
     let state = AppState {
         project_root: Arc::new(project_root),
         config_path: config_path.map(Arc::new),
-        backend,
         task_service,
         project_service,
         user_service,
-        metadata_field_ops,
+        metadata_service,
         auth_mode: auth_mode.map(Arc::new),
         master_key_configured: config.server.auth.api_key.master_key.is_some(),
         proxy_mode: config.cli.remote.url.is_some(),
@@ -1171,7 +1203,7 @@ async fn create_metadata_field(
     Json(body): Json<CreateMetadataFieldParams>,
 ) -> Result<(StatusCode, Json<MetadataFieldResponse>), ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let field = state.metadata_field_ops
+    let field = state.metadata_service
         .create_metadata_field(project_id, &body)
         .await
         .map_err(classify_error)?;
@@ -1185,7 +1217,7 @@ async fn list_metadata_fields(
     Path(project_id): Path<i64>,
 ) -> Result<Json<Vec<MetadataFieldResponse>>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let fields = state.metadata_field_ops
+    let fields = state.metadata_service
         .list_metadata_fields(project_id)
         .await
         .map_err(classify_error)?;
@@ -1199,7 +1231,7 @@ async fn delete_metadata_field_handler(
     Path((project_id, name)): Path<(i64, String)>,
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    state.metadata_field_ops
+    state.metadata_service
         .delete_metadata_field_by_name(project_id, &name)
         .await
         .map_err(classify_error)?;
