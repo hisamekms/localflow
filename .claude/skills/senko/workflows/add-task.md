@@ -41,14 +41,14 @@ Create one or multiple draft tasks based on Phase 1 results.
 **Single task:**
 
 ```bash
-senko add --title "<title>"
+senko add --title "<title>" --assignee-user-id self
 ```
 
 **Multiple tasks (split):**
 
 ```bash
-senko add --title "<sub-task 1 title>"
-senko add --title "<sub-task 2 title>"
+senko add --title "<sub-task 1 title>" --assignee-user-id self
+senko add --title "<sub-task 2 title>" --assignee-user-id self
 # ...
 ```
 
@@ -104,6 +104,6 @@ Display the finalized task details (or task graph if multiple) to the user.
 
 **Simple mode procedure:**
 
-1. Create draft: `senko add --title "<description>"`
+1. Create draft: `senko add --title "<description>" --assignee-user-id self`
 2. Set description: `senko edit <id> --description "<description>"`
 3. Transition: `senko ready <id>`
