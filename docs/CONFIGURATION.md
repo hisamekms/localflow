@@ -103,12 +103,6 @@ Stage-specific keys:
 | `required_claims` | map | `{}` | Required JWT claims (key-value pairs that must match). |
 | `callback_ports` | string[] | `[]` | Local ports for OIDC callback during CLI login. Supports individual ports and ranges (e.g., `["8400", "9000-9010"]`). |
 
-### `[server.auth.oidc.cli]`
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `browser` | bool | `true` | Auto-open browser for OIDC login. |
-
 ### `[server.auth.oidc.session]`
 
 | Key | Type | Default | Description |
@@ -133,6 +127,12 @@ Used for deployments behind a reverse proxy (e.g., API Gateway) that injects val
 | `oidc_client_id` | string | `null` | OIDC client ID returned by `GET /auth/config` (for CLI login discovery). |
 
 > **Note**: Only one authentication mode (API key, OIDC, or trusted headers) can be active at a time.
+
+### `[cli]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `browser` | bool | `true` | Auto-open browser for OIDC login. |
 
 ### `[cli.remote]`
 

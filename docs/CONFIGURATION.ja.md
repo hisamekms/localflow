@@ -103,12 +103,6 @@ senko config --init
 | `required_claims` | map | `{}` | 必須JWTクレーム（一致する必要があるキーバリューペア）。 |
 | `callback_ports` | string[] | `[]` | CLIログイン時のOIDCコールバック用ローカルポート。個別ポートと範囲をサポート（例: `["8400", "9000-9010"]`）。 |
 
-### `[server.auth.oidc.cli]`
-
-| キー | 型 | デフォルト | 説明 |
-|------|------|----------|------|
-| `browser` | bool | `true` | OIDCログイン時にブラウザを自動起動。 |
-
 ### `[server.auth.oidc.session]`
 
 | キー | 型 | デフォルト | 説明 |
@@ -133,6 +127,12 @@ senko config --init
 | `oidc_client_id` | string | `null` | `GET /auth/config` で返すOIDCクライアントID（CLIログインの検出用）。 |
 
 > **補足**: 認証モード（APIキー、OIDC、trusted headers）は同時に1つのみ有効にできます。
+
+### `[cli]`
+
+| キー | 型 | デフォルト | 説明 |
+|------|------|----------|------|
+| `browser` | bool | `true` | OIDCログイン時にブラウザを自動起動。 |
 
 ### `[cli.remote]`
 

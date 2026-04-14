@@ -455,7 +455,7 @@ export SENKO_TOKEN="クライアント自身のAPIキー"
 | `[server.auth.oidc]` | `scopes` | array | `["openid", "profile"]` | OIDCスコープ | - | - | 任意 | - |
 | `[server.auth.oidc]` | `required_claims` | table | - | 必須JWTクレーム（キーバリューペア） | - | - | 任意 | - |
 | `[server.auth.oidc]` | `callback_ports` | array | `[]` (空) | CLIログイン用コールバックポート | - | - | 任意 | - |
-| `[server.auth.oidc.cli]` | `browser` | bool | `true` | ブラウザ自動起動 | - | - | 任意 | - |
+| `[cli]` | `browser` | bool | `true` | ブラウザ自動起動 | - | - | 任意 | - |
 | `[server.auth.oidc.session]` | `ttl` | string | 無期限 | セッション有効期限（例: `"24h"`, `"30d"`） | - | 任意 | 任意 | - |
 | `[server.auth.oidc.session]` | `inactive_ttl` | string | 無期限 | 非アクティブ時の有効期限 | - | 任意 | 任意 | - |
 | `[server.auth.oidc.session]` | `max_per_user` | integer | 無制限 | ユーザーあたりの最大セッション数 | - | 任意 | 任意 | - |
