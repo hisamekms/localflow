@@ -173,7 +173,7 @@ impl TaskOperations for LocalTaskOperations {
 
         let prev_status = task.status();
 
-        // HttpBackend returns already-started tasks; skip start() in that case
+        // Remote server returns already-started tasks; skip start() in that case
         let task = if task.status() == TaskStatus::InProgress {
             task
         } else {
@@ -229,7 +229,7 @@ impl TaskOperations for LocalTaskOperations {
 
         let prev_status = task.status();
         // TaskTransitionPort::complete_task handles both local (domain complete + save)
-        // and HttpBackend (POST /complete with server-side PR verification).
+        // and RemoteTaskOperations (POST /complete with server-side PR verification).
         let task = self.backend.complete_task(project_id, id, skip_pr_check).await?;
 
         // Compute unblocked tasks

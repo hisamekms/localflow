@@ -9,7 +9,6 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::bootstrap::create_backend;
 use crate::infra::config::CliOverrides;
 use crate::domain::task::Priority;
 use crate::domain::user::Role;
@@ -848,8 +847,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             });
             #[cfg(feature = "aws-secrets")]
             config.resolve_secrets().await?;
-            let (task_ops, backend) = crate::bootstrap::create_task_operations(&root, &config)?;
-            let project_id = crate::bootstrap::resolve_project_id(&*backend, &config).await?;
+            let (task_ops, project_ops) = crate::bootstrap::create_task_operations(&root, &config)?;
+            let project_id = crate::bootstrap::resolve_project_id(&*project_ops, &config).await?;
             let port_is_explicit = config.web_port_is_explicit();
             let effective_port = config.web_port_or(3141);
             crate::presentation::web::serve(root, effective_port, port_is_explicit, &config, task_ops, project_id).await?;
@@ -870,15 +869,16 @@ pub async fn run(cli: Cli) -> Result<()> {
             if !is_proxy {
                 crate::bootstrap::validate_serve_auth(&config)?;
             }
-            let backend = create_backend(&root, &config)?;
             let port_is_explicit = config.server_port_is_explicit();
             let effective_port = config.server_port_or(3142);
-            let auth_mode = if is_proxy {
-                None
+            if is_proxy {
+                let hook_data = crate::bootstrap::create_remote_hook_data(&config);
+                crate::presentation::api::serve_proxy(root, effective_port, port_is_explicit, &config, cli.config.clone(), hook_data).await?;
             } else {
-                crate::bootstrap::create_auth_mode(&config, backend.clone())?
-            };
-            crate::presentation::api::serve(root, effective_port, port_is_explicit, &config, cli.config.clone(), backend, auth_mode).await?;
+                let backend = crate::bootstrap::create_backend(&root, &config)?;
+                let auth_mode = crate::bootstrap::create_auth_mode(&config, backend.clone())?;
+                crate::presentation::api::serve(root, effective_port, port_is_explicit, &config, cli.config.clone(), backend, auth_mode).await?;
+            }
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes, force } => {

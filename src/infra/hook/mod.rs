@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::infra::config::{Config, HookEntry};
 #[cfg(test)]
 use crate::infra::config::RawConfig;
-use crate::application::port::TaskBackend;
+use crate::application::port::HookDataSource;
 use crate::domain::task::{self, Task, TaskStatus, UnblockedTask};
 
 #[derive(Debug, Clone, Serialize)]
@@ -199,7 +199,7 @@ fn truncate_output(bytes: &[u8]) -> String {
 pub async fn build_event(
     event_name: &str,
     task: &Task,
-    backend: &dyn TaskBackend,
+    backend: &dyn HookDataSource,
     from_status: Option<TaskStatus>,
     unblocked: Option<Vec<UnblockedTask>>,
 ) -> HookEvent {
@@ -394,7 +394,7 @@ use crate::domain::{DEFAULT_PROJECT_ID, DEFAULT_USER_ID};
 
 pub async fn resolve_envelope_context(
     config: &Config,
-    backend: &dyn TaskBackend,
+    backend: &dyn HookDataSource,
 ) -> (EnvelopeProjectInfo, EnvelopeUserInfo) {
     let project = match config.project.name.as_deref() {
         Some(name) => backend
@@ -431,7 +431,7 @@ pub async fn fire_hooks(
     config: &Config,
     event_name: &str,
     task: &Task,
-    backend: &dyn TaskBackend,
+    backend: &dyn HookDataSource,
     from_status: Option<TaskStatus>,
     unblocked: Option<Vec<UnblockedTask>>,
     runtime_mode: &RuntimeMode,
@@ -520,7 +520,7 @@ pub async fn fire_hooks(
 /// Fire hooks for the `no_eligible_task` event (no task object in payload).
 pub async fn fire_no_eligible_task_hooks(
     config: &Config,
-    backend: &dyn TaskBackend,
+    backend: &dyn HookDataSource,
     project_id: i64,
     runtime_mode: &RuntimeMode,
     backend_info: &BackendInfo,
@@ -665,7 +665,7 @@ pub fn execute_hook_sync(command: &str, json: &str) -> Result<std::process::Exit
 /// Call this after `db::complete_task` with the set of ready task IDs
 /// captured before the completion.
 pub async fn compute_unblocked(
-    backend: &dyn TaskBackend,
+    backend: &dyn HookDataSource,
     project_id: i64,
     prev_ready_ids: &std::collections::HashSet<i64>,
 ) -> Vec<UnblockedTask> {
@@ -682,7 +682,7 @@ mod tests {
     };
     use crate::infra::sqlite::SqliteBackend;
     use crate::application::port::TaskQueryPort;
-    use crate::domain::{ProjectRepository, TaskRepository};
+    use crate::domain::TaskRepository;
     use std::sync::Mutex;
 
     /// Mutex to serialize tests that modify environment variables.
@@ -810,7 +810,7 @@ command = "echo completed"
     #[tokio::test]
     async fn event_has_stats() {
         let (_dir, backend) = setup_db();
-        backend.create_task(
+        TaskRepository::create_task(&backend,
             1,
             &crate::domain::task::CreateTaskParams {
                 title: "Task1".into(),
@@ -829,7 +829,7 @@ command = "echo completed"
         )
         .await
         .unwrap();
-        let task = backend.get_task(1, 1).await.unwrap();
+        let task = TaskRepository::get_task(&backend, 1, 1).await.unwrap();
         let event = build_event("task_added", &task, &backend, None, None).await;
         assert!(event.stats.contains_key("draft"));
         assert_eq!(*event.stats.get("draft").unwrap(), 1);
@@ -838,7 +838,7 @@ command = "echo completed"
     #[tokio::test]
     async fn event_has_ready_count() {
         let (_dir, backend) = setup_db();
-        backend.create_task(
+        TaskRepository::create_task(&backend,
             1,
             &crate::domain::task::CreateTaskParams {
                 title: "Ready".into(),
@@ -857,10 +857,10 @@ command = "echo completed"
         )
         .await
         .unwrap();
-        let task = backend.get_task(1, 1).await.unwrap();
+        let task = TaskRepository::get_task(&backend, 1, 1).await.unwrap();
         let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-        backend.save(&task).await.unwrap();
-        let task = backend.get_task(1, 1).await.unwrap();
+        TaskRepository::save(&backend, &task).await.unwrap();
+        let task = TaskRepository::get_task(&backend, 1, 1).await.unwrap();
         let event = build_event("task_added", &task, &backend, None, None).await;
         assert_eq!(event.ready_count, 1);
     }
@@ -870,7 +870,7 @@ command = "echo completed"
         let (_dir, backend) = setup_db();
 
         // Create task 1 (will be completed) and task 2 (depends on task 1)
-        backend.create_task(
+        TaskRepository::create_task(&backend,
             1,
             &crate::domain::task::CreateTaskParams {
                 title: "Dependency".into(),
@@ -889,12 +889,12 @@ command = "echo completed"
         )
         .await
         .unwrap();
-        let t1 = backend.get_task(1, 1).await.unwrap();
+        let t1 = TaskRepository::get_task(&backend, 1, 1).await.unwrap();
         let (t1, _) = t1.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
         let (t1, _) = t1.start(None, None, "2025-01-01T00:00:00Z".to_string(), None).unwrap();
-        backend.save(&t1).await.unwrap();
+        TaskRepository::save(&backend, &t1).await.unwrap();
 
-        backend.create_task(
+        TaskRepository::create_task(&backend,
             1,
             &crate::domain::task::CreateTaskParams {
                 title: "Blocked".into(),
@@ -913,19 +913,19 @@ command = "echo completed"
         )
         .await
         .unwrap();
-        let t2 = backend.get_task(1, 2).await.unwrap();
+        let t2 = TaskRepository::get_task(&backend, 1, 2).await.unwrap();
         let (t2, _) = t2.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
         let (t2, _) = t2.add_dependency(1, Some("2025-01-01T00:00:00Z".into())).unwrap();
-        backend.save(&t2).await.unwrap();
+        TaskRepository::save(&backend, &t2).await.unwrap();
 
         // Capture ready tasks before completion
         let prev_ready: std::collections::HashSet<i64> =
-            backend.list_ready_tasks(1).await.unwrap().iter().map(|t| t.id()).collect();
+            TaskQueryPort::list_ready_tasks(&backend, 1).await.unwrap().iter().map(|t| t.id()).collect();
 
         // Complete task 1
-        let t1 = backend.get_task(1, 1).await.unwrap();
+        let t1 = TaskRepository::get_task(&backend, 1, 1).await.unwrap();
         let (t1, _) = t1.complete("2025-01-01T00:00:00Z".to_string()).unwrap();
-        backend.save(&t1).await.unwrap();
+        TaskRepository::save(&backend, &t1).await.unwrap();
 
         let unblocked = compute_unblocked(&backend, 1, &prev_ready).await;
         assert_eq!(unblocked.len(), 1);

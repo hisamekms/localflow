@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::application::port::{HookTestPort, TaskBackend};
+use crate::application::port::{HookDataSource, HookTestPort};
 use crate::domain::task::Task;
 use crate::infra::config::Config;
 
@@ -18,7 +18,7 @@ pub struct ShellHookTestExecutor {
     config: Config,
     runtime_mode: RuntimeMode,
     backend_info: BackendInfo,
-    backend: Arc<dyn TaskBackend>,
+    backend: Arc<dyn HookDataSource>,
 }
 
 impl ShellHookTestExecutor {
@@ -26,7 +26,7 @@ impl ShellHookTestExecutor {
         config: Config,
         runtime_mode: RuntimeMode,
         backend_info: BackendInfo,
-        backend: Arc<dyn TaskBackend>,
+        backend: Arc<dyn HookDataSource>,
     ) -> Self {
         Self {
             config,

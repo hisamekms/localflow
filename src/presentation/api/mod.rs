@@ -382,6 +382,7 @@ struct EditTaskBody {
 
 // --- Server entry point ---
 
+/// Start the API server in standalone mode (local database backend).
 pub async fn serve(
     project_root: PathBuf,
     port: u16,
@@ -399,49 +400,72 @@ pub async fn serve(
         );
     }
 
-    // Build service implementations: Remote for relay mode, Local for standalone.
-    let (task_service, project_service, user_service, metadata_service): (
-        Arc<dyn TaskOperations>,
-        Arc<dyn ProjectOperations>,
-        Arc<dyn UserOperations>,
-        Arc<dyn MetadataFieldOperations>,
-    ) = if let Some(ref remote_url) = config.cli.remote.url {
-        let api_key = config.cli.remote.token.clone();
-        let backend_info = bootstrap::resolve_backend_info(config, &project_root);
-        let hook_executor = bootstrap::create_api_hook_executor(config.clone(), backend_info, backend);
-        (
-            Arc::new(RemoteTaskOperations::new(remote_url, api_key.clone(), hook_executor)),
-            Arc::new(RemoteProjectOperations::new(remote_url, api_key.clone())),
-            Arc::new(RemoteUserOperations::new(remote_url, api_key.clone())),
-            Arc::new(RemoteMetadataFieldOperations::new(remote_url, api_key)),
-        )
-    } else {
-        let backend_info = bootstrap::resolve_backend_info(config, &project_root);
-        let hook_executor = bootstrap::create_api_hook_executor(config.clone(), backend_info, backend.clone());
-        let pr_verifier = bootstrap::create_pr_verifier();
-        let completion_policy = CompletionPolicy::new(config.workflow.merge_via);
-        (
-            Arc::new(LocalTaskOperations::new(backend.clone(), hook_executor, pr_verifier, completion_policy)),
-            Arc::new(ProjectService::new(backend.clone())),
-            Arc::new(UserService::new(backend.clone())),
-            Arc::new(MetadataFieldService::new(backend)),
-        )
-    };
+    let backend_info = bootstrap::resolve_backend_info(config, &project_root);
+    let hook_data: Arc<dyn crate::application::port::HookDataSource> = Arc::new(
+        crate::application::port::BackendHookData(backend.clone()),
+    );
+    let hook_executor = bootstrap::create_api_hook_executor(config.clone(), backend_info, hook_data);
+    let pr_verifier = bootstrap::create_pr_verifier();
+    let completion_policy = CompletionPolicy::new(config.workflow.merge_via);
 
     let state = AppState {
         project_root: Arc::new(project_root),
         config_path: config_path.map(Arc::new),
-        task_service,
-        project_service,
-        user_service,
-        metadata_service,
+        task_service: Arc::new(LocalTaskOperations::new(backend.clone(), hook_executor, pr_verifier, completion_policy)),
+        project_service: Arc::new(ProjectService::new(backend.clone())),
+        user_service: Arc::new(UserService::new(backend.clone())),
+        metadata_service: Arc::new(MetadataFieldService::new(backend)),
         auth_mode: auth_mode.map(Arc::new),
         master_key_configured: config.server.auth.api_key.master_key.is_some(),
-        proxy_mode: config.cli.remote.url.is_some(),
+        proxy_mode: false,
         session_config: config.server.auth.oidc.session.clone(),
         oidc_config: config.server.auth.oidc.clone(),
         trusted_headers_config: config.server.auth.trusted_headers.clone(),
     };
+
+    start_server(state, config, port, port_is_explicit).await
+}
+
+/// Start the API server in proxy/relay mode (forwarding to a remote server).
+pub async fn serve_proxy(
+    project_root: PathBuf,
+    port: u16,
+    port_is_explicit: bool,
+    config: &Config,
+    config_path: Option<PathBuf>,
+    hook_data: Arc<dyn crate::application::port::HookDataSource>,
+) -> Result<()> {
+    bootstrap::init_tracing(&config.log);
+
+    let remote_url = config.cli.remote.url.as_ref().expect("cli.remote.url required for proxy mode");
+    let api_key = config.cli.remote.token.clone();
+    let backend_info = bootstrap::resolve_backend_info(config, &project_root);
+    let hook_executor = bootstrap::create_api_hook_executor(config.clone(), backend_info, hook_data);
+
+    let state = AppState {
+        project_root: Arc::new(project_root),
+        config_path: config_path.map(Arc::new),
+        task_service: Arc::new(RemoteTaskOperations::new(remote_url, api_key.clone(), hook_executor)),
+        project_service: Arc::new(RemoteProjectOperations::new(remote_url, api_key.clone())),
+        user_service: Arc::new(RemoteUserOperations::new(remote_url, api_key.clone())),
+        metadata_service: Arc::new(RemoteMetadataFieldOperations::new(remote_url, api_key)),
+        auth_mode: None,
+        master_key_configured: false,
+        proxy_mode: true,
+        session_config: config.server.auth.oidc.session.clone(),
+        oidc_config: config.server.auth.oidc.clone(),
+        trusted_headers_config: config.server.auth.trusted_headers.clone(),
+    };
+
+    start_server(state, config, port, port_is_explicit).await
+}
+
+async fn start_server(
+    state: AppState,
+    config: &Config,
+    port: u16,
+    port_is_explicit: bool,
+) -> Result<()> {
 
     let app = Router::new()
         // User CRUD

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E2E tests for hook firing in HttpBackend mode with hooks.enabled setting.
+# E2E tests for hook firing in remote CLI mode with hooks.enabled setting.
 # Verifies that hooks fire on the correct side (cli/api) based on hooks.enabled.
 
 source "$(dirname "$0")/helpers.sh"

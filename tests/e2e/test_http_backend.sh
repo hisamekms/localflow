@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E2E tests for HttpBackend mode: CLI commands via SENKO_SERVER_URL (remote server)
+# E2E tests for remote CLI mode: CLI commands via SENKO_SERVER_URL (remote server)
 source "$(dirname "$0")/helpers.sh"
 
 setup_test_env

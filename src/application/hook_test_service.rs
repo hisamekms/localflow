@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::domain::task::{Priority, Task, TaskStatus};
 
-use super::port::{HookTestPort, TaskBackend};
+use super::port::{HookDataSource, HookTestPort};
 
 /// Result of a single hook command execution.
 pub struct HookCommandResult {
@@ -28,12 +28,12 @@ pub enum HookTestOutput {
 /// Application service for testing hook events.
 /// Orchestrates envelope construction, command lookup, and synchronous execution.
 pub struct HookTestService {
-    backend: Arc<dyn TaskBackend>,
+    backend: Arc<dyn HookDataSource>,
     hook_test: Arc<dyn HookTestPort>,
 }
 
 impl HookTestService {
-    pub fn new(backend: Arc<dyn TaskBackend>, hook_test: Arc<dyn HookTestPort>) -> Self {
+    pub fn new(backend: Arc<dyn HookDataSource>, hook_test: Arc<dyn HookTestPort>) -> Self {
         Self { backend, hook_test }
     }
 

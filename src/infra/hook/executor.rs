@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::application::port::HookExecutor;
 use crate::application::HookTrigger;
-use crate::application::port::TaskBackend;
+use crate::application::port::HookDataSource;
 use crate::infra::config::Config;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
 
@@ -17,7 +17,7 @@ pub struct ShellHookExecutor {
     should_fire: bool,
     runtime_mode: RuntimeMode,
     backend_info: BackendInfo,
-    backend: Arc<dyn TaskBackend>,
+    backend: Arc<dyn HookDataSource>,
 }
 
 impl ShellHookExecutor {
@@ -26,7 +26,7 @@ impl ShellHookExecutor {
         should_fire: bool,
         runtime_mode: RuntimeMode,
         backend_info: BackendInfo,
-        backend: Arc<dyn TaskBackend>,
+        backend: Arc<dyn HookDataSource>,
     ) -> Self {
         Self {
             config,

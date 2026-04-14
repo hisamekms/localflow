@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod authentication;
+pub mod hook_data_source;
 pub mod hook_executor;
 pub mod hook_test;
 pub mod metadata_field_operations;
@@ -14,6 +15,7 @@ pub mod user_query;
 
 pub use auth::{AuthError, AuthProvider};
 pub use authentication::{ApiKeyAuthResult, AuthenticationPort};
+pub use hook_data_source::{BackendHookData, HookDataSource};
 pub use hook_executor::{HookExecutor, NoOpHookExecutor};
 pub use hook_test::HookTestPort;
 pub use metadata_field_operations::MetadataFieldOperations;

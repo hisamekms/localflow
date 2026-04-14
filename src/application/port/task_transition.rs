@@ -9,7 +9,7 @@ use crate::domain::TaskRepository;
 ///
 /// Local backends (Sqlite, Postgres, DynamoDB) use the default implementation
 /// via `impl_task_transition_default!`, which performs get → domain transition → save.
-/// HttpBackend overrides to call the server's dedicated POST endpoints.
+/// Remote mode uses `RemoteTaskOperations` which calls the server's POST endpoints directly.
 #[async_trait]
 pub trait TaskTransitionPort: Send + Sync {
     async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task>;

@@ -2,7 +2,7 @@ use super::PASSTHROUGH_TOKEN;
 
 /// Shared HTTP client encapsulating base URL, reqwest client, and optional API key.
 ///
-/// Used by both `HttpBackend` and `RemoteTaskOperations` via composition.
+/// Used by `Remote*Operations` via composition.
 pub(crate) struct HttpClient {
     base_url: String,
     client: reqwest::Client,

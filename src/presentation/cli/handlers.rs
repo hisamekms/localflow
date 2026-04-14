@@ -10,6 +10,8 @@ use super::{
 use crate::application::UserOperations;
 use crate::bootstrap::{
     create_backend, create_hook_test_service, create_project_service,
+    create_remote_hook_data, create_remote_metadata_field_operations,
+    create_remote_project_operations, create_remote_user_operations,
     create_task_operations, create_user_service,
     resolve_project_id, DEFAULT_PROJECT_ID,
 };
@@ -85,8 +87,8 @@ pub async fn cmd_add(
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, backend) = create_task_operations(&root, &config)?;
-    let project_id = resolve_project_id(&*backend, &config).await?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     let params = if from_json {
         let mut buf = String::new();
@@ -189,8 +191,8 @@ pub async fn cmd_list(
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, backend) = create_task_operations(&root, &config)?;
-    let project_id = resolve_project_id(&*backend, &config).await?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     let statuses = status
         .into_iter()
@@ -226,8 +228,8 @@ pub async fn cmd_list(
 pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, backend) = create_task_operations(&root, &config)?;
-    let project_id = resolve_project_id(&*backend, &config).await?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
     let task = task_ops.get_task(project_id, task_id).await?;
 
     match cli.output {
@@ -311,8 +313,8 @@ pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
 pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, backend) = create_task_operations(&root, &config)?;
-    let project_id = resolve_project_id(&*backend, &config).await?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     if cli.dry_run {
         let result = task_ops.preview_transition(project_id, id, TaskStatus::Todo).await?;
@@ -339,8 +341,8 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, metadata: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, backend) = create_task_operations(&root, &config)?;
-    let project_id = resolve_project_id(&*backend, &config).await?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
     let user_id = None;
     let metadata: Option<serde_json::Value> = metadata
         .map(|s| serde_json::from_str(&s))
@@ -378,8 +380,8 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, metadata:
 pub async fn cmd_next(cli: &Cli, session_id: Option<String>, metadata: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, backend) = create_task_operations(&root, &config)?;
-    let project_id = resolve_project_id(&*backend, &config).await?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
     let user_id = None;
     let metadata: Option<serde_json::Value> = metadata
         .map(|s| serde_json::from_str(&s))
@@ -415,8 +417,8 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, metadata: Option<St
 pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, backend) = create_task_operations(&root, &config)?;
-    let project_id = resolve_project_id(&*backend, &config).await?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     if cli.dry_run {
         let result = task_ops.preview_transition(project_id, id, TaskStatus::Completed).await?;
@@ -443,8 +445,8 @@ pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()>
 pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, backend) = create_task_operations(&root, &config)?;
-    let project_id = resolve_project_id(&*backend, &config).await?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     if cli.dry_run {
         let mut result = task_ops.preview_transition(project_id, id, TaskStatus::Canceled).await?;
@@ -858,10 +860,18 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
 
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = load_config(cli, &root)?;
-            let backend = create_backend(&root, &config)?;
-            let project_id = resolve_project_id(&*backend, &config).await?;
+            let (hook_data, project_ops): (std::sync::Arc<dyn crate::application::port::HookDataSource>, std::sync::Arc<dyn ProjectOperations>) = if config.cli.remote.url.is_some() {
+                (create_remote_hook_data(&config), std::sync::Arc::new(create_remote_project_operations(&config)))
+            } else {
+                let backend = create_backend(&root, &config)?;
+                let hook_data: std::sync::Arc<dyn crate::application::port::HookDataSource> = std::sync::Arc::new(
+                    crate::application::port::BackendHookData(backend.clone()),
+                );
+                (hook_data, std::sync::Arc::new(crate::bootstrap::create_project_service(backend)))
+            };
+            let project_id = resolve_project_id(&*project_ops, &config).await?;
 
-            let hook_test_service = create_hook_test_service(backend, &config, &root);
+            let hook_test_service = create_hook_test_service(hook_data, &config, &root);
             let output = hook_test_service
                 .test_event(project_id, event_name, *task_id, *dry_run)
                 .await?;
@@ -973,8 +983,8 @@ pub async fn cmd_edit(
 ) -> Result<()> {
     let project_root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &project_root)?;
-    let (task_ops, backend) = create_task_operations(&project_root, &config)?;
-    let project_id = resolve_project_id(&*backend, &config).await?;
+    let (task_ops, project_ops) = create_task_operations(&project_root, &config)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     // Verify task exists (even in dry-run)
     let _task = task_ops.get_task(project_id, id).await?;
@@ -1146,8 +1156,8 @@ pub async fn cmd_edit(
 pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, backend) = create_task_operations(&root, &config)?;
-    let project_id = resolve_project_id(&*backend, &config).await?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     match command {
         DodCommand::Check { task_id, index } => {
@@ -1208,8 +1218,8 @@ fn print_dod_items(items: &[crate::domain::task::DodItem]) {
 pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, backend) = create_task_operations(&root, &config)?;
-    let project_id = resolve_project_id(&*backend, &config).await?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     match command {
         DepsCommand::Add { task_id, on } => {
@@ -1275,12 +1285,26 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
 pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let backend = create_backend(&root, &config)?;
-    let project_service = create_project_service(backend.clone());
+
+    let (project_ops, metadata_ops): (
+        std::sync::Arc<dyn ProjectOperations>,
+        std::sync::Arc<dyn crate::application::MetadataFieldOperations>,
+    ) = if config.cli.remote.url.is_some() {
+        (
+            std::sync::Arc::new(create_remote_project_operations(&config)),
+            std::sync::Arc::new(create_remote_metadata_field_operations(&config)),
+        )
+    } else {
+        let backend = create_backend(&root, &config)?;
+        (
+            std::sync::Arc::new(create_project_service(backend.clone())),
+            std::sync::Arc::new(crate::bootstrap::create_metadata_field_service(backend)),
+        )
+    };
 
     match action {
         ProjectAction::List => {
-            let projects = project_service.list_projects().await?;
+            let projects = project_ops.list_projects().await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&projects)?);
@@ -1303,7 +1327,7 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                 name: name.clone(),
                 description: description.clone(),
             };
-            let project = project_service.create_project(&params, None).await?;
+            let project = project_ops.create_project(&params, None).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&project)?);
@@ -1314,7 +1338,7 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
             }
         }
         ProjectAction::Delete { id } => {
-            project_service.delete_project(*id, None).await?;
+            project_ops.delete_project(*id, None).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::json!({"deleted": id}));
@@ -1325,7 +1349,7 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
             }
         }
         ProjectAction::MetadataField { action: mf_action } => {
-            let project_id = resolve_project_id(&*backend, &config).await?;
+            let project_id = resolve_project_id(&*project_ops, &config).await?;
             match mf_action {
                 MetadataFieldAction::Add {
                     name,
@@ -1341,7 +1365,7 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                         required_on_complete: *required_on_complete,
                         description: description.clone(),
                     };
-                    let field = backend.create_metadata_field(project_id, &params).await?;
+                    let field = metadata_ops.create_metadata_field(project_id, &params).await?;
                     match cli.output {
                         OutputFormat::Json => {
                             println!("{}", serde_json::to_string_pretty(&field)?);
@@ -1358,7 +1382,7 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                     }
                 }
                 MetadataFieldAction::List => {
-                    let fields = backend.list_metadata_fields(project_id).await?;
+                    let fields = metadata_ops.list_metadata_fields(project_id).await?;
                     match cli.output {
                         OutputFormat::Json => {
                             println!("{}", serde_json::to_string_pretty(&fields)?);
@@ -1384,27 +1408,16 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                     }
                 }
                 MetadataFieldAction::Remove { name } => {
-                    let fields = backend.list_metadata_fields(project_id).await?;
-                    let field = fields
-                        .iter()
-                        .find(|f| f.name() == name.as_str())
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("metadata field not found: {}", name)
-                        })?;
-                    let field_id = field.id();
-                    let field_name = field.name().to_string();
-                    backend
-                        .delete_metadata_field(project_id, field_id)
-                        .await?;
+                    metadata_ops.delete_metadata_field_by_name(project_id, name).await?;
                     match cli.output {
                         OutputFormat::Json => {
                             println!(
                                 "{}",
-                                serde_json::json!({"deleted": field_name, "id": field_id})
+                                serde_json::json!({"deleted": name})
                             );
                         }
                         OutputFormat::Text => {
-                            println!("Removed metadata field #{}: {}", field_id, field_name);
+                            println!("Removed metadata field: {}", name);
                         }
                     }
                 }
@@ -1417,8 +1430,12 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
 pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let backend = create_backend(&root, &config)?;
-    let user_service = create_user_service(backend);
+    let user_service: std::sync::Arc<dyn UserOperations> = if config.cli.remote.url.is_some() {
+        std::sync::Arc::new(create_remote_user_operations(&config))
+    } else {
+        let backend = create_backend(&root, &config)?;
+        std::sync::Arc::new(create_user_service(backend))
+    };
 
     match action {
         UserAction::List => {
@@ -1497,8 +1514,12 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
 pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let backend = create_backend(&root, &config)?;
-    let project_service = create_project_service(backend);
+    let project_service: std::sync::Arc<dyn ProjectOperations> = if config.cli.remote.url.is_some() {
+        std::sync::Arc::new(create_remote_project_operations(&config))
+    } else {
+        let backend = create_backend(&root, &config)?;
+        std::sync::Arc::new(create_project_service(backend))
+    };
 
     match action {
         MemberAction::List => {

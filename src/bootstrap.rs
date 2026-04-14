@@ -5,12 +5,12 @@ use anyhow::{bail, Context, Result};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::application::port::auth::AuthProvider;
-use crate::application::port::{HookExecutor, PrVerifier};
-use crate::application::{HookTestService, LocalTaskOperations, MetadataFieldService, ProjectService, TaskOperations, UserService};
+use crate::application::port::{HookDataSource, HookExecutor, PrVerifier};
+use crate::application::{HookTestService, LocalTaskOperations, MetadataFieldService, ProjectOperations, ProjectService, TaskOperations, UserService};
 use crate::domain::task::CompletionPolicy;
 use crate::application::port::TaskBackend;
 use crate::infra::config::{Config, LogConfig, LogFormat, RawConfig};
-use crate::infra::http::HttpBackend;
+use crate::infra::http::remote_hook_data::RemoteHookDataSource;
 use crate::infra::http::remote_metadata_field_ops::RemoteMetadataFieldOperations;
 use crate::infra::http::remote_project_ops::RemoteProjectOperations;
 use crate::infra::http::remote_task_ops::RemoteTaskOperations;
@@ -28,20 +28,14 @@ pub use crate::infra::project_root::resolve_project_root;
 pub use crate::domain::{DEFAULT_PROJECT_ID, DEFAULT_USER_ID};
 
 /// Create the appropriate backend based on config (env + CLI already applied).
+///
+/// Returns a local database backend (SQLite / DynamoDB / PostgreSQL).
+/// Remote HTTP mode is handled separately via `Remote*Operations`.
 pub fn create_backend(
     project_root: &Path,
     config: &Config,
 ) -> Result<Arc<dyn TaskBackend>> {
-    // 1. HTTP backend (cli.remote.url from env or config.toml)
-    if let Some(ref url) = config.cli.remote.url {
-        let backend = match config.cli.remote.token.as_ref() {
-            Some(key) => HttpBackend::with_api_key(url, key.clone()),
-            None => HttpBackend::new(url),
-        };
-        return Ok(Arc::new(backend));
-    }
-
-    // 2. DynamoDB backend
+    // 1. DynamoDB backend
     #[cfg(feature = "dynamodb")]
     {
         use crate::infra::dynamodb::DynamoDbBackend;
@@ -106,19 +100,19 @@ pub fn create_hook_executor(
     config: Config,
     runtime_mode: RuntimeMode,
     backend_info: BackendInfo,
-    backend: Arc<dyn TaskBackend>,
+    hook_data: Arc<dyn HookDataSource>,
 ) -> Arc<dyn HookExecutor> {
     let should_fire = should_fire_client_hooks(&config);
-    Arc::new(ShellHookExecutor::new(config, should_fire, runtime_mode, backend_info, backend))
+    Arc::new(ShellHookExecutor::new(config, should_fire, runtime_mode, backend_info, hook_data))
 }
 
 pub fn create_api_hook_executor(
     config: Config,
     backend_info: BackendInfo,
-    backend: Arc<dyn TaskBackend>,
+    hook_data: Arc<dyn HookDataSource>,
 ) -> Arc<dyn HookExecutor> {
     // API server always fires hooks
-    Arc::new(ShellHookExecutor::new(config, true, RuntimeMode::Api, backend_info, backend))
+    Arc::new(ShellHookExecutor::new(config, true, RuntimeMode::Api, backend_info, hook_data))
 }
 
 pub fn create_pr_verifier() -> Arc<dyn crate::application::port::PrVerifier> {
@@ -208,7 +202,8 @@ pub fn create_local_task_operations(
     project_root: &Path,
 ) -> LocalTaskOperations {
     let backend_info = resolve_backend_info(config, project_root);
-    let hooks = create_hook_executor(config.clone(), RuntimeMode::Cli, backend_info, backend.clone());
+    let hook_data: Arc<dyn HookDataSource> = Arc::new(crate::application::port::BackendHookData(backend.clone()));
+    let hooks = create_hook_executor(config.clone(), RuntimeMode::Cli, backend_info, hook_data);
     let pr_verifier: Arc<dyn PrVerifier> = Arc::new(GhCliPrVerifier);
     let completion_policy = CompletionPolicy::new(config.workflow.merge_via);
     LocalTaskOperations::new(backend, hooks, pr_verifier, completion_policy)
@@ -217,36 +212,49 @@ pub fn create_local_task_operations(
 pub fn create_remote_task_operations(
     config: &Config,
     project_root: &Path,
-    backend: Arc<dyn TaskBackend>,
 ) -> RemoteTaskOperations {
     let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
 
+    let hook_data: Arc<dyn HookDataSource> = Arc::new(
+        RemoteHookDataSource::new(url, api_key.clone()),
+    );
     let backend_info = resolve_backend_info(config, project_root);
     let hooks = create_hook_executor(
         config.clone(),
         RuntimeMode::Cli,
         backend_info,
-        backend,
+        hook_data,
     );
 
     RemoteTaskOperations::new(url, api_key, hooks)
 }
 
-/// Create the appropriate `TaskOperations` implementation based on config.
-/// Returns (task_ops, backend) — backend is still needed for project/user operations.
+/// Create the appropriate `TaskOperations` and `ProjectOperations` based on config.
+///
+/// Remote mode uses HTTP-based Remote*Operations; local mode uses DB-backed services.
 pub fn create_task_operations(
     project_root: &Path,
     config: &Config,
-) -> Result<(Arc<dyn TaskOperations>, Arc<dyn TaskBackend>)> {
-    let backend = create_backend(project_root, config)?;
-    let using_http = config.cli.remote.url.is_some();
-    let task_ops: Arc<dyn TaskOperations> = if using_http {
-        Arc::new(create_remote_task_operations(config, project_root, backend.clone()))
+) -> Result<(Arc<dyn TaskOperations>, Arc<dyn ProjectOperations>)> {
+    if config.cli.remote.url.is_some() {
+        let task_ops: Arc<dyn TaskOperations> = Arc::new(
+            create_remote_task_operations(config, project_root),
+        );
+        let project_ops: Arc<dyn ProjectOperations> = Arc::new(
+            create_remote_project_operations(config),
+        );
+        Ok((task_ops, project_ops))
     } else {
-        Arc::new(create_local_task_operations(backend.clone(), config, project_root))
-    };
-    Ok((task_ops, backend))
+        let backend = create_backend(project_root, config)?;
+        let task_ops: Arc<dyn TaskOperations> = Arc::new(
+            create_local_task_operations(backend.clone(), config, project_root),
+        );
+        let project_ops: Arc<dyn ProjectOperations> = Arc::new(
+            ProjectService::new(backend),
+        );
+        Ok((task_ops, project_ops))
+    }
 }
 
 pub fn create_project_service(backend: Arc<dyn TaskBackend>) -> ProjectService {
@@ -273,6 +281,12 @@ pub fn create_metadata_field_service(backend: Arc<dyn TaskBackend>) -> MetadataF
     MetadataFieldService::new(backend)
 }
 
+pub fn create_remote_hook_data(config: &Config) -> Arc<dyn HookDataSource> {
+    let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
+    let api_key = config.cli.remote.token.clone();
+    Arc::new(RemoteHookDataSource::new(url, api_key))
+}
+
 pub fn create_remote_metadata_field_operations(config: &Config) -> RemoteMetadataFieldOperations {
     let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
@@ -280,7 +294,7 @@ pub fn create_remote_metadata_field_operations(config: &Config) -> RemoteMetadat
 }
 
 pub fn create_hook_test_service(
-    backend: Arc<dyn TaskBackend>,
+    hook_data: Arc<dyn HookDataSource>,
     config: &Config,
     project_root: &Path,
 ) -> HookTestService {
@@ -289,19 +303,19 @@ pub fn create_hook_test_service(
         config.clone(),
         RuntimeMode::Cli,
         backend_info,
-        backend.clone(),
+        hook_data.clone(),
     ));
-    HookTestService::new(backend, hook_test)
+    HookTestService::new(hook_data, hook_test)
 }
 
 /// Resolve the project ID from config (CLI > env > config.toml already applied).
 pub async fn resolve_project_id(
-    backend: &dyn TaskBackend,
+    project_ops: &dyn ProjectOperations,
     config: &Config,
 ) -> Result<i64> {
     match config.project.name.as_deref() {
         Some(n) => {
-            let project = backend
+            let project = project_ops
                 .get_project_by_name(n)
                 .await
                 .with_context(|| format!("project not found: {n}"))?;
@@ -313,12 +327,12 @@ pub async fn resolve_project_id(
 
 /// Resolve the user ID from config (CLI > env > config.toml already applied).
 pub async fn resolve_user_id(
-    backend: &dyn TaskBackend,
+    user_ops: &dyn crate::application::UserOperations,
     config: &Config,
 ) -> Result<i64> {
     match config.user.name.as_deref() {
         Some(n) => {
-            let user = backend
+            let user = user_ops
                 .get_user_by_username(n)
                 .await
                 .with_context(|| format!("user not found: {n}"))?;
