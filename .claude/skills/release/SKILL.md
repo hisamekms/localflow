@@ -51,8 +51,9 @@ git log <last-tag>..HEAD --oneline
 ### Step 4: コミットとタグ作成
 
 ```bash
-# バージョン更新をコミット
-git add Cargo.toml
+# バージョン更新をコミット（Cargo.lock も同期する）
+cargo check --quiet
+git add Cargo.toml Cargo.lock
 git commit -m "chore: bump version to <version>"
 
 # タグ作成
