@@ -533,6 +533,8 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                     }
                 }
             }
+            println!("  [cli]");
+            println!("    browser: {}", config.cli.browser);
             println!("  [cli.remote]");
             match config.cli.remote.url {
                 Some(ref url) => println!("    url: {url}"),
@@ -559,8 +561,6 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                     config.server.auth.oidc.callback_ports.join(", ")
                 );
             }
-            println!("  [server.auth.oidc.cli]");
-            println!("    browser: {}", config.server.auth.oidc.cli.browser);
             println!("  [server.auth.oidc.session]");
             match config.server.auth.oidc.session.ttl {
                 Some(ref ttl) => println!("    ttl: {ttl}"),
@@ -1634,7 +1634,6 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
                     .collect()
             })
             .unwrap_or_default(),
-        cli: config.server.auth.oidc.cli.clone(),
         session: Default::default(),
     };
 
@@ -1643,6 +1642,7 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
         api_url,
         device_name.as_deref(),
         auth_mode,
+        config.cli.browser,
     )
     .await?;
 

@@ -699,13 +699,13 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 #
 # callback_ports = ["8400"]              # local ports for OIDC callback (default: none, auto-assign)
 #
-# [server.auth.oidc.cli]
-# browser = true                         # auto-open browser for OIDC login (default: true)
-#
 # [server.auth.oidc.session]
 # ttl = "24h"                            # session time-to-live (env: SENKO_AUTH_OIDC_SESSION_TTL)
 # inactive_ttl = "7d"                    # session inactive timeout (env: SENKO_AUTH_OIDC_SESSION_INACTIVE_TTL)
 # max_per_user = 10                      # max sessions per user (env: SENKO_AUTH_OIDC_SESSION_MAX_PER_USER)
+
+[cli]
+# browser = true                         # auto-open browser for OIDC login (default: true)
 
 [cli.remote]
 # url = "http://127.0.0.1:3142"   # remote server URL for CLI client mode

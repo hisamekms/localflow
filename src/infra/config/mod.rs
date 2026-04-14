@@ -179,6 +179,8 @@ pub struct CliRemoteConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CliConfig {
+    #[serde(default = "default_true")]
+    pub browser: bool,
     #[serde(default)]
     pub remote: CliRemoteConfig,
 }
@@ -196,12 +198,6 @@ pub struct ServerConfig {
 // --- Auth types (unchanged) ---
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct OidcCliConfig {
-    #[serde(default = "default_true")]
-    pub browser: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct OidcConfig {
     pub issuer_url: Option<String>,
     pub client_id: Option<String>,
@@ -212,8 +208,6 @@ pub struct OidcConfig {
     pub required_claims: HashMap<String, String>,
     #[serde(default)]
     pub callback_ports: Vec<String>,
-    #[serde(default)]
-    pub cli: OidcCliConfig,
     #[serde(default)]
     pub session: SessionConfig,
 }
@@ -595,6 +589,7 @@ pub struct RawServerConfig {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawCliConfig {
+    pub browser: Option<bool>,
     #[serde(default)]
     pub remote: RawCliRemoteConfig,
 }
@@ -612,11 +607,6 @@ pub struct RawWebConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
-pub struct RawOidcCliConfig {
-    pub browser: Option<bool>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawOidcConfig {
     pub issuer_url: Option<String>,
     pub client_id: Option<String>,
@@ -624,8 +614,6 @@ pub struct RawOidcConfig {
     pub scopes: Option<Vec<String>>,
     pub required_claims: Option<HashMap<String, String>>,
     pub callback_ports: Option<Vec<String>>,
-    #[serde(default)]
-    pub cli: RawOidcCliConfig,
     #[serde(default)]
     pub session: RawSessionConfig,
 }
@@ -824,15 +812,6 @@ impl RawConfig {
                             .oidc
                             .callback_ports
                             .or(self.server.auth.oidc.callback_ports),
-                        cli: RawOidcCliConfig {
-                            browser: overlay
-                                .server
-                                .auth
-                                .oidc
-                                .cli
-                                .browser
-                                .or(self.server.auth.oidc.cli.browser),
-                        },
                         session: RawSessionConfig {
                             ttl: overlay
                                 .server
@@ -860,6 +839,7 @@ impl RawConfig {
                 },
             },
             cli: RawCliConfig {
+                browser: overlay.cli.browser.or(self.cli.browser),
                 remote: RawCliRemoteConfig {
                     url: overlay.cli.remote.url.or(self.cli.remote.url),
                     token: overlay.cli.remote.token.or(self.cli.remote.token),
@@ -938,9 +918,6 @@ impl RawConfig {
                             .oidc
                             .callback_ports
                             .unwrap_or_default(),
-                        cli: OidcCliConfig {
-                            browser: self.server.auth.oidc.cli.browser.unwrap_or(true),
-                        },
                         session: SessionConfig {
                             ttl: self.server.auth.oidc.session.ttl,
                             inactive_ttl: self.server.auth.oidc.session.inactive_ttl,
@@ -960,6 +937,7 @@ impl RawConfig {
                 },
             },
             cli: CliConfig {
+                browser: self.cli.browser.unwrap_or(true),
                 remote: CliRemoteConfig {
                     url: self.cli.remote.url,
                     token: self.cli.remote.token,
@@ -2382,5 +2360,44 @@ mod tests {
         // web should remain unset
         assert!(config.web.port.is_none());
         assert!(config.web.host.is_none());
+    }
+
+    #[test]
+    fn cli_browser_deserialize_false() {
+        let raw: RawConfig = toml::from_str(
+            r#"
+            [cli]
+            browser = false
+        "#,
+        )
+        .unwrap();
+        assert_eq!(raw.cli.browser, Some(false));
+    }
+
+    #[test]
+    fn cli_browser_default_true() {
+        let raw: RawConfig = toml::from_str("").unwrap();
+        let config = raw.resolve();
+        assert!(config.cli.browser);
+    }
+
+    #[test]
+    fn cli_browser_merge_overlay_wins() {
+        let base: RawConfig = toml::from_str(
+            r#"
+            [cli]
+            browser = true
+        "#,
+        )
+        .unwrap();
+        let overlay: RawConfig = toml::from_str(
+            r#"
+            [cli]
+            browser = false
+        "#,
+        )
+        .unwrap();
+        let merged = base.merge(overlay);
+        assert_eq!(merged.cli.browser, Some(false));
     }
 }

@@ -80,17 +80,17 @@ Stage-specific keys:
 | `required_claims` | `{}` | map of string to string | Required JWT claims (key-value pairs that must match). |
 | `callback_ports` | `[]` (empty) | list of port strings | Local ports for OIDC callback during CLI login. Supports individual ports and ranges (e.g., `["8400", "9000-9010"]`). |
 
-**server.auth.oidc.cli**
-| Key | Default | Options | Description |
-|---|---|---|---|
-| `browser` | `true` | `true`, `false` | Auto-open browser for OIDC login. |
-
 **server.auth.oidc.session**
 | Key | Default | Options | Description |
 |---|---|---|---|
 | `ttl` | `null` | duration string | Session time-to-live (e.g., `24h`). |
 | `inactive_ttl` | `null` | duration string | Session inactive timeout (e.g., `7d`). |
 | `max_per_user` | `null` | positive integer | Maximum number of sessions per user. |
+
+**cli**
+| Key | Default | Options | Description |
+|---|---|---|---|
+| `browser` | `true` | `true`, `false` | Auto-open browser for OIDC login. |
 
 **cli.remote**
 | Key | Default | Options | Description |

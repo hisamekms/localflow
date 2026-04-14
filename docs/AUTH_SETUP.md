@@ -455,7 +455,7 @@ The remote server validates the client's token directly. No special configuratio
 | `[server.auth.oidc]` | `scopes` | array | `["openid", "profile"]` | OIDC scopes | - | - | Optional | - |
 | `[server.auth.oidc]` | `required_claims` | table | - | Required JWT claims (key-value pairs) | - | - | Optional | - |
 | `[server.auth.oidc]` | `callback_ports` | array | `[]` (empty) | Local callback ports for CLI login | - | - | Optional | - |
-| `[server.auth.oidc.cli]` | `browser` | bool | `true` | Auto-open browser | - | - | Optional | - |
+| `[cli]` | `browser` | bool | `true` | Auto-open browser for OIDC login | - | - | Optional | - |
 | `[server.auth.oidc.session]` | `ttl` | string | No expiration | Session lifetime (e.g., `"24h"`, `"30d"`) | - | Optional | Optional | - |
 | `[server.auth.oidc.session]` | `inactive_ttl` | string | No expiration | Inactivity timeout | - | Optional | Optional | - |
 | `[server.auth.oidc.session]` | `max_per_user` | integer | Unlimited | Max sessions per user | - | Optional | Optional | - |

@@ -38,6 +38,7 @@ pub async fn perform_login(
     api_url: &str,
     device_name: Option<&str>,
     auth_mode: &str,
+    open_browser: bool,
 ) -> Result<LoginResult> {
     let issuer_url = oidc_config
         .issuer_url
@@ -87,7 +88,7 @@ pub async fn perform_login(
     }
     let (auth_url, csrf_state) = auth_request.url();
 
-    if oidc_config.cli.browser {
+    if open_browser {
         eprintln!("Opening browser for authentication...");
         if let Err(e) = open::that(auth_url.as_str()) {
             eprintln!("Failed to open browser: {e}");
