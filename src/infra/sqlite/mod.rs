@@ -315,7 +315,10 @@ fn xdg_project_db_path_legacy_hash(project_root: &Path) -> Option<std::path::Pat
     let data_dir = xdg_data_base()?;
     let canonical = project_root.canonicalize().ok()
         .unwrap_or_else(|| project_root.to_path_buf());
-    let hash = format!("{:x}", Sha256::digest(canonical.to_string_lossy().as_bytes()));
+    let hash: String = Sha256::digest(canonical.to_string_lossy().as_bytes())
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
     let short_hash = &hash[..16];
     Some(data_dir.join("senko").join("projects").join(short_hash).join("data.db"))
 }
