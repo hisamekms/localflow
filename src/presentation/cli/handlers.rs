@@ -247,6 +247,7 @@ pub async fn cmd_list(
     depends_on: Option<i64>,
     ready: bool,
     include_unassigned: bool,
+    metadata: Vec<String>,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
@@ -265,6 +266,14 @@ pub async fn cmd_list(
         None
     };
 
+    let mut metadata_map = std::collections::HashMap::new();
+    for entry in &metadata {
+        let (key, value) = entry
+            .split_once('=')
+            .context("metadata filter must be in key=value format")?;
+        metadata_map.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+    }
+
     let filter = ListTasksFilter {
         statuses,
         tags: tag,
@@ -272,6 +281,7 @@ pub async fn cmd_list(
         ready,
         assignee_user_id,
         include_unassigned,
+        metadata: metadata_map,
     };
 
     let tasks = task_ops.list_tasks(project_id, &filter).await?;

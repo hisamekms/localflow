@@ -1055,6 +1055,18 @@ impl TaskQueryPort for DynamoDbBackend {
                         return false;
                     }
                 }
+                if !filter.metadata.is_empty() {
+                    if let Some(task_metadata) = task.metadata() {
+                        for (key, expected) in &filter.metadata {
+                            match task_metadata.get(key) {
+                                Some(actual) if actual == expected => {}
+                                _ => return false,
+                            }
+                        }
+                    } else {
+                        return false;
+                    }
+                }
                 true
             })
             .collect();

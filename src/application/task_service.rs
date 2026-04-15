@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -7,6 +7,7 @@ use chrono::Utc;
 
 use crate::application::port::TaskBackend;
 use crate::domain::error::DomainError;
+use crate::domain::metadata_field::{MetadataField, MetadataFieldType};
 use crate::domain::task::{
     self, CompletionPolicy, CreateTaskParams, ListTasksFilter, MetadataUpdate, Task, TaskEvent,
     TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
@@ -419,7 +420,13 @@ impl TaskOperations for LocalTaskOperations {
         project_id: i64,
         filter: &ListTasksFilter,
     ) -> Result<Vec<Task>> {
-        self.backend.list_tasks(project_id, filter).await
+        if filter.metadata.is_empty() {
+            return self.backend.list_tasks(project_id, filter).await;
+        }
+        let fields = self.backend.list_metadata_fields(project_id).await?;
+        let mut resolved_filter = filter.clone();
+        resolved_filter.metadata = resolve_metadata_filter_types(&filter.metadata, &fields);
+        self.backend.list_tasks(project_id, &resolved_filter).await
     }
 
     async fn list_all_tags(&self, project_id: i64) -> Result<Vec<String>> {
@@ -601,5 +608,47 @@ impl TaskOperations for LocalTaskOperations {
     async fn ready_count(&self, project_id: i64) -> Result<i64> {
         self.backend.ready_count(project_id).await
     }
+}
+
+/// Resolve metadata filter value types using metadata field definitions.
+///
+/// Values from the presentation layer arrive as `Value::String`. This function
+/// converts them to the appropriate JSON type based on the field's declared type
+/// in `metadata_fields`. Undefined fields remain as strings.
+pub fn resolve_metadata_filter_types(
+    raw: &HashMap<String, serde_json::Value>,
+    fields: &[MetadataField],
+) -> HashMap<String, serde_json::Value> {
+    let field_types: HashMap<&str, MetadataFieldType> = fields
+        .iter()
+        .map(|f| (f.name(), f.field_type()))
+        .collect();
+
+    raw.iter()
+        .map(|(key, value)| {
+            let resolved = match (field_types.get(key.as_str()), value) {
+                (Some(MetadataFieldType::Number), serde_json::Value::String(s)) => {
+                    if let Ok(n) = s.parse::<i64>() {
+                        serde_json::Value::Number(n.into())
+                    } else if let Ok(f) = s.parse::<f64>() {
+                        serde_json::Number::from_f64(f)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or_else(|| value.clone())
+                    } else {
+                        value.clone()
+                    }
+                }
+                (Some(MetadataFieldType::Boolean), serde_json::Value::String(s)) => {
+                    match s.as_str() {
+                        "true" => serde_json::Value::Bool(true),
+                        "false" => serde_json::Value::Bool(false),
+                        _ => value.clone(),
+                    }
+                }
+                _ => value.clone(),
+            };
+            (key.clone(), resolved)
+        })
+        .collect()
 }
 

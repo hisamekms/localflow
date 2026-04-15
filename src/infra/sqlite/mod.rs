@@ -1375,6 +1375,37 @@ fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> R
         param_values.push(Box::new(uid));
     }
 
+    for (key, value) in &filter.metadata {
+        let json_path = format!("$.{key}");
+        match value {
+            serde_json::Value::Number(n) => {
+                conditions.push("json_extract(t.metadata, ?) = ?".to_string());
+                param_values.push(Box::new(json_path));
+                if let Some(i) = n.as_i64() {
+                    param_values.push(Box::new(i));
+                } else if let Some(f) = n.as_f64() {
+                    param_values.push(Box::new(f));
+                }
+            }
+            serde_json::Value::Bool(b) => {
+                // SQLite json_extract returns 1/0 for JSON booleans
+                conditions.push("json_extract(t.metadata, ?) = ?".to_string());
+                param_values.push(Box::new(json_path));
+                param_values.push(Box::new(if *b { 1i64 } else { 0i64 }));
+            }
+            serde_json::Value::String(s) => {
+                conditions.push("json_extract(t.metadata, ?) = ?".to_string());
+                param_values.push(Box::new(json_path));
+                param_values.push(Box::new(s.clone()));
+            }
+            other => {
+                conditions.push("json_extract(t.metadata, ?) = json(?)".to_string());
+                param_values.push(Box::new(json_path));
+                param_values.push(Box::new(serde_json::to_string(other).unwrap_or_default()));
+            }
+        }
+    }
+
     let where_clause = if conditions.is_empty() {
         String::new()
     } else {
@@ -2349,11 +2380,7 @@ mod tests {
             1,
             &ListTasksFilter {
                 statuses: vec![TaskStatus::Draft],
-                tags: vec![],
-                depends_on: None,
-                ready: false,
-                assignee_user_id: None,
-                include_unassigned: false,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2365,11 +2392,7 @@ mod tests {
             1,
             &ListTasksFilter {
                 statuses: vec![TaskStatus::Todo],
-                tags: vec![],
-                depends_on: None,
-                ready: false,
-                assignee_user_id: None,
-                include_unassigned: false,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2399,12 +2422,8 @@ mod tests {
             &conn,
             1,
             &ListTasksFilter {
-                statuses: vec![],
                 tags: vec!["rust".to_string()],
-                depends_on: None,
-                ready: false,
-                assignee_user_id: None,
-                include_unassigned: false,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2449,12 +2468,8 @@ mod tests {
             &conn,
             1,
             &ListTasksFilter {
-                statuses: vec![],
-                tags: vec![],
-                depends_on: None,
                 ready: true,
-                assignee_user_id: None,
-                include_unassigned: false,
+                ..Default::default()
             },
         ).unwrap();
 

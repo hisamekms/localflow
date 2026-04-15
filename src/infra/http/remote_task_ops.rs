@@ -447,6 +447,17 @@ impl TaskOperations for RemoteTaskOperations {
         if filter.include_unassigned {
             params.push("include_unassigned=true".into());
         }
+        for (key, value) in &filter.metadata {
+            let v = match value {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            params.push(format!(
+                "metadata={}:{}",
+                utf8_percent_encode(key, NON_ALPHANUMERIC),
+                utf8_percent_encode(&v, NON_ALPHANUMERIC),
+            ));
+        }
 
         if !params.is_empty() {
             url = format!("{url}?{}", params.join("&"));

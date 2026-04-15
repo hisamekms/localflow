@@ -162,6 +162,9 @@ pub enum Command {
         /// Include unassigned tasks (with --ready)
         #[arg(long)]
         include_unassigned: bool,
+        /// Filter by metadata key=value pair; repeatable
+        #[arg(long)]
+        metadata: Vec<String>,
     },
     /// Get task details
     Get {
@@ -810,7 +813,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             ref depends_on,
             ready,
             include_unassigned,
-        } => handlers::cmd_list(&cli, status.clone(), tag.clone(), *depends_on, ready, include_unassigned).await,
+            ref metadata,
+        } => handlers::cmd_list(&cli, status.clone(), tag.clone(), *depends_on, ready, include_unassigned, metadata.clone()).await,
         Command::Get { task_id } => handlers::cmd_get(&cli, task_id).await,
         Command::Next { ref session_id, ref metadata, include_unassigned } => handlers::cmd_next(&cli, session_id.clone(), metadata.clone(), include_unassigned).await,
         Command::Ready { id } => handlers::cmd_ready(&cli, id).await,
@@ -1098,12 +1102,14 @@ mod tests {
                 depends_on,
                 ready,
                 include_unassigned,
+                metadata,
             } => {
                 assert_eq!(status, vec!["todo", "in_progress"]);
                 assert_eq!(tag, vec!["rust", "web"]);
                 assert_eq!(depends_on, Some(3));
                 assert!(ready);
                 assert!(!include_unassigned);
+                assert!(metadata.is_empty());
             }
             _ => panic!("expected List"),
         }
