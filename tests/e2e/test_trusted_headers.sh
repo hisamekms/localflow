@@ -211,4 +211,25 @@ assert_eq "204" "$DEL_STATUS" "delete returns 204"
 GET_DEL_STATUS=$(api_status "$PBASE/tasks/$TASK2_ID")
 assert_eq "404" "$GET_DEL_STATUS" "deleted task returns 404"
 
+# =============================================
+# 9. GET /auth/me with trusted headers
+# =============================================
+
+echo ""
+echo "=== GET /auth/me returns 200 with trusted headers ==="
+ME_STATUS=$(api_status "$AUTH_BASE/me")
+assert_eq "200" "$ME_STATUS" "GET /auth/me with trusted headers returns 200"
+
+echo ""
+echo "=== GET /auth/me returns user info and null session ==="
+ME=$(api_get "$AUTH_BASE/me")
+assert_json_field "$ME" '.user.sub' "alice" "GET /auth/me user.sub"
+assert_json_field "$ME" '.user.username' "Alice Smith" "GET /auth/me user.username"
+assert_contains "$ME" '"session":null' "GET /auth/me session is null in trusted_headers mode"
+
+echo ""
+echo "=== GET /auth/me without auth returns 401 ==="
+ME_NO_AUTH_STATUS=$(status_no_auth "$AUTH_BASE/me")
+assert_eq "401" "$ME_NO_AUTH_STATUS" "GET /auth/me without auth returns 401"
+
 test_summary

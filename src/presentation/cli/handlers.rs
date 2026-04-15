@@ -1836,7 +1836,7 @@ fn api_url_base(api_url: &str) -> &str {
 #[derive(serde::Deserialize)]
 struct CliMeResponse {
     user: CliUserInfo,
-    session: CliSessionInfo,
+    session: Option<CliSessionInfo>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1925,25 +1925,27 @@ pub async fn cmd_auth_status(cli: &Cli) -> Result<()> {
         .context("failed to parse /auth/me response")?;
     match cli.output {
         OutputFormat::Json => {
-            println!(
-                "{}",
-                serde_json::json!({
-                    "logged_in": true,
-                    "username": me.user.username,
-                    "display_name": me.user.display_name,
-                    "session_id": me.session.id,
-                    "key_prefix": me.session.key_prefix,
-                    "api_url": api_url,
-                })
-            );
+            let mut obj = serde_json::json!({
+                "logged_in": true,
+                "username": me.user.username,
+                "display_name": me.user.display_name,
+                "api_url": api_url,
+            });
+            if let Some(ref session) = me.session {
+                obj["session_id"] = serde_json::json!(session.id);
+                obj["key_prefix"] = serde_json::json!(session.key_prefix);
+            }
+            println!("{obj}");
         }
         OutputFormat::Text => {
             eprintln!("Logged in as: {}", me.user.username);
             if let Some(ref dn) = me.user.display_name {
                 eprintln!("  Display name: {dn}");
             }
-            eprintln!("  Session ID: {}", me.session.id);
-            eprintln!("  Key prefix: {}...", me.session.key_prefix);
+            if let Some(ref session) = me.session {
+                eprintln!("  Session ID: {}", session.id);
+                eprintln!("  Key prefix: {}...", session.key_prefix);
+            }
             eprintln!("  API URL: {api_url}");
         }
     }
@@ -1965,12 +1967,14 @@ pub async fn cmd_auth_logout(cli: &Cli) -> Result<()> {
     if let Ok(resp) = me_resp {
         if resp.status().is_success() {
             if let Ok(me) = resp.json::<CliMeResponse>().await {
-                let revoke_resp = client
-                    .delete(format!("{base}/auth/sessions/{}", me.session.id))
-                    .bearer_auth(&token)
-                    .send()
-                    .await;
-                server_revoked = revoke_resp.map(|r| r.status().is_success()).unwrap_or(false);
+                if let Some(session) = me.session {
+                    let revoke_resp = client
+                        .delete(format!("{base}/auth/sessions/{}", session.id))
+                        .bearer_auth(&token)
+                        .send()
+                        .await;
+                    server_revoked = revoke_resp.map(|r| r.status().is_success()).unwrap_or(false);
+                }
             }
         }
     }
@@ -2528,5 +2532,23 @@ mod tests {
         };
         let checks = super::run_hook_checks(&entry);
         assert!(checks.is_empty());
+    }
+
+    #[test]
+    fn cli_me_response_deserializes_with_null_session() {
+        let json = r#"{"user":{"username":"alice","display_name":"Alice"},"session":null}"#;
+        let me: super::CliMeResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(me.user.username, "alice");
+        assert!(me.session.is_none());
+    }
+
+    #[test]
+    fn cli_me_response_deserializes_with_session() {
+        let json = r#"{"user":{"username":"alice","display_name":null},"session":{"id":1,"key_prefix":"abc","device_name":null,"created_at":"2026-01-01T00:00:00Z","last_used_at":null}}"#;
+        let me: super::CliMeResponse = serde_json::from_str(json).unwrap();
+        assert!(me.session.is_some());
+        let session = me.session.unwrap();
+        assert_eq!(session.id, 1);
+        assert_eq!(session.key_prefix, "abc");
     }
 }

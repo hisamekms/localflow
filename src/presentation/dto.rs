@@ -422,7 +422,7 @@ pub struct AuthConfigOidc {
 #[derive(Serialize)]
 pub struct MeResponse {
     pub user: UserResponse,
-    pub session: SessionResponse,
+    pub session: Option<SessionResponse>,
 }
 
 // --- Config ---

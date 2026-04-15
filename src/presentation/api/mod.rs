@@ -1348,27 +1348,34 @@ async fn get_me(
     auth: AuthUser,
     headers: axum::http::HeaderMap,
 ) -> Result<Json<MeResponse>, ApiError> {
-    let token = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or(AuthError::MissingToken)?;
-    let token_prefix = &token[..token.len().min(11)];
+    let session = match state.auth_mode.as_deref() {
+        Some(AuthMode::TrustedHeaders(_)) => None,
+        _ => {
+            let token = headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .ok_or(AuthError::MissingToken)?;
+            let token_prefix = &token[..token.len().min(11)];
 
-    let sessions = state
-        .user_service
-        .list_active_sessions(auth.user.id(), &state.session_config)
-        .await
-        .map_err(classify_error)?;
+            let sessions = state
+                .user_service
+                .list_active_sessions(auth.user.id(), &state.session_config)
+                .await
+                .map_err(classify_error)?;
 
-    let current_session = sessions
-        .into_iter()
-        .find(|s| s.key_prefix() == token_prefix)
-        .ok_or_else(|| classify_error(anyhow::anyhow!("current session not found")))?;
+            let current_session = sessions
+                .into_iter()
+                .find(|s| s.key_prefix() == token_prefix)
+                .ok_or_else(|| classify_error(anyhow::anyhow!("current session not found")))?;
+
+            Some(SessionResponse::from(current_session))
+        }
+    };
 
     Ok(Json(MeResponse {
         user: UserResponse::from(auth.user),
-        session: SessionResponse::from(current_session),
+        session,
     }))
 }
 
