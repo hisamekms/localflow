@@ -10,6 +10,7 @@ senko add --title "Title" --priority p1 --description "Description"
 senko --output text list
 senko list --status todo
 senko list --status in_progress
+senko list --status todo --status in_progress  # combine multiple filters
 senko list --ready                 # todo tasks with all deps completed
 senko list --tag backend
 

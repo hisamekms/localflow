@@ -78,8 +78,7 @@ Set up dependencies between tasks:
 1. Check existing active tasks for potential dependencies:
 
 ```bash
-senko list --status todo
-senko list --status in_progress
+senko list --status todo --status in_progress
 ```
 
 2. For **split tasks**: set dependencies between the new tasks where one must complete before another can start (sequential relationships). Tasks that can run in parallel should have no dependency between them.
