@@ -776,7 +776,7 @@ impl TaskRepository for PostgresBackend {
         .bind(&params.pr_url)
         .bind(&metadata_str)
         .bind(project_id)
-        .bind(params.assignee_user_id)
+        .bind(params.assignee_user_id.as_ref().and_then(|a| a.as_id()))
         .fetch_one(&mut *tx)
         .await?;
         let task_id: i64 = row.get("id");
@@ -907,7 +907,7 @@ impl TaskRepository for PostgresBackend {
         }
         if let Some(ref assignee_user_id) = params.assignee_user_id {
             sqlx::query("UPDATE tasks SET assignee_user_id = $1, updated_at = $2 WHERE id = $3")
-                .bind(assignee_user_id)
+                .bind(assignee_user_id.as_ref().and_then(|a| a.as_id()))
                 .bind(now_utc())
                 .bind(id)
                 .execute(&mut *tx)
