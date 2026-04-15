@@ -48,3 +48,5 @@ open = "5"
 [dev-dependencies]
 tempfile = "3"
 serial_test = "3"
+postgresql_embedded = { version = "0.20", default-features = false, features = ["rustls", "theseus"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

@@ -2096,4 +2096,38 @@ mod tests {
         let result = backend.create_metadata_field(1, &params).await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_migrations_on_embedded_postgres() {
+        let mut pg = postgresql_embedded::PostgreSQL::default();
+        pg.setup().await.expect("failed to setup embedded PostgreSQL");
+        pg.start().await.expect("failed to start embedded PostgreSQL");
+
+        let db_name = "senko_migration_test";
+        pg.create_database(db_name)
+            .await
+            .expect("failed to create test database");
+
+        let url = pg.settings().url(db_name);
+        let backend = PostgresBackend::new(url, Some(1));
+        backend
+            .pool()
+            .await
+            .expect("all migrations should succeed on a clean database");
+
+        let pool = backend.pool().await.unwrap();
+        let version: i64 =
+            sqlx::query("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
+                .fetch_one(pool)
+                .await
+                .unwrap()
+                .get(0);
+        assert_eq!(
+            version,
+            MIGRATIONS.last().unwrap().version,
+            "all migrations should be applied"
+        );
+
+        pg.stop().await.expect("failed to stop embedded PostgreSQL");
+    }
 }
