@@ -28,6 +28,22 @@ senko get <id>
      - Use `--skip-pr-check` to bypass the merged check if needed
    - If `merge_via = "direct"` (default): no PR checks are performed
 
+### Build completion metadata
+
+Run the metadata builder script to read `[workflow.complete].metadata_fields` from config:
+
+```bash
+bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh complete
+```
+
+Parse the JSON output (`{"resolved": {...}, "prompts": [...]}`):
+
+- If `prompts` array is non-empty, ask the user each prompt question using `AskUserQuestion`. Merge user answers into `resolved`.
+- If `resolved` is non-empty (has keys):
+  1. Get the task's current metadata from `senko get <id>` (the `metadata` field in JSON output, or `null` if unset)
+  2. Shallow-merge the new fields into the existing metadata object (new keys override existing keys)
+  3. Save the merged metadata: `senko edit <id> --metadata '<merged-json>'`
+
 ```bash
 senko complete <id>
 ```

@@ -102,6 +102,8 @@ pub struct MetadataField {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkflowEventConfig {
     #[serde(default)]
+    pub metadata_fields: Vec<MetadataField>,
+    #[serde(default)]
     pub instructions: Vec<String>,
     #[serde(default)]
     pub pre_hooks: Vec<HookDef>,
@@ -111,6 +113,8 @@ pub struct WorkflowEventConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkflowAddConfig {
+    #[serde(default)]
+    pub metadata_fields: Vec<MetadataField>,
     #[serde(default)]
     pub default_dod: Vec<String>,
     #[serde(default)]
@@ -139,6 +143,8 @@ pub struct WorkflowStartConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkflowPlanConfig {
+    #[serde(default)]
+    pub metadata_fields: Vec<MetadataField>,
     #[serde(default)]
     pub required_sections: Vec<String>,
     #[serde(default)]
@@ -1881,6 +1887,11 @@ mod tests {
             default_tags = ["backend"]
             default_priority = "p1"
             instructions = ["Be thorough"]
+
+            [[metadata_fields]]
+            key = "team"
+            source = "value"
+            value = "backend"
         "#;
         let config: WorkflowAddConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.default_dod, vec!["Write tests", "Update docs"]);
@@ -1888,6 +1899,8 @@ mod tests {
         assert_eq!(config.default_priority.as_deref(), Some("p1"));
         assert_eq!(config.instructions, vec!["Be thorough"]);
         assert!(config.pre_hooks.is_empty());
+        assert_eq!(config.metadata_fields.len(), 1);
+        assert_eq!(config.metadata_fields[0].key, "team");
     }
 
     #[test]
@@ -1908,12 +1921,19 @@ mod tests {
         let toml_str = r#"
             required_sections = ["Context", "Verification"]
             instructions = ["Include diagrams"]
+
+            [[metadata_fields]]
+            key = "estimate"
+            source = "prompt"
+            prompt = "Estimated time?"
         "#;
         let config: WorkflowPlanConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(
             config.required_sections,
             vec!["Context", "Verification"]
         );
+        assert_eq!(config.metadata_fields.len(), 1);
+        assert_eq!(config.metadata_fields[0].key, "estimate");
     }
 
     #[test]
@@ -2004,13 +2024,28 @@ mod tests {
             instructions = ["Create feature branch"]
             pre_hooks = ["echo branching"]
 
+            [[branch.metadata_fields]]
+            key = "branch_name"
+            source = "command"
+            command = "git rev-parse --abbrev-ref HEAD"
+
             [plan]
             required_sections = ["Context"]
+
+            [[plan.metadata_fields]]
+            key = "estimate"
+            source = "prompt"
+            prompt = "Estimated time?"
 
             [implement]
             instructions = ["Follow style guide"]
             pre_hooks = ["cargo fmt --check"]
             post_hooks = ["cargo test"]
+
+            [[implement.metadata_fields]]
+            key = "complexity"
+            source = "value"
+            value = "medium"
 
             [merge]
             instructions = ["Squash commits"]
@@ -2034,10 +2069,16 @@ mod tests {
         assert_eq!(config.start.instructions, vec!["Check prereqs"]);
         assert_eq!(config.branch.instructions, vec!["Create feature branch"]);
         assert_eq!(config.branch.pre_hooks.len(), 1);
+        assert_eq!(config.branch.metadata_fields.len(), 1);
+        assert_eq!(config.branch.metadata_fields[0].key, "branch_name");
         assert_eq!(config.plan.required_sections, vec!["Context"]);
+        assert_eq!(config.plan.metadata_fields.len(), 1);
+        assert_eq!(config.plan.metadata_fields[0].key, "estimate");
         assert_eq!(config.implement.instructions, vec!["Follow style guide"]);
         assert_eq!(config.implement.pre_hooks.len(), 1);
         assert_eq!(config.implement.post_hooks.len(), 1);
+        assert_eq!(config.implement.metadata_fields.len(), 1);
+        assert_eq!(config.implement.metadata_fields[0].key, "complexity");
         assert_eq!(config.merge_event.instructions, vec!["Squash commits"]);
         assert_eq!(config.merge_event.pre_hooks.len(), 1);
         assert_eq!(config.pr.instructions, vec!["Add reviewers"]);

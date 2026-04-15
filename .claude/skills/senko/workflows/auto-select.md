@@ -5,7 +5,7 @@
 Run the metadata builder script to read `[workflow.start].metadata_fields` from config:
 
 ```bash
-bash ${CLAUDE_SKILL_DIR}/scripts/build-start-metadata.sh
+bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh start
 ```
 
 Parse the JSON output (`{"resolved": {...}, "prompts": [...]}`):

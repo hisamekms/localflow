@@ -615,14 +615,20 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 # instructions = ["Include acceptance criteria in the description"]
 # pre_hooks = ["echo 'adding task'"]
 # post_hooks = ["echo 'task added'"]
+#
+# [[workflow.add.metadata_fields]]
+# key = "team"
+# source = "value"
+# value = "backend"
 
 # [workflow.start]
 # instructions = ["Check for blockers before starting"]
 # pre_hooks = ["cargo check"]
 # post_hooks = [{ command = "notify-team", on_failure = "warn" }]
 #
-# Metadata fields to set on tasks when started.
+# Metadata fields: available on all stages.
 # source types: "env", "value", "prompt", "command"
+# "prompt" fields are collected via AskUserQuestion in Claude Code.
 #
 # [[workflow.start.metadata_fields]]
 # key = "assigned_by"
@@ -649,17 +655,32 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 # instructions = ["Use feature/ prefix for new features"]
 # pre_hooks = ["git fetch origin"]
 # post_hooks = []
+#
+# [[workflow.branch.metadata_fields]]
+# key = "branch_name"
+# source = "command"
+# command = "git rev-parse --abbrev-ref HEAD"
 
 # [workflow.plan]
 # required_sections = ["Overview", "Acceptance Criteria"]
 # instructions = ["Include time estimates in the plan"]
 # pre_hooks = []
 # post_hooks = []
+#
+# [[workflow.plan.metadata_fields]]
+# key = "plan_estimate"
+# source = "prompt"
+# prompt = "Estimated time for this task?"
 
 # [workflow.implement]
 # instructions = ["Follow project coding standards"]
 # pre_hooks = [{ command = "cargo fmt --check", on_failure = "abort" }]
 # post_hooks = ["cargo test --all"]
+#
+# [[workflow.implement.metadata_fields]]
+# key = "complexity"
+# source = "prompt"
+# prompt = "Complexity rating (low/medium/high)?"
 
 # [workflow.merge]
 # instructions = ["Ensure CI is green before merging"]

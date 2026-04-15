@@ -287,7 +287,7 @@ mod tests {
             "generate-plan-sections.sh",
             "rebase-merge.sh",
             "squash-merge.sh",
-            "build-start-metadata.sh",
+            "build-metadata.sh",
         ] {
             assert!(scripts_dir.join(name).exists(), "missing script: {name}");
         }
