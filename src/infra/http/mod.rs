@@ -8,7 +8,7 @@ pub mod remote_user_ops;
 use anyhow::Result;
 use serde_json::json;
 
-use crate::domain::task::{UpdateTaskArrayParams, UpdateTaskParams};
+use crate::domain::task::{MetadataUpdate, UpdateTaskArrayParams, UpdateTaskParams};
 
 tokio::task_local! {
     pub static PASSTHROUGH_TOKEN: String;
@@ -84,7 +84,20 @@ pub(crate) fn update_params_to_json(params: &UpdateTaskParams) -> serde_json::Va
     clearable!(plan);
     clearable!(branch);
     clearable!(pr_url);
-    clearable!(metadata);
+    // metadata uses MetadataUpdate enum instead of clearable! pattern
+    if let Some(ref meta_update) = params.metadata {
+        match meta_update {
+            MetadataUpdate::Clear => {
+                map.insert("clear_metadata".into(), json!(true));
+            }
+            MetadataUpdate::Merge(v) => {
+                map.insert("metadata".into(), json!(v));
+            }
+            MetadataUpdate::Replace(v) => {
+                map.insert("replace_metadata".into(), json!(v));
+            }
+        }
+    }
     clearable!(cancel_reason);
     clearable!(assignee_session_id);
     clearable!(started_at);

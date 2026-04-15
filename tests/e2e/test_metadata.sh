@@ -77,14 +77,43 @@ FROM_JSON='{"title":"JSON Input","metadata":{"source":"api"}}'
 FROM_OUT="$(echo "$FROM_JSON" | run_lf add --from-json)"
 assert_json_field "$FROM_OUT" '.metadata.source' "api" "from-json: metadata.source"
 
-# [11] edit --metadata replaces entire metadata
-echo "[11] edit replaces entire metadata"
+# [11] edit --metadata shallow-merges metadata (preserves existing keys)
+echo "[11] edit merges metadata"
 run_lf edit "$TASK_ID" --metadata '{"completely":"new"}'
 GET4_OUT="$(run_lf get "$TASK_ID")"
-assert_json_field "$GET4_OUT" '.metadata.completely' "new" "edit: replaced metadata"
-# Old key should not exist
+assert_json_field "$GET4_OUT" '.metadata.completely' "new" "edit: merged new key"
+# Old key should still exist (shallow merge preserves unmentioned keys)
 OLD_KEY="$(echo "$GET4_OUT" | jq -r '.metadata.key // "absent"')"
-assert_eq "absent" "$OLD_KEY" "edit: old key removed"
+assert_eq "value" "$OLD_KEY" "edit: old key preserved"
+OLD_NUM="$(echo "$GET4_OUT" | jq -r '.metadata.num // "absent"')"
+assert_eq "42" "$OLD_NUM" "edit: old num preserved"
+
+# [11b] edit --replace-metadata replaces entire metadata
+echo "[11b] edit --replace-metadata replaces entire metadata"
+run_lf edit "$TASK_ID" --replace-metadata '{"only":"this"}'
+GET4B_OUT="$(run_lf get "$TASK_ID")"
+assert_json_field "$GET4B_OUT" '.metadata.only' "this" "replace-metadata: new key"
+OLD_KEY2="$(echo "$GET4B_OUT" | jq -r '.metadata.key // "absent"')"
+assert_eq "absent" "$OLD_KEY2" "replace-metadata: old key removed"
+
+# [11c] edit --metadata with null value deletes key
+echo "[11c] edit --metadata with null deletes key"
+run_lf edit "$TASK_ID" --replace-metadata '{"a":1,"b":2,"c":3}'
+run_lf edit "$TASK_ID" --metadata '{"b":null}'
+GET4C_OUT="$(run_lf get "$TASK_ID")"
+assert_json_field "$GET4C_OUT" '.metadata.a' "1" "null-delete: a preserved"
+DELETED_KEY="$(echo "$GET4C_OUT" | jq -r '.metadata.b // "absent"')"
+assert_eq "absent" "$DELETED_KEY" "null-delete: b removed"
+assert_json_field "$GET4C_OUT" '.metadata.c' "3" "null-delete: c preserved"
+
+# [11d] start --metadata merges into existing
+echo "[11d] start --metadata merges"
+MERGE_TASK="$(run_lf add --title "Start Merge" --metadata '{"init":"val"}')"
+MERGE_ID="$(echo "$MERGE_TASK" | jq -r '.id')"
+run_lf ready "$MERGE_ID"
+STARTED="$(run_lf start "$MERGE_ID" --metadata '{"added":"new"}')"
+assert_json_field "$STARTED" '.metadata.init' "val" "start merge: existing key preserved"
+assert_json_field "$STARTED" '.metadata.added' "new" "start merge: new key added"
 
 # [12] metadata size limit on add (>64KB)
 echo "[12] metadata size limit on add"

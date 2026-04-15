@@ -12,8 +12,8 @@ use crate::application::port::{HookExecutor, TaskOperations};
 use crate::application::HookTrigger;
 use crate::domain::error::DomainError;
 use crate::domain::task::{
-    CreateTaskParams, ListTasksFilter, Priority, Task, TaskEvent, TaskStatus, UnblockedTask,
-    UpdateTaskArrayParams, UpdateTaskParams,
+    CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority, Task, TaskEvent, TaskStatus,
+    UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
 };
 
 use super::client::HttpClient;
@@ -157,15 +157,24 @@ impl TaskOperations for RemoteTaskOperations {
         id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
-        metadata: Option<serde_json::Value>,
+        metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
         let prev_status = self.get_task(project_id, id).await?.status();
+
+        let mut body = json!({ "session_id": session_id, "user_id": user_id });
+        if let Some(ref meta_update) = metadata {
+            match meta_update {
+                MetadataUpdate::Clear => { body["clear_metadata"] = json!(true); }
+                MetadataUpdate::Merge(v) => { body["metadata"] = json!(v); }
+                MetadataUpdate::Replace(v) => { body["replace_metadata"] = json!(v); }
+            }
+        }
 
         let resp = self
             .auth(
                 self.client()
                     .post(self.project_url(project_id, &format!("/tasks/{id}/start")))
-                    .json(&json!({ "session_id": session_id, "user_id": user_id, "metadata": metadata })),
+                    .json(&body),
             )
             .send()
             .await?;
@@ -189,13 +198,22 @@ impl TaskOperations for RemoteTaskOperations {
         session_id: Option<String>,
         user_id: Option<i64>,
         include_unassigned: bool,
-        metadata: Option<serde_json::Value>,
+        metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
+        let mut body = json!({ "session_id": session_id, "user_id": user_id, "include_unassigned": include_unassigned });
+        if let Some(ref meta_update) = metadata {
+            match meta_update {
+                MetadataUpdate::Clear => { body["clear_metadata"] = json!(true); }
+                MetadataUpdate::Merge(v) => { body["metadata"] = json!(v); }
+                MetadataUpdate::Replace(v) => { body["replace_metadata"] = json!(v); }
+            }
+        }
+
         let resp = self
             .auth(
                 self.client()
                     .post(self.project_url(project_id, "/tasks/next"))
-                    .json(&json!({ "session_id": session_id, "user_id": user_id, "include_unassigned": include_unassigned, "metadata": metadata })),
+                    .json(&body),
             )
             .send()
             .await?;

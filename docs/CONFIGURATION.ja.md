@@ -58,9 +58,9 @@ senko config --init
 | `workflow.add` | `default_dod` | string[] | 新規タスクのデフォルト完了定義。 |
 | `workflow.add` | `default_tags` | string[] | 新規タスクのデフォルトタグ。 |
 | `workflow.add` | `default_priority` | string | 新規タスクのデフォルト優先度。 |
-| `workflow.start` | `metadata_fields` | field[] | タスク開始時に収集するメタデータフィールド。 |
+| `workflow.start` | `metadata_fields` | field[] | タスク開始時に収集するメタデータフィールド。値は既存メタデータにシャローマージされる。 |
 | `workflow.plan` | `required_sections` | string[] | 実装計画の必須セクション。 |
-| `workflow.complete` | `metadata_fields` | field[] | タスク完了時に収集するメタデータフィールド。 |
+| `workflow.complete` | `metadata_fields` | field[] | タスク完了時に収集するメタデータフィールド。値は既存メタデータにシャローマージされる。 |
 
 ### `[backend.sqlite]`
 

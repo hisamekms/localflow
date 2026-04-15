@@ -227,10 +227,13 @@ pub enum Command {
         pr_url: Option<String>,
         #[arg(long)]
         clear_pr_url: bool,
-        /// Arbitrary JSON metadata
-        #[arg(long)]
+        /// JSON metadata (shallow-merged into existing metadata)
+        #[arg(long, conflicts_with = "replace_metadata")]
         metadata: Option<String>,
-        #[arg(long)]
+        /// Replace entire metadata with JSON value
+        #[arg(long, conflicts_with = "metadata")]
+        replace_metadata: Option<String>,
+        #[arg(long, conflicts_with_all = ["metadata", "replace_metadata"])]
         clear_metadata: bool,
         /// Assign to user ("self" for current user, or numeric user ID)
         #[arg(long)]
@@ -828,6 +831,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             ref pr_url,
             clear_pr_url,
             ref metadata,
+            ref replace_metadata,
             clear_metadata,
             ref assignee_user_id,
             clear_assignee_user_id,
@@ -862,6 +866,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             pr_url,
             clear_pr_url,
             metadata,
+            replace_metadata,
             clear_metadata,
             assignee_user_id,
             clear_assignee_user_id,

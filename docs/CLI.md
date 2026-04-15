@@ -81,6 +81,15 @@ senko edit 1 --add-definition-of-done "Write unit tests"
 # PR URL
 senko edit 1 --pr-url "https://github.com/org/repo/pull/42"
 senko edit 1 --clear-pr-url
+
+# Metadata (shallow merge — adds/overwrites keys, preserves unmentioned keys)
+senko edit 1 --metadata '{"sprint":"2026-Q2","points":3}'
+# Replace entire metadata (removes all existing keys)
+senko edit 1 --replace-metadata '{"new_key":"only this"}'
+# Delete a specific key (set to null in merge)
+senko edit 1 --metadata '{"points":null}'
+# Clear all metadata
+senko edit 1 --clear-metadata
 ```
 
 ## `complete <id>` – Complete a task
@@ -436,7 +445,7 @@ The full task object included in the event payload. Same schema as `senko get` o
 | `cancel_reason` | string \| null | Cancellation reason |
 | `branch` | string \| null | Associated git branch |
 | `pr_url` | string \| null | Pull request URL |
-| `metadata` | object \| null | Arbitrary JSON metadata |
+| `metadata` | object \| null | Arbitrary JSON metadata (`--metadata` shallow-merges, `--replace-metadata` replaces) |
 | `definition_of_done` | array | List of DoD items (see below) |
 | `in_scope` | array | In-scope items (strings) |
 | `out_of_scope` | array | Out-of-scope items (strings) |

@@ -27,8 +27,8 @@ use crate::infra::config::Config;
 use crate::domain::metadata_field::CreateMetadataFieldParams;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
-    AssigneeUserId, CompletionPolicy, CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus,
-    UpdateTaskArrayParams, UpdateTaskParams,
+    AssigneeUserId, CompletionPolicy, CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority,
+    Task, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role, UpdateUserParams,
@@ -301,6 +301,7 @@ struct StartBody {
     session_id: Option<String>,
     user_id: Option<i64>,
     metadata: Option<serde_json::Value>,
+    replace_metadata: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -321,6 +322,7 @@ struct NextBody {
     #[serde(default)]
     include_unassigned: bool,
     metadata: Option<serde_json::Value>,
+    replace_metadata: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -358,6 +360,7 @@ struct EditTaskBody {
     #[serde(default)]
     clear_pr_url: bool,
     metadata: Option<serde_json::Value>,
+    replace_metadata: Option<serde_json::Value>,
     #[serde(default)]
     clear_metadata: bool,
     assignee_user_id: Option<serde_json::Value>,
@@ -833,9 +836,11 @@ async fn edit_task(
             body.pr_url.map(Some)
         },
         metadata: if body.clear_metadata {
-            Some(None)
+            Some(MetadataUpdate::Clear)
+        } else if let Some(v) = body.replace_metadata {
+            Some(MetadataUpdate::Replace(v))
         } else {
-            body.metadata.map(Some)
+            body.metadata.map(MetadataUpdate::Merge)
         },
     };
 
@@ -906,7 +911,12 @@ async fn start_task(
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let user_id = body.user_id.or_else(|| auth.0.as_ref().map(|a| a.user.id()));
-    let updated = state.task_service.start_task(project_id, id, body.session_id, user_id, body.metadata).await.map_err(classify_error)?;
+    let metadata = if let Some(v) = body.replace_metadata {
+        Some(MetadataUpdate::Replace(v))
+    } else {
+        body.metadata.map(MetadataUpdate::Merge)
+    };
+    let updated = state.task_service.start_task(project_id, id, body.session_id, user_id, metadata).await.map_err(classify_error)?;
     Ok(Json(TaskResponse::from(updated)))
 }
 
@@ -944,10 +954,15 @@ async fn next_task(
     body: Option<Json<NextBody>>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let (session_id, user_id, include_unassigned, metadata) = body
-        .map(|b| (b.0.session_id, b.0.user_id, b.0.include_unassigned, b.0.metadata))
-        .unwrap_or((None, None, false, None));
+    let (session_id, user_id, include_unassigned, metadata_raw, replace_metadata) = body
+        .map(|b| (b.0.session_id, b.0.user_id, b.0.include_unassigned, b.0.metadata, b.0.replace_metadata))
+        .unwrap_or((None, None, false, None, None));
     let user_id = user_id.or_else(|| auth.0.as_ref().map(|a| a.user.id()));
+    let metadata = if let Some(v) = replace_metadata {
+        Some(MetadataUpdate::Replace(v))
+    } else {
+        metadata_raw.map(MetadataUpdate::Merge)
+    };
     let updated = state.task_service.next_task(project_id, session_id, user_id, include_unassigned, metadata).await.map_err(classify_error)?;
     Ok(Json(TaskResponse::from(updated)))
 }

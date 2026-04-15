@@ -9,8 +9,8 @@ use crate::domain::metadata_field::{
 };
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
-    self, AssigneeUserId, CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus,
-    UpdateTaskArrayParams, UpdateTaskParams,
+    self, AssigneeUserId, CreateTaskParams, DodItem, ListTasksFilter, MetadataUpdate,
+    Priority, Task, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams, shallow_merge_metadata,
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
@@ -1069,9 +1069,26 @@ fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<
         columns.push(TaskColumn::PrUrl);
         values.push(Box::new(pr_url.clone()));
     }
-    if let Some(ref metadata) = params.metadata {
+    if let Some(ref meta_update) = params.metadata {
         columns.push(TaskColumn::Metadata);
-        let metadata_str: Option<String> = metadata
+        let resolved: Option<serde_json::Value> = match meta_update {
+            MetadataUpdate::Clear => None,
+            MetadataUpdate::Replace(v) => Some(v.clone()),
+            MetadataUpdate::Merge(patch) => {
+                let existing_str: Option<String> = conn.query_row(
+                    "SELECT metadata FROM tasks WHERE id = ?",
+                    params![id],
+                    |row| row.get(0),
+                )?;
+                let existing: Option<serde_json::Value> = existing_str
+                    .as_deref()
+                    .map(serde_json::from_str)
+                    .transpose()
+                    .map_err(|e| anyhow::anyhow!("failed to parse existing metadata: {e}"))?;
+                shallow_merge_metadata(existing.as_ref(), patch)
+            }
+        };
+        let metadata_str: Option<String> = resolved
             .as_ref()
             .map(serde_json::to_string)
             .transpose()

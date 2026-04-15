@@ -58,9 +58,9 @@ Stage-specific keys:
 | `workflow.add` | `default_dod` | string[] | Default Definition of Done items for new tasks. |
 | `workflow.add` | `default_tags` | string[] | Default tags for new tasks. |
 | `workflow.add` | `default_priority` | string | Default priority for new tasks. |
-| `workflow.start` | `metadata_fields` | field[] | Metadata fields collected when starting a task. |
+| `workflow.start` | `metadata_fields` | field[] | Metadata fields collected when starting a task. Values are shallow-merged into existing metadata. |
 | `workflow.plan` | `required_sections` | string[] | Required sections in implementation plans. |
-| `workflow.complete` | `metadata_fields` | field[] | Metadata fields collected when completing a task. |
+| `workflow.complete` | `metadata_fields` | field[] | Metadata fields collected when completing a task. Values are shallow-merged into existing metadata. |
 
 ### `[backend.sqlite]`
 

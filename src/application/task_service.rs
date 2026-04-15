@@ -8,8 +8,8 @@ use chrono::Utc;
 use crate::application::port::TaskBackend;
 use crate::domain::error::DomainError;
 use crate::domain::task::{
-    self, CompletionPolicy, CreateTaskParams, ListTasksFilter, Task, TaskEvent, TaskStatus,
-    UpdateTaskArrayParams, UpdateTaskParams,
+    self, CompletionPolicy, CreateTaskParams, ListTasksFilter, MetadataUpdate, Task, TaskEvent,
+    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::validator::{has_cycle_async, validate_metadata, validate_metadata_on_complete};
 
@@ -126,10 +126,11 @@ impl TaskOperations for LocalTaskOperations {
         id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
-        metadata: Option<serde_json::Value>,
+        metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
-        if let Some(ref metadata) = metadata {
-            validate_metadata(metadata)?;
+        match &metadata {
+            Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => validate_metadata(v)?,
+            _ => {}
         }
         let prev_status = self.backend.get_task(project_id, id).await?.status();
         let task = self.backend.start_task(project_id, id, session_id, user_id, metadata).await?;
@@ -152,10 +153,11 @@ impl TaskOperations for LocalTaskOperations {
         session_id: Option<String>,
         user_id: Option<i64>,
         include_unassigned: bool,
-        metadata: Option<serde_json::Value>,
+        metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
-        if let Some(ref metadata) = metadata {
-            validate_metadata(metadata)?;
+        match &metadata {
+            Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => validate_metadata(v)?,
+            _ => {}
         }
         let task = match self.backend.next_task(project_id, user_id, include_unassigned).await? {
             Some(t) => t,
@@ -447,8 +449,9 @@ impl TaskOperations for LocalTaskOperations {
         id: i64,
         params: &UpdateTaskParams,
     ) -> Result<Task> {
-        if let Some(Some(ref metadata)) = params.metadata {
-            validate_metadata(metadata)?;
+        match &params.metadata {
+            Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => validate_metadata(v)?,
+            _ => {}
         }
         self.backend.update_task(project_id, id, params).await
     }

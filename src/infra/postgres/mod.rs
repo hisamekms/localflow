@@ -13,8 +13,8 @@ use crate::domain::project::{CreateProjectParams, Project};
 use crate::application::port::{AuthenticationPort, ProjectQueryPort, TaskQueryPort, UserQueryPort};
 use crate::domain::{ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
-    self, CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus,
-    UpdateTaskArrayParams, UpdateTaskParams,
+    self, CreateTaskParams, DodItem, ListTasksFilter, MetadataUpdate, Priority, Task, TaskStatus,
+    UpdateTaskArrayParams, UpdateTaskParams, shallow_merge_metadata,
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
@@ -961,8 +961,23 @@ impl TaskRepository for PostgresBackend {
                 .execute(&mut *tx)
                 .await?;
         }
-        if let Some(ref metadata) = params.metadata {
-            let metadata_str: Option<String> = metadata
+        if let Some(ref meta_update) = params.metadata {
+            let resolved: Option<serde_json::Value> = match meta_update {
+                MetadataUpdate::Clear => None,
+                MetadataUpdate::Replace(v) => Some(v.clone()),
+                MetadataUpdate::Merge(patch) => {
+                    let existing_str: Option<String> = sqlx::query_scalar("SELECT metadata FROM tasks WHERE id = $1")
+                        .bind(id)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                    let existing: Option<serde_json::Value> = existing_str
+                        .as_deref()
+                        .map(serde_json::from_str)
+                        .transpose()?;
+                    shallow_merge_metadata(existing.as_ref(), patch)
+                }
+            };
+            let metadata_str: Option<String> = resolved
                 .as_ref()
                 .map(|v| serde_json::to_string(v))
                 .transpose()?;

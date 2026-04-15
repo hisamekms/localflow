@@ -21,7 +21,7 @@ use crate::application::{HookTrigger, ProjectOperations};
 use crate::infra::config::{CliOverrides, Config};
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
-    AssigneeUserId, CreateTaskParams, ListTasksFilter, Priority, TaskStatus,
+    AssigneeUserId, CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::metadata_field::{CreateMetadataFieldParams, MetadataFieldType, validate_field_name};
@@ -411,10 +411,13 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, metadata:
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
     let user_id = resolve_current_user_id(&root, &config).await?;
-    let metadata: Option<serde_json::Value> = metadata
-        .map(|s| serde_json::from_str(&s))
-        .transpose()
-        .map_err(|e| anyhow::anyhow!("invalid metadata JSON: {}", e))?;
+    let metadata: Option<MetadataUpdate> = metadata
+        .map(|s| -> Result<MetadataUpdate> {
+            let val: serde_json::Value = serde_json::from_str(&s)
+                .map_err(|e| anyhow::anyhow!("invalid metadata JSON: {}", e))?;
+            Ok(MetadataUpdate::Merge(val))
+        })
+        .transpose()?;
 
     if cli.dry_run {
         let mut result = task_ops.preview_transition(project_id, id, TaskStatus::InProgress).await?;
@@ -425,7 +428,7 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, metadata:
             result.operations.push(format!("Set assignee_session_id to \"{}\"", sid));
         }
         if metadata.is_some() {
-            result.operations.push("Set metadata".to_string());
+            result.operations.push("Merge metadata".to_string());
         }
         return print_dry_run(&cli.output, &DryRunOperation { command: "start".into(), operations: result.operations });
     }
@@ -450,10 +453,13 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, metadata: Option<St
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
     let user_id = resolve_current_user_id(&root, &config).await?;
-    let metadata: Option<serde_json::Value> = metadata
-        .map(|s| serde_json::from_str(&s))
-        .transpose()
-        .map_err(|e| anyhow::anyhow!("invalid metadata JSON: {}", e))?;
+    let metadata: Option<MetadataUpdate> = metadata
+        .map(|s| -> Result<MetadataUpdate> {
+            let val: serde_json::Value = serde_json::from_str(&s)
+                .map_err(|e| anyhow::anyhow!("invalid metadata JSON: {}", e))?;
+            Ok(MetadataUpdate::Merge(val))
+        })
+        .transpose()?;
 
     if cli.dry_run {
         let result = task_ops.preview_next(project_id).await?;
@@ -462,7 +468,7 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, metadata: Option<St
             operations.push(format!("Set assignee_session_id to \"{}\"", sid));
         }
         if metadata.is_some() {
-            operations.push("Set metadata".to_string());
+            operations.push("Merge metadata".to_string());
         }
         return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
     }
@@ -1039,6 +1045,7 @@ pub async fn cmd_edit(
     pr_url: &Option<String>,
     clear_pr_url: bool,
     metadata: &Option<String>,
+    replace_metadata: &Option<String>,
     clear_metadata: bool,
     assignee_user_id: &Option<String>,
     clear_assignee_user_id: bool,
@@ -1105,8 +1112,10 @@ pub async fn cmd_edit(
         }
         if clear_metadata {
             operations.push(format!("Update task #{}: clear metadata", id));
+        } else if let Some(m) = replace_metadata {
+            operations.push(format!("Update task #{}: replace metadata with {}", id, m));
         } else if let Some(m) = metadata {
-            operations.push(format!("Update task #{}: set metadata to {}", id, m));
+            operations.push(format!("Update task #{}: merge metadata with {}", id, m));
         }
         if let Some(tags) = set_tags {
             operations.push(format!("Update task #{}: set tags to [{}]", id, tags.join(", ")));
@@ -1173,13 +1182,17 @@ pub async fn cmd_edit(
             pr_url.clone().map(Some)
         },
         metadata: if clear_metadata {
-            Some(None)
+            Some(MetadataUpdate::Clear)
+        } else if let Some(m) = replace_metadata {
+            let val: serde_json::Value = serde_json::from_str(m)
+                .context("invalid JSON for --replace-metadata")?;
+            Some(MetadataUpdate::Replace(val))
         } else {
             match metadata {
                 Some(m) => {
                     let val: serde_json::Value = serde_json::from_str(m)
                         .context("invalid JSON for --metadata")?;
-                    Some(Some(val))
+                    Some(MetadataUpdate::Merge(val))
                 }
                 None => None,
             }

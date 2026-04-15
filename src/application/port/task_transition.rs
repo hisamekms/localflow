@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 
-use crate::domain::task::Task;
+use crate::domain::task::{MetadataUpdate, Task};
 use crate::domain::TaskRepository;
 
 /// Port for task state transitions.
@@ -19,7 +19,7 @@ pub trait TaskTransitionPort: Send + Sync {
         id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
-        metadata: Option<serde_json::Value>,
+        metadata: Option<MetadataUpdate>,
     ) -> Result<Task>;
     async fn complete_task(
         &self,
@@ -56,7 +56,7 @@ pub async fn default_start_task(
     id: i64,
     session_id: Option<String>,
     user_id: Option<i64>,
-    metadata: Option<serde_json::Value>,
+    metadata: Option<MetadataUpdate>,
 ) -> Result<Task> {
     let task = repo.get_task(project_id, id).await?;
     let (task, _events) = task.start(session_id, user_id, now_rfc3339(), metadata)?;
@@ -101,7 +101,7 @@ macro_rules! impl_task_transition_default {
                 id: i64,
                 session_id: Option<String>,
                 user_id: Option<i64>,
-                metadata: Option<serde_json::Value>,
+                metadata: Option<$crate::domain::task::MetadataUpdate>,
             ) -> anyhow::Result<$crate::domain::task::Task> {
                 $crate::application::port::task_transition::default_start_task(self, project_id, id, session_id, user_id, metadata).await
             }

@@ -77,6 +77,15 @@ senko edit 1 --add-definition-of-done "ユニットテストを書く"
 # PR URL
 senko edit 1 --pr-url "https://github.com/org/repo/pull/42"
 senko edit 1 --clear-pr-url
+
+# メタデータ（シャローマージ — キーの追加・上書き、未指定キーは保持）
+senko edit 1 --metadata '{"sprint":"2026-Q2","points":3}'
+# メタデータ全置換（既存キーをすべて削除して置き換え）
+senko edit 1 --replace-metadata '{"new_key":"only this"}'
+# 特定キーの削除（マージ時にnullを指定）
+senko edit 1 --metadata '{"points":null}'
+# メタデータ全クリア
+senko edit 1 --clear-metadata
 ```
 
 ## `complete <id>` – タスク完了
@@ -375,7 +384,7 @@ command = "curl https://example.com/done"
 | `cancel_reason` | string \| null | キャンセル理由 |
 | `branch` | string \| null | 関連gitブランチ |
 | `pr_url` | string \| null | プルリクエストURL |
-| `metadata` | object \| null | 任意のJSONメタデータ |
+| `metadata` | object \| null | 任意のJSONメタデータ（`--metadata`でシャローマージ、`--replace-metadata`で全置換） |
 | `definition_of_done` | array | DoD項目のリスト（下記参照） |
 | `in_scope` | array | スコープ内の項目（文字列） |
 | `out_of_scope` | array | スコープ外の項目（文字列） |

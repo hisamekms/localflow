@@ -4,8 +4,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::domain::task::{
-    CreateTaskParams, ListTasksFilter, Task, TaskStatus, UnblockedTask, UpdateTaskArrayParams,
-    UpdateTaskParams,
+    CreateTaskParams, ListTasksFilter, MetadataUpdate, Task, TaskStatus, UnblockedTask,
+    UpdateTaskArrayParams, UpdateTaskParams,
 };
 
 /// Result of completing a task, including newly unblocked tasks.
@@ -43,7 +43,7 @@ pub trait TaskOperations: Send + Sync {
         id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
-        metadata: Option<serde_json::Value>,
+        metadata: Option<MetadataUpdate>,
     ) -> Result<Task>;
     async fn next_task(
         &self,
@@ -51,7 +51,7 @@ pub trait TaskOperations: Send + Sync {
         session_id: Option<String>,
         user_id: Option<i64>,
         include_unassigned: bool,
-        metadata: Option<serde_json::Value>,
+        metadata: Option<MetadataUpdate>,
     ) -> Result<Task>;
     async fn complete_task(
         &self,

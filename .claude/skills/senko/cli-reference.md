@@ -32,6 +32,11 @@ senko edit <id> --add-definition-of-done "Write unit tests"
 senko edit <id> --pr-url "https://github.com/org/repo/pull/42"
 senko edit <id> --plan-file /path/to/plan.md  # read plan from file
 
+# Metadata
+senko edit <id> --metadata '{"key":"val"}'         # shallow-merge into existing metadata
+senko edit <id> --replace-metadata '{"key":"val"}'  # replace entire metadata
+senko edit <id> --clear-metadata                    # remove all metadata
+
 # Definition of Done (DoD) check/uncheck (1-based index)
 senko dod check <task_id> <index>      # mark DoD item as done
 senko dod uncheck <task_id> <index>    # unmark DoD item
@@ -67,7 +72,8 @@ senko config --init                    # generate template config.toml
   - `merge_strategy`: `rebase` (default) or `squash`
   - `branch_template`: optional branch name template (e.g., `task/{{id}}-{{slug}}`)
   - Stage configs (`add`, `start`, `branch`, `plan`, `implement`, `merge`, `pr`, `complete`, `branch_cleanup`): each stage supports `instructions` (list of text), `pre_hooks` (list of hooks), `post_hooks` (list of hooks). Hooks can be a simple string (shell command) or `{command, prompt, on_failure}`.
-  - `metadata_fields`: available on all stages (`add`, `start`, `branch`, `plan`, `implement`, `merge`, `pr`, `complete`, `branch_cleanup`). Each field has `key`, `source` (`env`, `value`, `prompt`, `command`), optional `default`, and `required` flag. `prompt` source fields are collected via `AskUserQuestion`.
+  - `metadata_fields`: available on all stages (`add`, `start`, `branch`, `plan`, `implement`, `merge`, `pr`, `complete`, `branch_cleanup`). Each field has `key`, `source` (`env`, `value`, `prompt`, `command`), optional `default`, and `required` flag. `prompt` source fields are collected via `AskUserQuestion`. Values are shallow-merged into existing metadata.
+  - **Metadata update semantics**: `--metadata` performs a shallow merge (top-level keys only: add/overwrite existing, null deletes key, unmentioned keys preserved). `--replace-metadata` replaces entirely. `--clear-metadata` removes all metadata.
   - `add.default_dod` / `add.default_tags` / `add.default_priority`: defaults for new tasks
   - `plan.required_sections`: required sections in implementation plans
   - When `merge_via = "pr"`, `complete` requires `pr_url` to be set and the PR to be merged (checked via `gh`). Use `--skip-pr-check` to bypass.

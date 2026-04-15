@@ -529,8 +529,18 @@ impl Task {
             self.pr_url = pr_url.clone();
             changed = true;
         }
-        if let Some(ref metadata) = params.metadata {
-            self.metadata = metadata.clone();
+        if let Some(ref meta_update) = params.metadata {
+            match meta_update {
+                MetadataUpdate::Clear => {
+                    self.metadata = None;
+                }
+                MetadataUpdate::Merge(patch) => {
+                    self.metadata = shallow_merge_metadata(self.metadata.as_ref(), patch);
+                }
+                MetadataUpdate::Replace(value) => {
+                    self.metadata = Some(value.clone());
+                }
+            }
             changed = true;
         }
         if changed {
@@ -635,7 +645,7 @@ impl Task {
     }
 
     /// Transition: Todo -> InProgress.
-    pub fn start(mut self, assignee_session_id: Option<String>, assignee_user_id: Option<i64>, started_at: String, metadata: Option<serde_json::Value>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
+    pub fn start(mut self, assignee_session_id: Option<String>, assignee_user_id: Option<i64>, started_at: String, metadata: Option<MetadataUpdate>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         self.status = self.status.transition_to(TaskStatus::InProgress)?;
         self.assignee_session_id = assignee_session_id;
         if let Some(starting_uid) = assignee_user_id {
@@ -647,8 +657,18 @@ impl Task {
                 self.assignee_user_id = Some(starting_uid);
             }
         }
-        if let Some(m) = metadata {
-            self.metadata = Some(m);
+        if let Some(meta_update) = metadata {
+            match meta_update {
+                MetadataUpdate::Clear => {
+                    self.metadata = None;
+                }
+                MetadataUpdate::Merge(patch) => {
+                    self.metadata = shallow_merge_metadata(self.metadata.as_ref(), &patch);
+                }
+                MetadataUpdate::Replace(value) => {
+                    self.metadata = Some(value);
+                }
+            }
         }
         self.updated_at = started_at.clone();
         self.started_at = Some(started_at);
@@ -874,6 +894,57 @@ pub struct CreateTaskParams {
     pub assignee_user_id: Option<AssigneeUserId>,
 }
 
+/// Describes how to update metadata on a task.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MetadataUpdate {
+    /// Remove all metadata (set to null).
+    Clear,
+    /// Shallow-merge the given JSON object into existing metadata.
+    Merge(serde_json::Value),
+    /// Replace existing metadata entirely with the given value.
+    Replace(serde_json::Value),
+}
+
+/// Shallow-merge a JSON patch into existing metadata.
+///
+/// Rules (top-level keys only):
+/// - Key in patch with non-null value → add or overwrite
+/// - Key in patch with null value → delete from existing
+/// - Key not in patch → preserve from existing
+/// - If existing or patch is not an object → patch replaces entirely
+/// - If existing is None → patch becomes the new metadata (null-valued keys removed)
+pub fn shallow_merge_metadata(
+    existing: Option<&serde_json::Value>,
+    patch: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    use serde_json::Value;
+
+    let patch_obj = match patch {
+        Value::Object(m) => m,
+        // Non-object patch replaces entirely
+        other => return Some(other.clone()),
+    };
+
+    let mut base = match existing {
+        Some(Value::Object(m)) => m.clone(),
+        Some(_) | None => serde_json::Map::new(),
+    };
+
+    for (k, v) in patch_obj {
+        if v.is_null() {
+            base.remove(k);
+        } else {
+            base.insert(k.clone(), v.clone());
+        }
+    }
+
+    if base.is_empty() {
+        None
+    } else {
+        Some(Value::Object(base))
+    }
+}
+
 #[derive(Clone)]
 pub struct UpdateTaskParams {
     pub title: Option<String>,
@@ -889,7 +960,7 @@ pub struct UpdateTaskParams {
     pub cancel_reason: Option<Option<String>>,
     pub branch: Option<Option<String>>,
     pub pr_url: Option<Option<String>>,
-    pub metadata: Option<Option<serde_json::Value>>,
+    pub metadata: Option<MetadataUpdate>,
 }
 
 #[derive(Clone)]
@@ -1116,6 +1187,25 @@ mod tests {
         )
     }
 
+    fn default_update_params() -> UpdateTaskParams {
+        UpdateTaskParams {
+            title: None,
+            background: None,
+            description: None,
+            plan: None,
+            priority: None,
+            assignee_session_id: None,
+            assignee_user_id: None,
+            started_at: None,
+            completed_at: None,
+            canceled_at: None,
+            cancel_reason: None,
+            branch: None,
+            pr_url: None,
+            metadata: None,
+        }
+    }
+
     #[test]
     fn task_ready_from_draft() {
         let task = make_task(TaskStatus::Draft);
@@ -1143,25 +1233,28 @@ mod tests {
     }
 
     #[test]
-    fn task_start_with_metadata() {
+    fn task_start_with_metadata_replace() {
         let task = make_task(TaskStatus::Todo);
         let meta = serde_json::json!({"key": "value"});
-        let (task, _) = task.start(None, None, "2026-01-02T00:00:00Z".to_string(), Some(meta.clone())).unwrap();
+        let (task, _) = task.start(None, None, "2026-01-02T00:00:00Z".to_string(), Some(MetadataUpdate::Replace(meta.clone()))).unwrap();
         assert_eq!(task.metadata(), Some(&meta));
+    }
+
+    #[test]
+    fn task_start_with_metadata_merge() {
+        let mut task = make_task(TaskStatus::Todo);
+        task.metadata = Some(serde_json::json!({"a": 1, "b": 2}));
+        let (task, _) = task.start(None, None, "2026-01-02T00:00:00Z".to_string(), Some(MetadataUpdate::Merge(serde_json::json!({"b": 3, "c": 4})))).unwrap();
+        assert_eq!(task.metadata(), Some(&serde_json::json!({"a": 1, "b": 3, "c": 4})));
     }
 
     #[test]
     fn task_start_without_metadata_preserves_existing() {
         let mut task = make_task(TaskStatus::Todo);
         let existing = serde_json::json!({"existing": true});
-        // Set metadata via builder internals for test setup
-        task = {
-            let (mut t, _) = task.start(None, None, "2026-01-02T00:00:00Z".to_string(), Some(existing.clone())).unwrap();
-            // Re-create as Todo to test preserving metadata on start without metadata arg
-            // Instead, just verify the metadata was set
-            assert_eq!(t.metadata(), Some(&existing));
-            t
-        };
+        task.metadata = Some(existing.clone());
+        let (task, _) = task.start(None, None, "2026-01-02T00:00:00Z".to_string(), None).unwrap();
+        assert_eq!(task.metadata(), Some(&existing));
     }
 
     #[test]
@@ -1176,6 +1269,118 @@ mod tests {
         assert_eq!(task.assignee_user_id(), None);
         let (task, _) = task.start(None, Some(5), "2026-01-02T00:00:00Z".to_string(), None).unwrap();
         assert_eq!(task.assignee_user_id(), Some(5));
+    }
+
+    // --- shallow_merge_metadata tests ---
+
+    #[test]
+    fn shallow_merge_adds_new_keys() {
+        let existing = serde_json::json!({"a": 1});
+        let patch = serde_json::json!({"b": 2});
+        let result = shallow_merge_metadata(Some(&existing), &patch);
+        assert_eq!(result, Some(serde_json::json!({"a": 1, "b": 2})));
+    }
+
+    #[test]
+    fn shallow_merge_overwrites_existing_keys() {
+        let existing = serde_json::json!({"a": 1, "b": 2});
+        let patch = serde_json::json!({"b": 99});
+        let result = shallow_merge_metadata(Some(&existing), &patch);
+        assert_eq!(result, Some(serde_json::json!({"a": 1, "b": 99})));
+    }
+
+    #[test]
+    fn shallow_merge_null_deletes_key() {
+        let existing = serde_json::json!({"a": 1, "b": 2});
+        let patch = serde_json::json!({"b": null});
+        let result = shallow_merge_metadata(Some(&existing), &patch);
+        assert_eq!(result, Some(serde_json::json!({"a": 1})));
+    }
+
+    #[test]
+    fn shallow_merge_null_deletes_all_returns_none() {
+        let existing = serde_json::json!({"a": 1});
+        let patch = serde_json::json!({"a": null});
+        let result = shallow_merge_metadata(Some(&existing), &patch);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn shallow_merge_preserves_unmentioned_keys() {
+        let existing = serde_json::json!({"a": 1, "b": 2, "c": 3});
+        let patch = serde_json::json!({"b": 99});
+        let result = shallow_merge_metadata(Some(&existing), &patch);
+        assert_eq!(result, Some(serde_json::json!({"a": 1, "b": 99, "c": 3})));
+    }
+
+    #[test]
+    fn shallow_merge_nested_objects_replaced_not_merged() {
+        let existing = serde_json::json!({"nested": {"x": 1, "y": 2}});
+        let patch = serde_json::json!({"nested": {"z": 3}});
+        let result = shallow_merge_metadata(Some(&existing), &patch);
+        assert_eq!(result, Some(serde_json::json!({"nested": {"z": 3}})));
+    }
+
+    #[test]
+    fn shallow_merge_with_none_existing() {
+        let patch = serde_json::json!({"a": 1, "b": null});
+        let result = shallow_merge_metadata(None, &patch);
+        assert_eq!(result, Some(serde_json::json!({"a": 1})));
+    }
+
+    #[test]
+    fn shallow_merge_non_object_patch_replaces() {
+        let existing = serde_json::json!({"a": 1});
+        let patch = serde_json::json!("string_value");
+        let result = shallow_merge_metadata(Some(&existing), &patch);
+        assert_eq!(result, Some(serde_json::json!("string_value")));
+    }
+
+    #[test]
+    fn shallow_merge_non_object_existing_uses_patch_as_base() {
+        let existing = serde_json::json!("old_string");
+        let patch = serde_json::json!({"a": 1});
+        let result = shallow_merge_metadata(Some(&existing), &patch);
+        assert_eq!(result, Some(serde_json::json!({"a": 1})));
+    }
+
+    // --- apply_update metadata tests ---
+
+    #[test]
+    fn apply_update_metadata_clear() {
+        let mut task = make_task(TaskStatus::Todo);
+        task.metadata = Some(serde_json::json!({"a": 1}));
+        let params = UpdateTaskParams {
+            metadata: Some(MetadataUpdate::Clear),
+            ..default_update_params()
+        };
+        let task = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
+        assert_eq!(task.metadata(), None);
+    }
+
+    #[test]
+    fn apply_update_metadata_replace() {
+        let mut task = make_task(TaskStatus::Todo);
+        task.metadata = Some(serde_json::json!({"a": 1}));
+        let new_meta = serde_json::json!({"x": 99});
+        let params = UpdateTaskParams {
+            metadata: Some(MetadataUpdate::Replace(new_meta.clone())),
+            ..default_update_params()
+        };
+        let task = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
+        assert_eq!(task.metadata(), Some(&new_meta));
+    }
+
+    #[test]
+    fn apply_update_metadata_merge() {
+        let mut task = make_task(TaskStatus::Todo);
+        task.metadata = Some(serde_json::json!({"a": 1, "b": 2}));
+        let params = UpdateTaskParams {
+            metadata: Some(MetadataUpdate::Merge(serde_json::json!({"b": 3, "c": 4}))),
+            ..default_update_params()
+        };
+        let task = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
+        assert_eq!(task.metadata(), Some(&serde_json::json!({"a": 1, "b": 3, "c": 4})));
     }
 
     #[test]
