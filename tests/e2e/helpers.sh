@@ -15,7 +15,8 @@ allocate_port() {
     echo "FATAL: TEST_INDEX not set. Run tests via run.sh." >&2
     exit 1
   fi
-  echo $(( 20000 + TEST_INDEX * 10 + offset ))
+  local base="${PORT_SEED:-20000}"
+  echo $(( base + TEST_INDEX * 10 + offset ))
 }
 
 # Setup isolated test environment with temp directory
@@ -34,7 +35,7 @@ setup_test_env() {
   unset SENKO_CONFIG 2>/dev/null || true
   while IFS= read -r var; do
     unset "$var"
-  done < <(env | grep -o '^SENKO_[^=]*' || true)
+  done < <(env | grep -o '^SENKO_[^=]*' | grep -v '^SENKO_TEST_' || true)
 
   # Resolve binary path
   if [[ -z "${SENKO:-}" ]]; then
@@ -47,6 +48,20 @@ setup_test_env() {
   fi
 
   export TEST_DIR TEST_PROJECT_ROOT XDG_CONFIG_HOME XDG_STATE_HOME XDG_CACHE_HOME SENKO
+
+  # Setup database backend arguments
+  case "${SENKO_TEST_BACKEND:-sqlite}" in
+    postgres)
+      if [[ -z "${SENKO_TEST_PG_URL_PREFIX:-}" ]]; then
+        echo "FATAL: SENKO_TEST_PG_URL_PREFIX not set for postgres backend" >&2
+        exit 1
+      fi
+      SENKO_DB_ARGS=(--postgres-url "${SENKO_TEST_PG_URL_PREFIX}senko_e2e_${TEST_INDEX}")
+      ;;
+    *)
+      SENKO_DB_ARGS=(--db-path "$TEST_PROJECT_ROOT/.senko/data.db")
+      ;;
+  esac
 }
 
 # Cleanup temp directory
@@ -57,9 +72,9 @@ cleanup_test_env() {
 }
 
 # Run senko with --project-root pointed at test directory
-# Also sets --db-path to keep the database inside the test directory
+# Uses SENKO_DB_ARGS (set by setup_test_env) for backend-appropriate database arguments
 run_lf() {
-  "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" "$@"
+  "$SENKO" --project-root "$TEST_PROJECT_ROOT" "${SENKO_DB_ARGS[@]}" "$@"
 }
 
 # Create a test user with API key and project membership, return the API key.

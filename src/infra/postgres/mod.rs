@@ -159,7 +159,7 @@ async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
     .bind(id)
     .fetch_optional(pool)
     .await?
-    .context("task not found")?;
+    .ok_or(DomainError::TaskNotFound)?;
 
     let status_str: String = row.get("status");
     let priority_val: i32 = row.get("priority");
@@ -262,7 +262,7 @@ where
         .bind(task_number)
         .fetch_optional(executor)
         .await?
-        .context("task not found")?;
+        .ok_or(DomainError::TaskNotFound)?;
     Ok(row.get("id"))
 }
 
@@ -295,7 +295,7 @@ impl ProjectRepository for PostgresBackend {
             .bind(id)
             .fetch_optional(pool)
             .await?
-            .context("project not found")?;
+            .ok_or(DomainError::ProjectNotFound)?;
         Ok(Project::new(
             id,
             row.get("name"),
@@ -311,7 +311,7 @@ impl ProjectRepository for PostgresBackend {
                 .bind(name)
                 .fetch_optional(pool)
                 .await?
-                .context("project not found")?;
+                .ok_or(DomainError::ProjectNotFound)?;
         Ok(Project::new(
             row.get("id"),
             name.to_string(),
@@ -409,7 +409,7 @@ impl ProjectMemberRepository for PostgresBackend {
         .bind(user_id)
         .fetch_optional(pool)
         .await?
-        .context("project member not found")?;
+        .ok_or(DomainError::ProjectMemberNotFound)?;
         let role_str: String = row.get("role");
         let role: Role = role_str.parse()?;
         Ok(ProjectMember::new(
@@ -477,7 +477,7 @@ impl UserRepository for PostgresBackend {
         .bind(id)
         .fetch_optional(pool)
         .await?
-        .context("user not found")?;
+        .ok_or(DomainError::UserNotFound)?;
         Ok(User::new(
             id,
             row.get("username"),
@@ -496,7 +496,7 @@ impl UserRepository for PostgresBackend {
         .bind(username)
         .fetch_optional(pool)
         .await?
-        .context("user not found")?;
+        .ok_or(DomainError::UserNotFound)?;
         Ok(User::new(
             row.get("id"),
             username.to_string(),
@@ -515,7 +515,7 @@ impl UserRepository for PostgresBackend {
         .bind(sub)
         .fetch_optional(pool)
         .await?
-        .context("user not found")?;
+        .ok_or(DomainError::UserNotFound)?;
         Ok(User::new(
             row.get("id"),
             row.get("username"),
@@ -561,7 +561,7 @@ impl UserRepository for PostgresBackend {
         let row = query
             .fetch_optional(pool)
             .await?
-            .context("user not found")?;
+            .ok_or(DomainError::UserNotFound)?;
 
         Ok(User::new(
             row.get("id"),
@@ -1114,9 +1114,7 @@ impl TaskRepository for PostgresBackend {
     async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
         let pool = self.pool().await?;
         let internal_id = resolve_task_number(pool, project_id, task_id).await?;
-        get_task_by_id(pool, internal_id)
-            .await
-            .context("task not found")?;
+        get_task_by_id(pool, internal_id).await?;
 
         let rows = sqlx::query(
             "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = $1",

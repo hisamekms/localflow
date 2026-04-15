@@ -19,10 +19,23 @@ run = "senko"
 description = "Run unit tests"
 run = "cargo test"
 
-[tasks.test-e2e]
-description = "Run e2e tests"
+[tasks.build-pg]
+description = "Build senko binary with postgres feature"
+run = "cargo build -q --bin senko --example pg_test_server --features postgres"
+
+[tasks."e2e:sqlite"]
+description = "Run e2e tests with SQLite backend"
 depends = ["build"]
 run = "bash tests/e2e/run.sh"
+
+[tasks."e2e:postgres"]
+description = "Run e2e tests with PostgreSQL backend"
+depends = ["build-pg"]
+run = "bash tests/e2e/run.sh --backend=postgres"
+
+[tasks.e2e]
+description = "Run e2e tests with all backends"
+depends = ["e2e:sqlite", "e2e:postgres"]
 
 [tasks.senko-dev]
 description = "Run locally built senko binary"

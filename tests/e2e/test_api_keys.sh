@@ -12,7 +12,7 @@ SERVER_URL="http://127.0.0.1:$PORT"
 API_BASE="$SERVER_URL/api/v1"
 
 # Start the API server with master key auth
-SENKO_AUTH_API_KEY_MASTER_KEY="$MASTER_KEY" "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT" &
+SENKO_AUTH_API_KEY_MASTER_KEY="$MASTER_KEY" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "${SENKO_DB_ARGS[@]}" serve --port "$PORT" &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null; cleanup_test_env' EXIT
 

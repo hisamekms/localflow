@@ -916,6 +916,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             config.apply_cli(&CliOverrides {
                 log_dir: cli.log_dir.as_ref().map(|p| p.to_string_lossy().into_owned()),
                 db_path: cli.db_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                postgres_url: cli.postgres_url.clone(),
                 server_port: port, server_host: host,
                 ..Default::default()
             });
