@@ -90,6 +90,11 @@ const MIGRATIONS: &[Migration] = &[
         description: "add_user_sub",
         sql: include_str!("migrations/20260413000000_add_user_sub.sql"),
     },
+    Migration {
+        version: 6,
+        description: "metadata_to_jsonb",
+        sql: include_str!("migrations/20260415000000_metadata_to_jsonb.sql"),
+    },
 ];
 
 async fn run_migrations(pool: &PgPool) -> Result<()> {
@@ -1291,6 +1296,18 @@ impl TaskQueryPort for PostgresBackend {
                 conditions.push(format!("t.assignee_user_id = ${param_idx}"));
             }
             binds.push(BindVal::Int(uid));
+            param_idx += 1;
+        }
+
+        if !filter.metadata.is_empty() {
+            let json_str = serde_json::to_string(
+                &serde_json::Value::Object(
+                    filter.metadata.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                ),
+            )
+            .context("failed to serialize metadata filter")?;
+            conditions.push(format!("t.metadata::jsonb @> ${param_idx}::jsonb"));
+            binds.push(BindVal::Str(json_str));
             #[allow(unused_assignments)]
             { param_idx += 1; }
         }

@@ -972,6 +972,7 @@ pub struct ListTasksFilter {
     pub ready: bool,
     pub assignee_user_id: Option<i64>,
     pub include_unassigned: bool,
+    pub metadata: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Clone)]

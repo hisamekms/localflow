@@ -331,6 +331,8 @@ struct ListTasksQuery {
     assignee_user_id: Option<i64>,
     #[serde(default)]
     include_unassigned: Option<bool>,
+    #[serde(default)]
+    metadata: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -762,6 +764,15 @@ async fn list_tasks(
         .map(|s| s.parse::<TaskStatus>())
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(classify_error)?;
+    let mut metadata_map = std::collections::HashMap::new();
+    for entry in &query.metadata {
+        let (key, value) = entry.split_once(':').ok_or_else(|| {
+            classify_error(anyhow::anyhow!(
+                "invalid metadata filter format: expected 'key:value', got '{entry}'"
+            ))
+        })?;
+        metadata_map.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+    }
     let filter = ListTasksFilter {
         statuses,
         tags: query.tag,
@@ -769,6 +780,7 @@ async fn list_tasks(
         ready: query.ready.unwrap_or(false),
         assignee_user_id: query.assignee_user_id,
         include_unassigned: query.include_unassigned.unwrap_or(false),
+        metadata: metadata_map,
     };
     let tasks = state.task_service.list_tasks(project_id, &filter).await.map_err(classify_error)?;
     Ok(Json(tasks.into_iter().map(TaskResponse::from).collect()))
