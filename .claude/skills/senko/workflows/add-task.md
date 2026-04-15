@@ -36,21 +36,38 @@ If splitting, define the sub-tasks with their titles and relationships. Ask the 
 
 ### Phase 2: Draft Creation
 
+#### Build add metadata
+
+Run the metadata builder script to read `[workflow.add].metadata_fields` from config:
+
+```bash
+bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh add
+```
+
+Parse the JSON output (`{"resolved": {...}, "prompts": [...]}`):
+
+- If `prompts` array is non-empty, ask the user each prompt question using `AskUserQuestion`. Merge user answers into `resolved`.
+- If `resolved` is non-empty (has keys), pass `--metadata '<json>'` to each `senko add` call below.
+
+#### Create draft tasks
+
 Create one or multiple draft tasks based on Phase 1 results.
 
 **Single task:**
 
 ```bash
-senko add --title "<title>" --assignee-user-id self
+senko add --title "<title>" --assignee-user-id self --metadata '<metadata-json>'
 ```
 
 **Multiple tasks (split):**
 
 ```bash
-senko add --title "<sub-task 1 title>" --assignee-user-id self
-senko add --title "<sub-task 2 title>" --assignee-user-id self
+senko add --title "<sub-task 1 title>" --assignee-user-id self --metadata '<metadata-json>'
+senko add --title "<sub-task 2 title>" --assignee-user-id self --metadata '<metadata-json>'
 # ...
 ```
+
+Omit `--metadata` entirely if there are no metadata fields to pass.
 
 Capture the `id` from each JSON output for subsequent phases.
 

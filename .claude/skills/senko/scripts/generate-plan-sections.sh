@@ -53,6 +53,22 @@ emit_hooks() {
   done
 }
 
+# Emit metadata collection step for a workflow stage if metadata_fields is configured.
+# Usage: emit_metadata_step <stage> <task-id>
+emit_metadata_step() {
+  local stage="$1"
+  local task_id="$2"
+  local count
+  count=$(echo "$CONFIG_JSON" | jq --arg s "$stage" '.workflow[$s].metadata_fields // [] | length')
+  if [ "$count" -gt 0 ]; then
+    echo "- Collect metadata for \`${stage}\` stage:"
+    echo "  1. Run \`bash \${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh ${stage}\`"
+    echo "  2. If \`prompts\` array is non-empty, ask the user each prompt using \`AskUserQuestion\`"
+    echo "  3. Merge answers into \`resolved\`, then shallow-merge into existing task metadata"
+    echo "  4. Save: \`senko edit ${task_id} --metadata '<merged-json>'\`"
+  fi
+}
+
 # --- Pre-start ---
 cat <<EOF
 # Pre-start
@@ -63,6 +79,7 @@ cat <<EOF
 - This must be done before starting implementation.
 EOF
 
+emit_metadata_step "implement" "$TASK_ID"
 emit_instructions "implement"
 emit_hooks "implement" "pre_hooks"
 
@@ -80,6 +97,7 @@ cat <<'HEADER'
   4. All DoD items must be checked before proceeding
 HEADER
 
+emit_metadata_step "merge" "$TASK_ID"
 emit_hooks "merge" "pre_hooks"
 emit_instructions "merge"
 
@@ -112,6 +130,7 @@ fi
 emit_hooks "merge" "post_hooks"
 
 # --- Complete step ---
+emit_metadata_step "complete" "$TASK_ID"
 emit_hooks "complete" "pre_hooks"
 emit_instructions "complete"
 
@@ -121,6 +140,7 @@ cat <<EOF
 EOF
 
 # --- Branch cleanup ---
+emit_metadata_step "branch_cleanup" "$TASK_ID"
 emit_hooks "branch_cleanup" "pre_hooks"
 emit_instructions "branch_cleanup"
 

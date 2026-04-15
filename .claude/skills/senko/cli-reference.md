@@ -67,7 +67,7 @@ senko config --init                    # generate template config.toml
   - `merge_strategy`: `rebase` (default) or `squash`
   - `branch_template`: optional branch name template (e.g., `task/{{id}}-{{slug}}`)
   - Stage configs (`add`, `start`, `branch`, `plan`, `implement`, `merge`, `pr`, `complete`, `branch_cleanup`): each stage supports `instructions` (list of text), `pre_hooks` (list of hooks), `post_hooks` (list of hooks). Hooks can be a simple string (shell command) or `{command, prompt, on_failure}`.
-  - `start.metadata_fields` / `complete.metadata_fields`: metadata fields collected at start/complete
+  - `metadata_fields`: available on all stages (`add`, `start`, `branch`, `plan`, `implement`, `merge`, `pr`, `complete`, `branch_cleanup`). Each field has `key`, `source` (`env`, `value`, `prompt`, `command`), optional `default`, and `required` flag. `prompt` source fields are collected via `AskUserQuestion`.
   - `add.default_dod` / `add.default_tags` / `add.default_priority`: defaults for new tasks
   - `plan.required_sections`: required sections in implementation plans
   - When `merge_via = "pr"`, `complete` requires `pr_url` to be set and the PR to be merged (checked via `gh`). Use `--skip-pr-check` to bypass.
