@@ -278,6 +278,43 @@ async fn passthrough_auth_middleware(
     }
 }
 
+// --- Version header middleware ---
+
+fn has_auth_credentials(
+    headers: &axum::http::HeaderMap,
+    auth_mode: Option<&AuthMode>,
+    trusted_headers_config: &crate::infra::config::TrustedHeadersConfig,
+) -> bool {
+    match auth_mode {
+        None => false,
+        Some(AuthMode::Token(_)) => headers.contains_key("authorization"),
+        Some(AuthMode::TrustedHeaders(_)) => match &trusted_headers_config.subject_header {
+            Some(header) => headers.contains_key(header.as_str()),
+            None => false,
+        },
+    }
+}
+
+async fn version_header_middleware(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let has_credentials = has_auth_credentials(
+        req.headers(),
+        state.auth_mode.as_deref(),
+        &state.trusted_headers_config,
+    );
+    let mut response = next.run(req).await;
+    if has_credentials && response.status() != StatusCode::UNAUTHORIZED {
+        response.headers_mut().insert(
+            "x-senko-version",
+            axum::http::HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
+        );
+    }
+    response
+}
+
 // --- Request types ---
 
 #[derive(Deserialize)]
@@ -596,6 +633,10 @@ async fn start_server(
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             passthrough_auth_middleware,
+        ))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            version_header_middleware,
         ))
         .with_state(state)
         .layer(
@@ -1511,5 +1552,63 @@ mod tests {
     fn classify_upstream_500_becomes_internal() {
         let err = classify_error(upstream_error(500, "server error"));
         assert_api_error_status(err, StatusCode::INTERNAL_SERVER_ERROR, "server error");
+    }
+
+    // --- has_auth_credentials tests ---
+
+    use crate::application::port::auth::{AuthError as PortAuthError, AuthProvider};
+    use crate::infra::config::TrustedHeadersConfig;
+
+    struct DummyAuthProvider;
+
+    #[async_trait::async_trait]
+    impl AuthProvider for DummyAuthProvider {
+        async fn authenticate(
+            &self,
+            _token: &str,
+        ) -> std::result::Result<crate::domain::user::User, PortAuthError> {
+            Err(PortAuthError::InvalidToken)
+        }
+    }
+
+    fn token_auth_mode() -> AuthMode {
+        AuthMode::Token(Arc::new(DummyAuthProvider))
+    }
+
+    fn default_trusted_headers_config() -> TrustedHeadersConfig {
+        TrustedHeadersConfig {
+            subject_header: None,
+            name_header: None,
+            display_name_header: None,
+            email_header: None,
+            groups_header: None,
+            scope_header: None,
+            oidc_issuer_url: None,
+            oidc_client_id: None,
+        }
+    }
+
+    #[test]
+    fn auth_credentials_none_mode() {
+        let headers = axum::http::HeaderMap::new();
+        let config = default_trusted_headers_config();
+        assert!(!has_auth_credentials(&headers, None, &config));
+    }
+
+    #[test]
+    fn auth_credentials_token_with_header() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("authorization", "Bearer test-token".parse().unwrap());
+        let mode = token_auth_mode();
+        let config = default_trusted_headers_config();
+        assert!(has_auth_credentials(&headers, Some(&mode), &config));
+    }
+
+    #[test]
+    fn auth_credentials_token_without_header() {
+        let headers = axum::http::HeaderMap::new();
+        let mode = token_auth_mode();
+        let config = default_trusted_headers_config();
+        assert!(!has_auth_credentials(&headers, Some(&mode), &config));
     }
 }
