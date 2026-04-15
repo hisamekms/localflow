@@ -1823,6 +1823,25 @@ fn require_api_url_and_token(cli: &Cli) -> Result<(String, String)> {
     Ok((api_url, token))
 }
 
+fn api_url_and_optional_token(cli: &Cli) -> Result<(String, Option<String>)> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let config = load_config(cli, &root)?;
+    let api_url = config
+        .cli
+        .remote
+        .url
+        .as_deref()
+        .context("cli.remote.url is not configured. Set it in config to point to the senko API server.")?
+        .to_string();
+    if let Some(token) = config.cli.remote.token {
+        return Ok((api_url, Some(token)));
+    }
+    let token = super::keychain::load(&api_url)
+        .or_else(|_| super::keychain::load_access_token(&api_url))
+        .ok();
+    Ok((api_url, token))
+}
+
 fn http_client() -> reqwest::Client {
     reqwest::Client::new()
 }
@@ -1903,16 +1922,18 @@ pub async fn cmd_auth_token(cli: &Cli) -> Result<()> {
 }
 
 pub async fn cmd_auth_status(cli: &Cli) -> Result<()> {
-    let (api_url, token) = require_api_url_and_token(cli)?;
+    let (api_url, token) = api_url_and_optional_token(cli)?;
     let client = http_client();
-    let resp = client
-        .get(format!("{}/auth/me", api_url_base(&api_url)))
-        .bearer_auth(&token)
+    let mut req = client.get(format!("{}/auth/me", api_url_base(&api_url)));
+    if let Some(ref token) = token {
+        req = req.bearer_auth(token);
+    }
+    let resp = req
         .send()
         .await
         .context("failed to connect to server")?;
     if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-        bail!("Session expired or invalid. Run `senko auth login` to re-authenticate.");
+        bail!("Not logged in. Run `senko auth login` to authenticate.");
     }
     if !resp.status().is_success() {
         let status = resp.status();
@@ -2550,5 +2571,89 @@ mod tests {
         let session = me.session.unwrap();
         assert_eq!(session.id, 1);
         assert_eq!(session.key_prefix, "abc");
+    }
+
+    /// Isolate env vars so real user config doesn't leak into tests.
+    fn isolate_env(project_root: &std::path::Path) {
+        let empty = project_root.join("__no_user_config__");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &empty);
+            std::env::remove_var("SENKO_CONFIG");
+            std::env::remove_var("SENKO_USER");
+            std::env::remove_var("SENKO_PROJECT");
+            std::env::remove_var("SENKO_CLI_REMOTE_URL");
+            std::env::remove_var("SENKO_CLI_REMOTE_TOKEN");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn api_url_and_optional_token_returns_none_when_no_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        isolate_env(tmp.path());
+        let senko_dir = tmp.path().join(".senko");
+        std::fs::create_dir_all(&senko_dir).unwrap();
+        std::fs::write(
+            senko_dir.join("config.toml"),
+            r#"
+[cli.remote]
+url = "http://localhost:3142"
+"#,
+        )
+        .unwrap();
+
+        let cli = Cli {
+            output: OutputFormat::Text,
+            project_root: Some(tmp.path().to_path_buf()),
+            config: None,
+            dry_run: false,
+            log_dir: None,
+            db_path: None,
+            postgres_url: None,
+            project: None,
+            user: None,
+            command: Command::Auth {
+                command: super::super::AuthCommand::Status,
+            },
+        };
+        let (url, token) = super::api_url_and_optional_token(&cli).unwrap();
+        assert_eq!(url, "http://localhost:3142");
+        assert!(token.is_none(), "expected no token for relay-like config");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn api_url_and_optional_token_returns_token_from_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        isolate_env(tmp.path());
+        let senko_dir = tmp.path().join(".senko");
+        std::fs::create_dir_all(&senko_dir).unwrap();
+        std::fs::write(
+            senko_dir.join("config.toml"),
+            r#"
+[cli.remote]
+url = "http://localhost:3142"
+token = "my-api-key"
+"#,
+        )
+        .unwrap();
+
+        let cli = Cli {
+            output: OutputFormat::Text,
+            project_root: Some(tmp.path().to_path_buf()),
+            config: None,
+            dry_run: false,
+            log_dir: None,
+            db_path: None,
+            postgres_url: None,
+            project: None,
+            user: None,
+            command: Command::Auth {
+                command: super::super::AuthCommand::Status,
+            },
+        };
+        let (url, token) = super::api_url_and_optional_token(&cli).unwrap();
+        assert_eq!(url, "http://localhost:3142");
+        assert_eq!(token.as_deref(), Some("my-api-key"));
     }
 }
