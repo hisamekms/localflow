@@ -331,6 +331,8 @@ pub struct LogConfig {
     pub level: String,
     #[serde(default)]
     pub format: LogFormat,
+    #[serde(default)]
+    pub hook_output: HookOutput,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -339,6 +341,15 @@ pub enum LogFormat {
     #[default]
     Json,
     Pretty,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HookOutput {
+    #[default]
+    File,
+    Stdout,
+    Both,
 }
 
 fn default_log_level() -> String {
@@ -591,6 +602,7 @@ pub struct RawLogConfig {
     pub dir: Option<String>,
     pub level: Option<String>,
     pub format: Option<LogFormat>,
+    pub hook_output: Option<HookOutput>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -722,6 +734,7 @@ impl RawConfig {
                 dir: overlay.log.dir.or(self.log.dir),
                 level: overlay.log.level.or(self.log.level),
                 format: overlay.log.format.or(self.log.format),
+                hook_output: overlay.log.hook_output.or(self.log.hook_output),
             },
             project: ProjectConfig {
                 name: overlay.project.name.or(self.project.name),
@@ -911,6 +924,7 @@ impl RawConfig {
                 dir: self.log.dir,
                 level: self.log.level.unwrap_or_else(default_log_level),
                 format: self.log.format.unwrap_or_default(),
+                hook_output: self.log.hook_output.unwrap_or_default(),
             },
             project: self.project,
             user: self.user,
@@ -1321,6 +1335,14 @@ impl Config {
                 "json" => self.log.format = LogFormat::Json,
                 "pretty" => self.log.format = LogFormat::Pretty,
                 other => eprintln!("warning: unknown SENKO_LOG_FORMAT={other}, ignoring"),
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_LOG_HOOK_OUTPUT") {
+            match val.to_lowercase().as_str() {
+                "file" => self.log.hook_output = HookOutput::File,
+                "stdout" => self.log.hook_output = HookOutput::Stdout,
+                "both" => self.log.hook_output = HookOutput::Both,
+                other => eprintln!("warning: unknown SENKO_LOG_HOOK_OUTPUT={other}, ignoring"),
             }
         }
 
