@@ -28,7 +28,12 @@ Walk through sections in this order:
    - `auto_merge`: when merge_via=direct, auto-merge branch without user confirmation?
    - `branch_mode`: use git worktrees or regular branches?
    - `merge_strategy`: rebase or squash merge?
-   - `branch_template`: custom branch name template?
+   - `branch_template`: custom branch name template? Guide the user through variable selection:
+     - `{{id}}` — task ID (always available)
+     - `{{slug}}` — kebab-case slug from task title (always available)
+     - `{{context.<key>}}` — value resolved from session context at branch-setting time (e.g., `{{context.sprint}}`)
+     - `{{<name>:<opt1>|<opt2>|...}}` — enum variable inferred from task content (e.g., `{{prefix:feat|fix|chore}}`)
+     - Present example templates: `task/{{id}}-{{slug}}`, `{{prefix:feat|fix|chore}}/{{id}}-{{slug}}`, `{{context.team}}/{{id}}-{{slug}}`
 4. **cli.remote** — Remote server connection for CLI client mode (skip if local-only use):
    - `url`: remote server URL (e.g., `http://127.0.0.1:3142`)
    - `token`: API token for authentication with the remote server

@@ -40,7 +40,7 @@ Read full task info from `senko get <id>` output: `description`, `plan`, `defini
 
 ### Step 2: Create Worktree
 
-Generate a branch name from the task title. Use the `/wth` skill to create a worktree.
+Use the `branch` field from `senko get <id>` as the branch name. If `branch` is not set (non-repo task), skip worktree creation and proceed to Step 3. Use the `/wth` skill to create a worktree.
 
 ### Step 3: Plan Mode
 

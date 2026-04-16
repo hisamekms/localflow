@@ -25,7 +25,7 @@ For each section, explain every item's **current value**, whether it's the **def
 | `auto_merge` | `true` | `true`, `false` | Applies only to `merge_via = "direct"`. Controls whether the branch is merged automatically or requires user confirmation. Has no effect when `merge_via = "pr"`. |
 | `branch_mode` | `worktree` | `worktree`, `branch` | How task branches are created. `worktree` uses git worktrees (parallel work), `branch` uses regular branches. |
 | `merge_strategy` | `rebase` | `rebase`, `squash` | Git merge strategy when merging task branches back to main. |
-| `branch_template` | `null` | string | Template for branch names (e.g., `task/{{id}}-{{slug}}`). |
+| `branch_template` | `null` | string | Template for branch names. Variables: `{{id}}`, `{{slug}}`, `{{context.<key>}}` (from session context), `{{<name>:<opt1>\|<opt2>\|...}}` (enum, inferred from task). Example: `{{prefix:feat\|fix\|chore}}/{{id}}-{{slug}}`. |
 
 **workflow stages** (`workflow.add`, `workflow.start`, `workflow.branch`, `workflow.plan`, `workflow.implement`, `workflow.merge`, `workflow.pr`, `workflow.complete`, `workflow.branch_cleanup`)
 

@@ -109,8 +109,23 @@ senko edit <id> \
   --add-tag backend \
   --add-definition-of-done "Write unit tests" \
   --add-definition-of-done "E2E tests pass"
+```
 
-# Transition to todo
+4. **Branch setting** (before `senko ready`):
+   - Determine whether the task involves repository operations (code changes, file edits, configuration changes, etc.) based on the task's title and description. If unclear, use `AskUserQuestion` to ask the user.
+   - If the task does NOT involve repository operations (e.g., investigation only, external service setup), skip branch setting.
+   - If the task involves repository operations:
+     1. Read `branch_template` from `senko config`. If not set, use `{{id}}-{{slug}}` as the default template.
+     2. Resolve template variables:
+        - `{{id}}` → task ID
+        - `{{slug}}` → kebab-case slug derived from the task title
+        - `{{context.<key>}}` → resolve from session context. If unavailable, use `AskUserQuestion` to ask the user for the value.
+        - `{{<name>:<opt1>|<opt2>|...}}` → enum variable. Infer the appropriate value from the task's title and description (e.g., new feature → `feat`, bug fix → `fix`, maintenance → `chore`). If unclear, use `AskUserQuestion` to present the options.
+     3. Set it: `senko edit <id> --branch <branch-name>`
+
+5. Transition to todo:
+
+```bash
 senko ready <id>
 ```
 
@@ -120,6 +135,7 @@ Display the finalized task details (or task graph if multiple) to the user.
 
 **Simple mode procedure:**
 
-1. Create draft: `senko add --title "<description>" --assignee-user-id self`
+1. Create draft: `senko add --title "<description>"`
 2. Set description: `senko edit <id> --description "<description>"`
-3. Transition: `senko ready <id>`
+3. **Branch setting**: Same as Phase 4 step 4 above.
+4. Transition: `senko ready <id>`

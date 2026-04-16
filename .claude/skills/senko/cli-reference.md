@@ -71,7 +71,12 @@ senko config --init                    # generate template config.toml
   - `auto_merge`: `true` (default) / `false` — applies only to `merge_via = "direct"`
   - `branch_mode`: `worktree` (default) or `branch`
   - `merge_strategy`: `rebase` (default) or `squash`
-  - `branch_template`: optional branch name template (e.g., `task/{{id}}-{{slug}}`)
+  - `branch_template`: optional branch name template. Supported variables:
+    - `{{id}}` — task ID
+    - `{{slug}}` — kebab-case slug derived from the task title
+    - `{{context.<key>}}` — resolved from session context at branch-setting time. If the value is unavailable, the user is asked via `AskUserQuestion`.
+    - `{{<name>:<opt1>|<opt2>|...}}` — enum variable. The skill infers the value from the task content. If unclear, the user is asked to choose. Example: `{{prefix:feat|fix|chore}}`
+    - Examples: `task/{{id}}-{{slug}}`, `{{prefix:feat|fix|chore}}/{{id}}-{{slug}}`
   - Stage configs (`add`, `start`, `branch`, `plan`, `implement`, `merge`, `pr`, `complete`, `branch_cleanup`): each stage supports `instructions` (list of text), `pre_hooks` (list of hooks), `post_hooks` (list of hooks). Hooks can be a simple string (shell command) or `{command, prompt, on_failure}`.
   - `metadata_fields`: available on all stages (`add`, `start`, `branch`, `plan`, `implement`, `merge`, `pr`, `complete`, `branch_cleanup`). Each field has `key`, `source` (`env`, `value`, `prompt`, `command`), optional `default`, and `required` flag. `prompt` source fields are collected via `AskUserQuestion`. Values are shallow-merged into existing metadata.
   - **Metadata update semantics**: `--metadata` performs a shallow merge (top-level keys only: add/overwrite existing, null deletes key, unmentioned keys preserved). `--replace-metadata` replaces entirely. `--clear-metadata` removes all metadata.
