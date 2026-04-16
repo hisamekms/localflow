@@ -83,10 +83,10 @@ emit_metadata_step "implement" "$TASK_ID"
 emit_instructions "implement"
 emit_hooks "implement" "pre_hooks"
 
-# --- Post-completion ---
+# --- Finalization ---
 cat <<'HEADER'
 
-# Post-completion
+# Finalization
 - When implementation is done, verify DoD items using the dod-verifier subagent:
   1. Run `senko get <id>` and check `definition_of_done` for unchecked items
   2. Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
@@ -103,6 +103,9 @@ emit_instructions "merge"
 
 # --- Merge/PR step ---
 if [ "$MERGE_VIA" = "direct" ]; then
+  if [ "$AUTO_MERGE" != "true" ]; then
+    echo "- **MANDATORY**: Use \`AskUserQuestion\` to ask the user for completion approval before proceeding to merge. Do NOT skip this step. Wait for explicit user approval."
+  fi
   if [ "$MERGE_STRATEGY" = "squash" ]; then
     echo "- Squash merge the branch into main (all DoD items must be checked before this step):"
     echo "  \`bash \${CLAUDE_SKILL_DIR}/scripts/squash-merge.sh <branch-name>\`"
@@ -134,12 +137,16 @@ emit_metadata_step "complete" "$TASK_ID"
 emit_hooks "complete" "pre_hooks"
 emit_instructions "complete"
 
-cat <<EOF
-- Use \`AskUserQuestion\` to ask the user for completion approval
-- Complete the task: \`senko complete ${TASK_ID}\`
-EOF
+if [ "$MERGE_VIA" = "pr" ]; then
+  echo "- **Do NOT run \`senko complete\` in this workflow.** Task completion for PR-based workflows is handled separately via \`/senko complete ${TASK_ID}\`."
+else
+  echo "- Complete the task: \`senko complete ${TASK_ID}\`"
+fi
 
-# --- Branch cleanup ---
+# --- Post-completion ---
+echo ""
+echo "# Post-completion"
+
 emit_metadata_step "branch_cleanup" "$TASK_ID"
 emit_hooks "branch_cleanup" "pre_hooks"
 emit_instructions "branch_cleanup"

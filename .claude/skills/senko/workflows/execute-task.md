@@ -46,12 +46,12 @@ Generate a branch name from the task title. Use the `/wth` skill to create a wor
 
 Use `EnterPlanMode` to create an implementation plan. Investigate the codebase based on the task's description.
 
-Before creating the plan, generate the workflow-specific Pre-start and Post-completion sections by running:
+Before creating the plan, generate the workflow-specific sections by running:
 
 ```bash
 bash ${CLAUDE_SKILL_DIR}/scripts/generate-plan-sections.sh <id>
 ```
 
-Include the script's output verbatim in the plan as the Pre-start and Post-completion sections.
+The script outputs three sections: **Pre-start**, **Finalization**, and **Post-completion**. Include all three sections verbatim in the plan.
 
 Wait for the user to approve the plan.
