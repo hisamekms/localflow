@@ -14,8 +14,10 @@ use crate::bootstrap::{
     create_remote_hook_data, create_remote_metadata_field_operations,
     create_remote_project_operations, create_remote_user_operations,
     create_task_operations, create_user_service,
-    resolve_project_id, resolve_user_id, DEFAULT_PROJECT_ID,
+    resolve_project_id, resolve_user_id,
 };
+#[cfg(test)]
+use crate::bootstrap::DEFAULT_PROJECT_ID;
 use crate::bootstrap::hook as hooks;
 use crate::application::{HookTrigger, ProjectOperations};
 use crate::infra::config::{CliOverrides, Config};
@@ -1624,16 +1626,12 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
 pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let project_service: std::sync::Arc<dyn ProjectOperations> = if config.cli.remote.url.is_some() {
-        std::sync::Arc::new(create_remote_project_operations(&config))
-    } else {
-        let backend = create_backend(&root, &config)?;
-        std::sync::Arc::new(create_project_service(backend))
-    };
+    let (_task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     match action {
         MemberAction::List => {
-            let members = project_service.list_project_members(DEFAULT_PROJECT_ID).await?;
+            let members = project_ops.list_project_members(project_id).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&members)?);
@@ -1650,8 +1648,8 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
         }
         MemberAction::Add { user_id, role } => {
             let params = AddProjectMemberParams::new(*user_id, role.map(|r| r.into()));
-            let member = project_service
-                .add_project_member(DEFAULT_PROJECT_ID, &params, None)
+            let member = project_ops
+                .add_project_member(project_id, &params, None)
                 .await?;
             match cli.output {
                 OutputFormat::Json => {
@@ -1666,8 +1664,8 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
             }
         }
         MemberAction::Remove { user_id } => {
-            project_service
-                .remove_project_member(DEFAULT_PROJECT_ID, *user_id, None)
+            project_ops
+                .remove_project_member(project_id, *user_id, None)
                 .await?;
             match cli.output {
                 OutputFormat::Json => {
@@ -1682,8 +1680,8 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
             }
         }
         MemberAction::SetRole { user_id, role } => {
-            let member = project_service
-                .update_member_role(DEFAULT_PROJECT_ID, *user_id, (*role).into(), None)
+            let member = project_ops
+                .update_member_role(project_id, *user_id, (*role).into(), None)
                 .await?;
             match cli.output {
                 OutputFormat::Json => {
