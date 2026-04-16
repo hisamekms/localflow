@@ -127,6 +127,9 @@ senko project create --name my-project
 ```bash
 # ユーザーID 2 を member ロールで追加（ロール: owner, member, viewer）
 senko members add --user-id 2 --role member
+
+# 複数プロジェクトを管理する場合は、--project で対象プロジェクトを明示:
+senko --project my-project members add --user-id 2 --role member
 ```
 
 #### 7. ユーザーAPIキーの発行
@@ -246,6 +249,9 @@ OIDCモードでは、初回ログイン時にユーザーがJWTクレーム（`
 ```bash
 senko project create --name my-project
 senko members add --user-id 2 --role member
+
+# 複数プロジェクトを管理する場合は、対象プロジェクトを明示:
+senko --project another-project members add --user-id 3 --role viewer
 ```
 
 ### 利用者の手順

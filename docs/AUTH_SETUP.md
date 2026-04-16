@@ -127,6 +127,9 @@ senko project create --name my-project
 ```bash
 # Add user ID 2 as a member (roles: owner, member, viewer)
 senko members add --user-id 2 --role member
+
+# When managing multiple projects, specify the target project explicitly:
+senko --project my-project members add --user-id 2 --role member
 ```
 
 #### 7. Issue User API Keys
@@ -246,6 +249,9 @@ In OIDC mode, users are auto-provisioned from JWT claims (`sub`, `name`, `email`
 ```bash
 senko project create --name my-project
 senko members add --user-id 2 --role member
+
+# When managing multiple projects, specify the target project:
+senko --project another-project members add --user-id 3 --role viewer
 ```
 
 ### Client Setup
