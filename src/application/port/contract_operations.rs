@@ -1,0 +1,51 @@
+use anyhow::Result;
+use async_trait::async_trait;
+
+use crate::domain::contract::{
+    Contract, ContractNote, CreateContractParams, UpdateContractArrayParams, UpdateContractParams,
+};
+
+/// Application-level port that exposes all contract operations.
+///
+/// Both local (`LocalContractOperations`) and remote implementations can
+/// satisfy this trait, allowing the presentation layer to depend only on the
+/// abstraction rather than a concrete service type.
+#[async_trait]
+pub trait ContractOperations: Send + Sync {
+    // --- CRUD ---
+
+    async fn create_contract(
+        &self,
+        project_id: i64,
+        params: &CreateContractParams,
+    ) -> Result<Contract>;
+
+    async fn get_contract(&self, id: i64) -> Result<Contract>;
+
+    async fn list_contracts(&self, project_id: i64) -> Result<Vec<Contract>>;
+
+    async fn edit_contract(
+        &self,
+        id: i64,
+        params: &UpdateContractParams,
+        array_params: &UpdateContractArrayParams,
+    ) -> Result<Contract>;
+
+    async fn delete_contract(&self, id: i64) -> Result<()>;
+
+    // --- Definition of Done ---
+
+    async fn check_dod(&self, contract_id: i64, index: usize) -> Result<Contract>;
+    async fn uncheck_dod(&self, contract_id: i64, index: usize) -> Result<Contract>;
+
+    // --- Notes ---
+
+    async fn add_note(
+        &self,
+        contract_id: i64,
+        content: String,
+        source_task_id: Option<i64>,
+    ) -> Result<ContractNote>;
+
+    async fn list_notes(&self, contract_id: i64) -> Result<Vec<ContractNote>>;
+}

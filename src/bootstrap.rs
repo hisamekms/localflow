@@ -6,7 +6,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 use crate::application::port::auth::AuthProvider;
 use crate::application::port::{HookDataSource, HookExecutor, PrVerifier};
-use crate::application::{HookTestService, LocalTaskOperations, MetadataFieldService, ProjectOperations, ProjectService, TaskOperations, UserService};
+use crate::application::{HookTestService, LocalContractOperations, LocalTaskOperations, MetadataFieldService, ProjectOperations, ProjectService, TaskOperations, UserService};
 use crate::domain::task::CompletionPolicy;
 use crate::application::port::TaskBackend;
 use crate::infra::config::{Config, LogConfig, LogFormat, RawConfig};
@@ -261,6 +261,10 @@ pub fn create_remote_project_operations(config: &Config) -> RemoteProjectOperati
 
 pub fn create_metadata_field_service(backend: Arc<dyn TaskBackend>) -> MetadataFieldService {
     MetadataFieldService::new(backend)
+}
+
+pub fn create_contract_service(backend: Arc<dyn TaskBackend>) -> LocalContractOperations {
+    LocalContractOperations::new(backend)
 }
 
 pub fn create_remote_hook_data(config: &Config) -> Arc<dyn HookDataSource> {

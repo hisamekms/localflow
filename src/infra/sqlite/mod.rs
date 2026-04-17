@@ -938,8 +938,8 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
         )?;
 
     conn.execute(
-        "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number, assignee_user_id, contract_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
-        rusqlite::params![params.title, params.background, params.description, priority, params.branch, params.pr_url, metadata_str, project_id, task_number, params.assignee_user_id.as_ref().and_then(|a| a.as_id())],
+        "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number, assignee_user_id, contract_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        rusqlite::params![params.title, params.background, params.description, priority, params.branch, params.pr_url, metadata_str, project_id, task_number, params.assignee_user_id.as_ref().and_then(|a| a.as_id()), params.contract_id],
     )?;
     let task_id = conn.last_insert_rowid();
 
@@ -2475,6 +2475,7 @@ mod tests {
             tags: vec![],
             dependencies: vec![],
             assignee_user_id: None,
+            contract_id: None,
         }
     }
 
@@ -2592,6 +2593,7 @@ mod tests {
                 tags: vec!["rust".to_string(), "cli".to_string()],
                 dependencies: vec![],
                 assignee_user_id: None,
+                contract_id: None,
             },
         )
         .unwrap();
@@ -2748,6 +2750,7 @@ mod tests {
                 tags: vec!["tag".to_string()],
                 dependencies: vec![],
                 assignee_user_id: None,
+                contract_id: None,
             },
         )
         .unwrap();
@@ -3705,6 +3708,7 @@ mod tests {
             tags: vec![],
             dependencies: vec![],
             assignee_user_id: None,
+            contract_id: None,
         }
     }
 
@@ -3728,6 +3732,7 @@ mod tests {
                     tags: vec!["backend".into()],
                     dependencies: vec![],
                     assignee_user_id: None,
+                    contract_id: None,
                 },
             )
             .await
@@ -4613,6 +4618,22 @@ mod tests {
         assert!(backend.get_contract(c.id()).await.is_err());
         let list = backend.list_contracts(1).await.unwrap();
         assert!(list.is_empty());
+    }
+
+    #[tokio::test]
+    async fn inmem_create_task_with_contract_id() {
+        let backend = mem_backend();
+        let c = backend
+            .create_contract(1, &make_contract_params("linked at create"))
+            .await
+            .unwrap();
+        let mut p = params("task with contract");
+        p.contract_id = Some(c.id());
+        let task = backend.create_task(1, &p).await.unwrap();
+        assert_eq!(task.contract_id(), Some(c.id()));
+
+        let got = backend.get_task(1, task.task_number()).await.unwrap();
+        assert_eq!(got.contract_id(), Some(c.id()));
     }
 
     #[tokio::test]

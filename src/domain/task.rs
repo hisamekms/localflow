@@ -903,6 +903,8 @@ pub struct CreateTaskParams {
     pub dependencies: Vec<i64>,
     #[serde(default)]
     pub assignee_user_id: Option<AssigneeUserId>,
+    #[serde(default)]
+    pub contract_id: Option<i64>,
 }
 
 /// Describes how to update metadata on a task.

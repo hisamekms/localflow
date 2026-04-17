@@ -854,6 +854,7 @@ command = "echo completed"
                 tags: vec![],
                 dependencies: vec![],
                 assignee_user_id: None,
+                contract_id: None,
             },
         )
         .await
@@ -883,6 +884,7 @@ command = "echo completed"
                 tags: vec![],
                 dependencies: vec![],
                 assignee_user_id: None,
+                contract_id: None,
             },
         )
         .await
@@ -916,6 +918,7 @@ command = "echo completed"
                 tags: vec![],
                 dependencies: vec![],
                 assignee_user_id: None,
+                contract_id: None,
             },
         )
         .await
@@ -941,6 +944,7 @@ command = "echo completed"
                 tags: vec![],
                 dependencies: vec![],
                 assignee_user_id: None,
+                contract_id: None,
             },
         )
         .await

@@ -174,6 +174,7 @@ pub async fn cmd_add(
             tags: tag,
             dependencies: depends_on,
             assignee_user_id: parsed_assignee.clone(),
+            contract_id: None,
         }
     };
 

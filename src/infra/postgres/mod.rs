@@ -780,7 +780,7 @@ impl TaskRepository for PostgresBackend {
 
         let row = sqlx::query(
             "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number, assignee_user_id, contract_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM tasks WHERE project_id = $8), $9, NULL)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM tasks WHERE project_id = $8), $9, $10)
              RETURNING id, task_number",
         )
         .bind(&params.title)
@@ -792,6 +792,7 @@ impl TaskRepository for PostgresBackend {
         .bind(&metadata_str)
         .bind(project_id)
         .bind(params.assignee_user_id.as_ref().and_then(|a| a.as_id()))
+        .bind(params.contract_id)
         .fetch_one(&mut *tx)
         .await?;
         let task_id: i64 = row.get("id");
@@ -2049,6 +2050,7 @@ mod tests {
             tags: vec![],
             dependencies: vec![],
             assignee_user_id: None,
+            contract_id: None,
         }
     }
 
@@ -2597,6 +2599,25 @@ mod tests {
 
         backend.delete_contract(c.id()).await.unwrap();
         assert!(backend.get_contract(c.id()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_task_with_contract_id() {
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+        let c = backend
+            .create_contract(1, &contract_params("linked at create"))
+            .await
+            .unwrap();
+        let mut p = params("task with contract");
+        p.contract_id = Some(c.id());
+        let task = backend.create_task(1, &p).await.unwrap();
+        assert_eq!(task.contract_id(), Some(c.id()));
+
+        let got = backend.get_task(1, task.task_number()).await.unwrap();
+        assert_eq!(got.contract_id(), Some(c.id()));
     }
 
     #[tokio::test]
