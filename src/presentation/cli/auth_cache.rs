@@ -3,21 +3,16 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
-fn cache_path() -> Option<PathBuf> {
-    let cache_dir = std::env::var("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .ok()
-        .filter(|p| p.is_absolute())
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| PathBuf::from(h).join(".cache"))
-        })?;
-    Some(cache_dir.join("senko").join("auth_mode.json"))
+use crate::infra::xdg::XdgDirs;
+
+fn cache_path(xdg: &XdgDirs) -> Option<PathBuf> {
+    xdg.cache_home
+        .as_ref()
+        .map(|dir| dir.join("senko").join("auth_mode.json"))
 }
 
-fn read_cache() -> HashMap<String, String> {
-    let path = match cache_path() {
+fn read_cache(xdg: &XdgDirs) -> HashMap<String, String> {
+    let path = match cache_path(xdg) {
         Some(p) => p,
         None => return HashMap::new(),
     };
@@ -28,8 +23,8 @@ fn read_cache() -> HashMap<String, String> {
     serde_json::from_str(&data).unwrap_or_default()
 }
 
-fn write_cache(map: &HashMap<String, String>) -> Result<()> {
-    let path = cache_path().context("could not determine XDG cache path")?;
+fn write_cache(xdg: &XdgDirs, map: &HashMap<String, String>) -> Result<()> {
+    let path = cache_path(xdg).context("could not determine XDG cache path")?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create cache directory: {}", parent.display()))?;
@@ -40,78 +35,73 @@ fn write_cache(map: &HashMap<String, String>) -> Result<()> {
     Ok(())
 }
 
-pub fn cache_auth_mode(api_url: &str, auth_mode: &str) -> Result<()> {
-    let mut map = read_cache();
+pub fn cache_auth_mode(xdg: &XdgDirs, api_url: &str, auth_mode: &str) -> Result<()> {
+    let mut map = read_cache(xdg);
     map.insert(api_url.to_string(), auth_mode.to_string());
-    write_cache(&map)
+    write_cache(xdg, &map)
 }
 
-pub fn get_cached_auth_mode(api_url: &str) -> Option<String> {
-    read_cache().get(api_url).cloned()
+pub fn get_cached_auth_mode(xdg: &XdgDirs, api_url: &str) -> Option<String> {
+    read_cache(xdg).get(api_url).cloned()
 }
 
-pub fn delete_cached_auth_mode(api_url: &str) -> Result<()> {
-    let mut map = read_cache();
+pub fn delete_cached_auth_mode(xdg: &XdgDirs, api_url: &str) -> Result<()> {
+    let mut map = read_cache(xdg);
     map.remove(api_url);
-    write_cache(&map)
+    write_cache(xdg, &map)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn with_temp_cache<F: FnOnce()>(f: F) {
-        let dir = tempfile::tempdir().unwrap();
-        let prev = std::env::var("XDG_CACHE_HOME").ok();
-        // SAFETY: tests are run serially (single-threaded test runner or #[serial])
-        unsafe { std::env::set_var("XDG_CACHE_HOME", dir.path()) };
-        f();
-        match prev {
-            Some(v) => unsafe { std::env::set_var("XDG_CACHE_HOME", v) },
-            None => unsafe { std::env::remove_var("XDG_CACHE_HOME") },
+    fn xdg_with_cache(path: &std::path::Path) -> XdgDirs {
+        XdgDirs {
+            cache_home: Some(path.to_path_buf()),
+            ..Default::default()
         }
     }
 
     #[test]
     fn test_cache_roundtrip() {
-        with_temp_cache(|| {
-            cache_auth_mode("http://localhost:8080", "trusted_headers").unwrap();
-            assert_eq!(
-                get_cached_auth_mode("http://localhost:8080"),
-                Some("trusted_headers".to_string())
-            );
-        });
+        let dir = tempfile::tempdir().unwrap();
+        let xdg = xdg_with_cache(dir.path());
+        cache_auth_mode(&xdg, "http://localhost:8080", "trusted_headers").unwrap();
+        assert_eq!(
+            get_cached_auth_mode(&xdg, "http://localhost:8080"),
+            Some("trusted_headers".to_string())
+        );
     }
 
     #[test]
     fn test_get_missing_key() {
-        with_temp_cache(|| {
-            assert_eq!(get_cached_auth_mode("http://nonexistent:9999"), None);
-        });
+        let dir = tempfile::tempdir().unwrap();
+        let xdg = xdg_with_cache(dir.path());
+        assert_eq!(get_cached_auth_mode(&xdg, "http://nonexistent:9999"), None);
     }
 
     #[test]
     fn test_delete_cleans_up() {
-        with_temp_cache(|| {
-            cache_auth_mode("http://localhost:8080", "oidc").unwrap();
-            delete_cached_auth_mode("http://localhost:8080").unwrap();
-            assert_eq!(get_cached_auth_mode("http://localhost:8080"), None);
-        });
+        let dir = tempfile::tempdir().unwrap();
+        let xdg = xdg_with_cache(dir.path());
+        cache_auth_mode(&xdg, "http://localhost:8080", "oidc").unwrap();
+        delete_cached_auth_mode(&xdg, "http://localhost:8080").unwrap();
+        assert_eq!(get_cached_auth_mode(&xdg, "http://localhost:8080"), None);
     }
 
     #[test]
     fn test_multiple_urls() {
-        with_temp_cache(|| {
-            cache_auth_mode("http://a:1000", "trusted_headers").unwrap();
-            cache_auth_mode("http://b:2000", "oidc").unwrap();
-            assert_eq!(
-                get_cached_auth_mode("http://a:1000"),
-                Some("trusted_headers".to_string())
-            );
-            assert_eq!(
-                get_cached_auth_mode("http://b:2000"),
-                Some("oidc".to_string())
-            );
-        });
+        let dir = tempfile::tempdir().unwrap();
+        let xdg = xdg_with_cache(dir.path());
+        cache_auth_mode(&xdg, "http://a:1000", "trusted_headers").unwrap();
+        cache_auth_mode(&xdg, "http://b:2000", "oidc").unwrap();
+        assert_eq!(
+            get_cached_auth_mode(&xdg, "http://a:1000"),
+            Some("trusted_headers".to_string())
+        );
+        assert_eq!(
+            get_cached_auth_mode(&xdg, "http://b:2000"),
+            Some("oidc".to_string())
+        );
     }
 }

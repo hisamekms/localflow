@@ -7,6 +7,7 @@ use crate::domain::contract::{
     Contract, ContractNote, ContractRepository, CreateContractParams, UpdateContractArrayParams,
     UpdateContractParams,
 };
+use crate::infra::xdg::XdgDirs;
 use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
     CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
@@ -338,31 +339,23 @@ pub fn current_schema_version(conn: &Connection) -> Result<i64> {
 
 /// Resolve the XDG data directory base.
 /// Returns `$XDG_DATA_HOME` or `~/.local/share`.
-fn xdg_data_base() -> Option<std::path::PathBuf> {
-    std::env::var("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .ok()
-        .filter(|p| p.is_absolute())
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| std::path::PathBuf::from(h).join(".local").join("share"))
-        })
+fn xdg_data_base(xdg: &XdgDirs) -> Option<std::path::PathBuf> {
+    xdg.data_home.clone()
 }
 
 /// Compute a per-project XDG database path using the project directory name.
 /// Returns `$XDG_DATA_HOME/senko/projects/<dir-name>/data.db`.
-fn xdg_project_db_path(project_root: &Path) -> Option<std::path::PathBuf> {
-    let data_dir = xdg_data_base()?;
+fn xdg_project_db_path(xdg: &XdgDirs, project_root: &Path) -> Option<std::path::PathBuf> {
+    let data_dir = xdg_data_base(xdg)?;
     let dir_name = project_root.file_name()?.to_string_lossy();
     Some(data_dir.join("senko").join("projects").join(dir_name.as_ref()).join("data.db"))
 }
 
 /// Legacy hash-based per-project XDG database path (for migration).
 /// Returns `$XDG_DATA_HOME/senko/projects/<sha256-16chars>/data.db`.
-fn xdg_project_db_path_legacy_hash(project_root: &Path) -> Option<std::path::PathBuf> {
+fn xdg_project_db_path_legacy_hash(xdg: &XdgDirs, project_root: &Path) -> Option<std::path::PathBuf> {
     use sha2::{Sha256, Digest};
-    let data_dir = xdg_data_base()?;
+    let data_dir = xdg_data_base(xdg)?;
     let canonical = project_root.canonicalize().ok()
         .unwrap_or_else(|| project_root.to_path_buf());
     let hash: String = Sha256::digest(canonical.to_string_lossy().as_bytes())
@@ -375,8 +368,8 @@ fn xdg_project_db_path_legacy_hash(project_root: &Path) -> Option<std::path::Pat
 
 /// Old global XDG path (pre-per-project migration).
 /// Returns `$XDG_DATA_HOME/senko/data.db`.
-fn xdg_global_db_path() -> Option<std::path::PathBuf> {
-    let data_dir = xdg_data_base()?;
+fn xdg_global_db_path(xdg: &XdgDirs) -> Option<std::path::PathBuf> {
+    let data_dir = xdg_data_base(xdg)?;
     Some(data_dir.join("senko").join("data.db"))
 }
 
@@ -410,11 +403,12 @@ fn copy_db_files(src: &Path, dst: &Path) -> Result<()> {
 pub fn resolve_db_path_preview(
     project_root: &Path,
     config_db_path: Option<&str>,
+    xdg: &XdgDirs,
 ) -> Option<std::path::PathBuf> {
     if let Some(p) = config_db_path {
         return Some(std::path::PathBuf::from(p));
     }
-    xdg_project_db_path(project_root)
+    xdg_project_db_path(xdg, project_root)
 }
 
 /// Resolve the database path with the following priority (high → low):
@@ -429,6 +423,7 @@ fn resolve_db_path(
     project_root: &Path,
     explicit_db_path: Option<&Path>,
     config_db_path: Option<&str>,
+    xdg: &XdgDirs,
 ) -> Result<std::path::PathBuf> {
     // 1. CLI / env var
     if let Some(p) = explicit_db_path {
@@ -441,7 +436,7 @@ fn resolve_db_path(
     }
 
     // 3. Per-project XDG path (already exists)
-    let xdg_path = xdg_project_db_path(project_root)
+    let xdg_path = xdg_project_db_path(xdg, project_root)
         .ok_or_else(|| anyhow::anyhow!("cannot determine XDG_DATA_HOME or HOME directory"))?;
 
     if xdg_path.exists() {
@@ -449,7 +444,7 @@ fn resolve_db_path(
     }
 
     // 4. Migrate from hash-based XDG path → dir-name-based XDG path
-    if let Some(hash_path) = xdg_project_db_path_legacy_hash(project_root)
+    if let Some(hash_path) = xdg_project_db_path_legacy_hash(xdg, project_root)
         && hash_path.exists() {
             copy_db_files(&hash_path, &xdg_path)?;
             eprintln!(
@@ -475,7 +470,7 @@ fn resolve_db_path(
     }
 
     // 6. Migrate from old global XDG path (pre-per-project layout)
-    if let Some(global_path) = xdg_global_db_path()
+    if let Some(global_path) = xdg_global_db_path(xdg)
         && global_path.exists() {
             copy_db_files(&global_path, &xdg_path)?;
             eprintln!(
@@ -501,8 +496,9 @@ fn open_db(
     project_root: &Path,
     explicit_db_path: Option<&Path>,
     config_db_path: Option<&str>,
+    xdg: &XdgDirs,
 ) -> Result<Connection> {
-    let db_path = resolve_db_path(project_root, explicit_db_path, config_db_path)?;
+    let db_path = resolve_db_path(project_root, explicit_db_path, config_db_path, xdg)?;
 
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -2099,8 +2095,9 @@ impl SqliteBackend {
         project_root: &Path,
         explicit_db_path: Option<&Path>,
         config_db_path: Option<&str>,
+        xdg: &XdgDirs,
     ) -> Result<Self> {
-        let conn = open_db(project_root, explicit_db_path, config_db_path)?;
+        let conn = open_db(project_root, explicit_db_path, config_db_path, xdg)?;
         Ok(Self {
             conn: Arc::new(std::sync::Mutex::new(conn)),
         })
@@ -2456,7 +2453,7 @@ mod tests {
     fn setup() -> (tempfile::TempDir, Connection) {
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("data.db");
-        let conn = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
+        let conn = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
         (tmp, conn)
     }
 
@@ -2510,7 +2507,7 @@ mod tests {
     fn creates_db_at_explicit_path() {
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("custom.db");
-        let conn = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
+        let conn = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
         assert!(db_path.exists());
         drop(conn);
     }
@@ -2568,9 +2565,9 @@ mod tests {
     fn idempotent_open() {
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("data.db");
-        let _conn1 = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
+        let _conn1 = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
         drop(_conn1);
-        let _conn2 = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
+        let _conn2 = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
     }
 
     #[test]
@@ -3621,7 +3618,7 @@ mod tests {
         drop(conn);
 
         // Open via open_db which runs migrations (using explicit path to the legacy location)
-        let conn = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
+        let conn = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
 
         // Version should include all migrations
         let version = current_schema_version(&conn).unwrap();
@@ -3656,11 +3653,11 @@ mod tests {
     fn migration_idempotent() {
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("data.db");
-        let conn1 = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
+        let conn1 = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
         let v1 = current_schema_version(&conn1).unwrap();
         drop(conn1);
 
-        let conn2 = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
+        let conn2 = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
         let v2 = current_schema_version(&conn2).unwrap();
         assert_eq!(v1, v2);
 

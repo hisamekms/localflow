@@ -1165,7 +1165,8 @@ async fn get_config(
     auth: OptionalAuthUser,
 ) -> Result<Json<ConfigResponse>, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
-    let config = crate::bootstrap::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+    let xdg = crate::infra::xdg::XdgDirs::from_env();
+    let config = crate::bootstrap::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path()), &xdg).map_err(classify_error)?;
     Ok(Json(ConfigResponse::from(config)))
 }
 

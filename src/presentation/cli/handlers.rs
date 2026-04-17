@@ -42,7 +42,16 @@ fn build_cli_overrides(cli: &Cli) -> CliOverrides {
 }
 
 fn load_config(cli: &Cli, root: &std::path::Path) -> Result<Config> {
-    let mut config = crate::bootstrap::load_config(root, cli.config.as_deref())?;
+    let xdg = crate::infra::xdg::XdgDirs::from_env();
+    load_config_with_xdg(cli, root, &xdg)
+}
+
+fn load_config_with_xdg(
+    cli: &Cli,
+    root: &std::path::Path,
+    xdg: &crate::infra::xdg::XdgDirs,
+) -> Result<Config> {
+    let mut config = crate::bootstrap::load_config(root, cli.config.as_deref(), xdg)?;
     config.apply_cli(&build_cli_overrides(cli));
     ensure_cli_token(&mut config);
     Ok(config)
@@ -56,7 +65,7 @@ fn ensure_cli_token(config: &mut Config) {
         _ => return,
     };
 
-    let auth_mode = match super::auth_cache::get_cached_auth_mode(&api_url) {
+    let auth_mode = match super::auth_cache::get_cached_auth_mode(&config.xdg, &api_url) {
         Some(mode) => mode,
         None => return,
     };
@@ -587,7 +596,8 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
         return Ok(());
     }
 
-    let config = crate::bootstrap::load_config(&root, cli.config.as_deref())?;
+    let xdg = crate::infra::xdg::XdgDirs::from_env();
+    let config = crate::bootstrap::load_config(&root, cli.config.as_deref(), &xdg)?;
     match cli.output {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&config)?);
@@ -801,7 +811,8 @@ fn run_hook_checks(entry: &crate::infra::config::HookEntry) -> Vec<CheckResult> 
 
 pub fn cmd_doctor(cli: &Cli) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let config = crate::bootstrap::load_config(&root, cli.config.as_deref())?;
+    let xdg = crate::infra::xdg::XdgDirs::from_env();
+    let config = crate::bootstrap::load_config(&root, cli.config.as_deref(), &xdg)?;
 
     let events = [
         ("on_task_added", &config.hooks.on_task_added),
@@ -899,7 +910,7 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
         } => {
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = load_config(cli, &root)?;
-            let log_path = hooks::log_file_path_with_dir(config.log.dir.as_deref())
+            let log_path = hooks::log_file_path_with_dir(config.log.dir.as_deref(), &config.xdg)
                 .ok_or_else(|| anyhow::anyhow!("cannot determine log path: neither XDG_STATE_HOME nor HOME is set"))?;
 
             if *path {
@@ -1778,7 +1789,7 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
     .await?;
 
     // Cache auth_mode so regular CLI commands know which token to load
-    super::auth_cache::cache_auth_mode(api_url, auth_mode)?;
+    super::auth_cache::cache_auth_mode(&config.xdg, api_url, auth_mode)?;
 
     match result {
         super::oidc_login::LoginResult::Oidc { key_prefix, expires_at } => {
@@ -1847,8 +1858,16 @@ fn require_api_url_and_token(cli: &Cli) -> Result<(String, String)> {
 }
 
 fn api_url_and_optional_token(cli: &Cli) -> Result<(String, Option<String>)> {
+    let xdg = crate::infra::xdg::XdgDirs::from_env();
+    api_url_and_optional_token_with_xdg(cli, &xdg)
+}
+
+fn api_url_and_optional_token_with_xdg(
+    cli: &Cli,
+    xdg: &crate::infra::xdg::XdgDirs,
+) -> Result<(String, Option<String>)> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let config = load_config(cli, &root)?;
+    let config = load_config_with_xdg(cli, &root, xdg)?;
     let api_url = config
         .cli
         .remote
@@ -1998,6 +2017,7 @@ pub async fn cmd_auth_status(cli: &Cli) -> Result<()> {
 
 pub async fn cmd_auth_logout(cli: &Cli) -> Result<()> {
     let (api_url, token) = require_api_url_and_token(cli)?;
+    let xdg = crate::infra::xdg::XdgDirs::from_env();
     let client = http_client();
     let base = api_url_base(&api_url);
 
@@ -2028,7 +2048,7 @@ pub async fn cmd_auth_logout(cli: &Cli) -> Result<()> {
     // Also delete access token if present (ignore error if not found)
     let _ = super::keychain::delete_access_token(&api_url);
     // Delete cached auth_mode
-    let _ = super::auth_cache::delete_cached_auth_mode(&api_url);
+    let _ = super::auth_cache::delete_cached_auth_mode(&xdg, &api_url);
 
     match cli.output {
         OutputFormat::Json => {
@@ -2205,7 +2225,7 @@ mod tests {
         .await
         .unwrap();
 
-        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None, &crate::infra::xdg::XdgDirs::default()).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title(), "test task");
         assert_eq!(task.background(), Some("bg"));
@@ -2269,7 +2289,7 @@ mod tests {
         .await
         .unwrap();
 
-        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None, &crate::infra::xdg::XdgDirs::default()).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title(), "file task");
         assert_eq!(task.priority(), crate::domain::task::Priority::P0);
@@ -2378,7 +2398,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None, &crate::infra::xdg::XdgDirs::default()).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title(), "my task");
     }
@@ -2432,7 +2452,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None, &crate::infra::xdg::XdgDirs::default()).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title(), "json out");
     }
@@ -2596,11 +2616,10 @@ mod tests {
         assert_eq!(session.key_prefix, "abc");
     }
 
-    /// Isolate env vars so real user config doesn't leak into tests.
-    fn isolate_env(project_root: &std::path::Path) {
-        let empty = project_root.join("__no_user_config__");
+    /// Clear SENKO-side env vars that `load_config` still reads via `env_config_path`.
+    /// XDG isolation is handled via the injected `XdgDirs` below.
+    fn clear_senko_env() {
         unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", &empty);
             std::env::remove_var("SENKO_CONFIG");
             std::env::remove_var("SENKO_USER");
             std::env::remove_var("SENKO_PROJECT");
@@ -2609,11 +2628,20 @@ mod tests {
         }
     }
 
+    /// `XdgDirs` pointing at a non-existent directory so no user-level config
+    /// is ever loaded. Must be used together with `clear_senko_env`.
+    fn isolated_xdg(project_root: &std::path::Path) -> crate::infra::xdg::XdgDirs {
+        crate::infra::xdg::XdgDirs {
+            config_home: Some(project_root.join("__no_user_config__")),
+            ..Default::default()
+        }
+    }
+
     #[test]
     #[serial_test::serial]
     fn api_url_and_optional_token_returns_none_when_no_token() {
         let tmp = tempfile::tempdir().unwrap();
-        isolate_env(tmp.path());
+        clear_senko_env();
         let senko_dir = tmp.path().join(".senko");
         std::fs::create_dir_all(&senko_dir).unwrap();
         std::fs::write(
@@ -2639,7 +2667,8 @@ url = "http://localhost:3142"
                 command: super::super::AuthCommand::Status,
             },
         };
-        let (url, token) = super::api_url_and_optional_token(&cli).unwrap();
+        let (url, token) =
+            super::api_url_and_optional_token_with_xdg(&cli, &isolated_xdg(tmp.path())).unwrap();
         assert_eq!(url, "http://localhost:3142");
         assert!(token.is_none(), "expected no token for relay-like config");
     }
@@ -2648,7 +2677,7 @@ url = "http://localhost:3142"
     #[serial_test::serial]
     fn api_url_and_optional_token_returns_token_from_config() {
         let tmp = tempfile::tempdir().unwrap();
-        isolate_env(tmp.path());
+        clear_senko_env();
         let senko_dir = tmp.path().join(".senko");
         std::fs::create_dir_all(&senko_dir).unwrap();
         std::fs::write(
@@ -2675,7 +2704,8 @@ token = "my-api-key"
                 command: super::super::AuthCommand::Status,
             },
         };
-        let (url, token) = super::api_url_and_optional_token(&cli).unwrap();
+        let (url, token) =
+            super::api_url_and_optional_token_with_xdg(&cli, &isolated_xdg(tmp.path())).unwrap();
         assert_eq!(url, "http://localhost:3142");
         assert_eq!(token.as_deref(), Some("my-api-key"));
     }

@@ -7,6 +7,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 use crate::application::port::auth::AuthProvider;
 use crate::application::port::{HookDataSource, HookExecutor, PrVerifier};
 use crate::application::{HookTestService, LocalContractOperations, LocalTaskOperations, MetadataFieldService, ProjectOperations, ProjectService, TaskOperations, UserService};
+use crate::infra::xdg::XdgDirs;
 use crate::domain::task::CompletionPolicy;
 use crate::application::port::TaskBackend;
 use crate::infra::config::{Config, LogConfig, LogFormat, RawConfig};
@@ -50,6 +51,7 @@ pub fn create_backend(
         project_root,
         None,
         config.backend.sqlite.db_path.as_deref(),
+        &config.xdg,
     )?;
     sqlite.sync_config_defaults(config)?;
     Ok(Arc::new(sqlite))
@@ -72,7 +74,7 @@ pub fn resolve_backend_info(config: &Config, project_root: &Path) -> BackendInfo
     if config.backend.postgres.as_ref().and_then(|p| p.url.as_ref()).is_some() {
         return BackendInfo::Postgresql;
     }
-    let db_path = crate::infra::sqlite::resolve_db_path_preview(project_root, config.backend.sqlite.db_path.as_deref())
+    let db_path = crate::infra::sqlite::resolve_db_path_preview(project_root, config.backend.sqlite.db_path.as_deref(), &config.xdg)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "<unknown>".to_string());
     BackendInfo::Sqlite { db_file_path: db_path }
@@ -350,9 +352,13 @@ pub fn init_tracing(config: &LogConfig) {
     }
 }
 
-pub fn load_config(project_root: &Path, explicit_config: Option<&Path>) -> Result<Config> {
+pub fn load_config(
+    project_root: &Path,
+    explicit_config: Option<&Path>,
+    xdg: &XdgDirs,
+) -> Result<Config> {
     // 1. Load user config + user local overlay
-    let (user_raw, user_local) = load_user_config()?;
+    let (user_raw, user_local) = load_user_config(xdg)?;
 
     // 2. Load project/explicit config + its local overlay
     let (project_raw, project_local) = if let Some(path) = explicit_config {
@@ -389,27 +395,21 @@ pub fn load_config(project_root: &Path, explicit_config: Option<&Path>) -> Resul
     // 4. Resolve to final Config and apply env overrides
     let mut config = merged.resolve();
     config.apply_env();
+    config.xdg = xdg.clone();
     Ok(config)
 }
 
 /// Return the user-level config path.
 /// `$XDG_CONFIG_HOME/senko/config.toml` or `~/.config/senko/config.toml`
-fn user_config_path() -> Option<PathBuf> {
-    let config_dir = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .ok()
-        .filter(|p| p.is_absolute())
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| PathBuf::from(h).join(".config"))
-        })?;
-    Some(config_dir.join("senko").join("config.toml"))
+fn user_config_path(xdg: &XdgDirs) -> Option<PathBuf> {
+    xdg.config_home
+        .as_ref()
+        .map(|dir| dir.join("senko").join("config.toml"))
 }
 
 /// Load user-level config and its local overlay if they exist.
-fn load_user_config() -> Result<(Option<RawConfig>, Option<RawConfig>)> {
-    let path = match user_config_path() {
+fn load_user_config(xdg: &XdgDirs) -> Result<(Option<RawConfig>, Option<RawConfig>)> {
+    let path = match user_config_path(xdg) {
         Some(p) if p.exists() => p,
         _ => return Ok((None, None)),
     };
@@ -482,14 +482,22 @@ mod tests {
     use serial_test::serial;
     use std::fs;
 
-    /// Run `load_config` in an isolated environment where no real user config
-    /// or env-var config can leak in.
-    /// Isolate env vars so no real user config or env-var config can leak in.
-    fn isolate_env(project_root: &Path) {
-        let empty = project_root.join("__no_user_config__");
-        // SAFETY: all callers are marked #[serial] to avoid env var races.
+    /// Build an isolated `XdgDirs` that points config_home at an empty directory
+    /// under `project_root`, so no user-level config file is ever found.
+    fn isolated_xdg(project_root: &Path) -> XdgDirs {
+        XdgDirs {
+            config_home: Some(project_root.join("__no_user_config__")),
+            ..Default::default()
+        }
+    }
+
+    /// Clear SENKO_* env vars that still feed into `load_config` (not XDG).
+    /// Kept as a helper because `SENKO_CONFIG` / `SENKO_USER` / `SENKO_PROJECT`
+    /// are read via `std::env::var` from inside `env_config_path`, so tests
+    /// that must be isolated from the real environment still need this.
+    fn clear_senko_env() {
+        // SAFETY: callers are marked #[serial].
         unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", &empty);
             std::env::remove_var("SENKO_CONFIG");
             std::env::remove_var("SENKO_USER");
             std::env::remove_var("SENKO_PROJECT");
@@ -499,8 +507,8 @@ mod tests {
     /// Run `load_config` in an isolated environment where no real user config
     /// or env-var config can leak in.
     fn load_config_isolated(project_root: &Path) -> Result<Config> {
-        isolate_env(project_root);
-        load_config(project_root, None)
+        clear_senko_env();
+        load_config(project_root, None, &isolated_xdg(project_root))
     }
 
     #[test]
@@ -581,8 +589,9 @@ name = "custom-local-user"
         )
         .unwrap();
 
-        isolate_env(dir.path());
-        let config = load_config(dir.path(), Some(&custom_dir.join("config.toml"))).unwrap();
+        clear_senko_env();
+        let xdg = isolated_xdg(dir.path());
+        let config = load_config(dir.path(), Some(&custom_dir.join("config.toml")), &xdg).unwrap();
         assert_eq!(config.user.name.as_deref(), Some("custom-local-user"));
     }
 
@@ -614,8 +623,9 @@ name = "custom-user"
         )
         .unwrap();
 
-        isolate_env(dir.path());
-        let config = load_config(dir.path(), Some(&custom_dir.join("config.toml"))).unwrap();
+        clear_senko_env();
+        let xdg = isolated_xdg(dir.path());
+        let config = load_config(dir.path(), Some(&custom_dir.join("config.toml")), &xdg).unwrap();
         // Should be "custom-user", NOT "project-local-user"
         assert_eq!(config.user.name.as_deref(), Some("custom-user"));
     }
@@ -645,17 +655,16 @@ name = "user-local-override"
         )
         .unwrap();
 
-        // Point XDG_CONFIG_HOME to our test dir
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", dir.path().join("user_config"));
-            std::env::remove_var("SENKO_CONFIG");
-            std::env::remove_var("SENKO_USER");
-            std::env::remove_var("SENKO_PROJECT");
-        }
+        // Point config_home at our test dir via injected XdgDirs (no env mutation).
+        clear_senko_env();
+        let xdg = XdgDirs {
+            config_home: Some(dir.path().join("user_config")),
+            ..Default::default()
+        };
 
         let project_dir = dir.path().join("project");
         fs::create_dir_all(&project_dir).unwrap();
-        let config = load_config(&project_dir, None).unwrap();
+        let config = load_config(&project_dir, None, &xdg).unwrap();
         assert_eq!(config.user.name.as_deref(), Some("user-local-override"));
     }
 
@@ -712,15 +721,14 @@ name = "project-local"
         )
         .unwrap();
 
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", dir.path().join("user_config"));
-            std::env::remove_var("SENKO_CONFIG");
-            std::env::remove_var("SENKO_USER");
-            std::env::remove_var("SENKO_PROJECT");
-        }
+        clear_senko_env();
+        let xdg = XdgDirs {
+            config_home: Some(dir.path().join("user_config")),
+            ..Default::default()
+        };
 
         let project_dir = dir.path().join("project");
-        let config = load_config(&project_dir, None).unwrap();
+        let config = load_config(&project_dir, None, &xdg).unwrap();
 
         // user.name: user-base → user-local (user local wins over user base)
         // project config and project local don't set user.name, so user-local stays

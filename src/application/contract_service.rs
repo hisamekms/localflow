@@ -91,7 +91,12 @@ mod tests {
 
     async fn new_backend() -> (tempfile::TempDir, Arc<dyn TaskBackend>, i64) {
         let dir = tempdir().unwrap();
-        let backend = SqliteBackend::new(dir.path(), Some(&dir.path().join("data.db")), None).unwrap();
+        let backend = SqliteBackend::new(
+            dir.path(),
+            Some(&dir.path().join("data.db")),
+            None,
+            &crate::infra::xdg::XdgDirs::default(),
+        ).unwrap();
         let backend: Arc<dyn TaskBackend> = Arc::new(backend);
         // Default project id=1 is seeded by migration v1.
         (dir, backend, 1)

@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub use crate::domain::task::{BranchMode, MergeStrategy, MergeVia};
+use crate::infra::xdg::XdgDirs;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -24,6 +25,11 @@ pub struct Config {
     pub cli: CliConfig,
     #[serde(default)]
     pub web: WebConfig,
+    /// Resolved XDG directories. Not serialized; populated at runtime by
+    /// `bootstrap::load_config`. Tests and programmatic Config construction
+    /// can leave this at `XdgDirs::default()` when XDG paths are not needed.
+    #[serde(skip)]
+    pub xdg: XdgDirs,
 }
 
 // --- Hook definition types ---
@@ -975,6 +981,7 @@ impl RawConfig {
                 host: self.web.host,
                 port: self.web.port,
             },
+            xdg: XdgDirs::default(),
         }
     }
 }

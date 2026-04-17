@@ -894,7 +894,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Deps { ref command } => handlers::cmd_deps(&cli, command).await,
         Command::Web { port, host } => {
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let mut config = crate::bootstrap::load_config(&root, cli.config.as_deref())?;
+            let xdg = crate::infra::xdg::XdgDirs::from_env();
+            let mut config = crate::bootstrap::load_config(&root, cli.config.as_deref(), &xdg)?;
             config.apply_cli(&CliOverrides {
                 log_dir: cli.log_dir.as_ref().map(|p| p.to_string_lossy().into_owned()),
                 db_path: cli.db_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
@@ -912,7 +913,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         }
         Command::Serve { port, host } => {
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let mut config = crate::bootstrap::load_config(&root, cli.config.as_deref())?;
+            let xdg = crate::infra::xdg::XdgDirs::from_env();
+            let mut config = crate::bootstrap::load_config(&root, cli.config.as_deref(), &xdg)?;
             config.apply_cli(&CliOverrides {
                 log_dir: cli.log_dir.as_ref().map(|p| p.to_string_lossy().into_owned()),
                 db_path: cli.db_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
