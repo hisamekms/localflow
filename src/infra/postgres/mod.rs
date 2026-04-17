@@ -5,6 +5,10 @@ use async_trait::async_trait;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
 
+use crate::domain::contract::{
+    Contract, ContractNote, ContractRepository, CreateContractParams, UpdateContractArrayParams,
+    UpdateContractParams,
+};
 use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
     CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
@@ -95,6 +99,11 @@ const MIGRATIONS: &[Migration] = &[
         description: "metadata_to_jsonb",
         sql: include_str!("migrations/20260415000000_metadata_to_jsonb.sql"),
     },
+    Migration {
+        version: 7,
+        description: "add_contracts",
+        sql: include_str!("migrations/20260417000000_add_contracts.sql"),
+    },
 ];
 
 async fn run_migrations(pool: &PgPool) -> Result<()> {
@@ -153,7 +162,7 @@ async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
     let row = sqlx::query(
         "SELECT project_id, task_number, title, background, description, plan, status, priority,
                 assignee_session_id, created_at, updated_at, started_at, completed_at,
-                canceled_at, cancel_reason, branch, pr_url, metadata, assignee_user_id
+                canceled_at, cancel_reason, branch, pr_url, metadata, assignee_user_id, contract_id
          FROM tasks WHERE id = $1",
     )
     .bind(id)
@@ -240,7 +249,7 @@ async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
         row.get("cancel_reason"),
         row.get("branch"),
         row.get("pr_url"),
-        None,
+        row.get("contract_id"),
         metadata,
         definition_of_done,
         in_scope,
@@ -770,8 +779,8 @@ impl TaskRepository for PostgresBackend {
         let mut tx = pool.begin().await?;
 
         let row = sqlx::query(
-            "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number, assignee_user_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM tasks WHERE project_id = $8), $9)
+            "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number, assignee_user_id, contract_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM tasks WHERE project_id = $8), $9, NULL)
              RETURNING id, task_number",
         )
         .bind(&params.title)
@@ -967,6 +976,14 @@ impl TaskRepository for PostgresBackend {
                 .execute(&mut *tx)
                 .await?;
         }
+        if let Some(ref contract_id) = params.contract_id {
+            sqlx::query("UPDATE tasks SET contract_id = $1, updated_at = $2 WHERE id = $3")
+                .bind(*contract_id)
+                .bind(now_utc())
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
         if let Some(ref meta_update) = params.metadata {
             let resolved: Option<serde_json::Value> = match meta_update {
                 MetadataUpdate::Clear => None,
@@ -1148,8 +1165,8 @@ impl TaskRepository for PostgresBackend {
                 priority = $6, status = $7,
                 assignee_session_id = $8, assignee_user_id = $9,
                 started_at = $10, completed_at = $11, canceled_at = $12, cancel_reason = $13,
-                branch = $14, pr_url = $15, metadata = $16,
-                updated_at = $17
+                branch = $14, pr_url = $15, metadata = $16, contract_id = $17,
+                updated_at = $18
             WHERE id = $1",
         )
         .bind(task.id())
@@ -1168,6 +1185,7 @@ impl TaskRepository for PostgresBackend {
         .bind(task.branch())
         .bind(task.pr_url())
         .bind(&metadata_str)
+        .bind(task.contract_id())
         .bind(task.updated_at())
         .execute(&mut *tx)
         .await?;
@@ -1609,6 +1627,364 @@ impl MetadataFieldRepository for PostgresBackend {
         }
         Ok(())
     }
+}
+
+// =============================================================================
+// ContractRepository
+// =============================================================================
+
+async fn get_contract_by_id(pool: &PgPool, id: i64) -> Result<Contract> {
+    let row = sqlx::query(
+        "SELECT project_id, title, description, metadata, created_at, updated_at \
+         FROM contracts WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(DomainError::ContractNotFound)?;
+
+    let metadata: Option<serde_json::Value> = row.get("metadata");
+
+    let definition_of_done: Vec<DodItem> = sqlx::query(
+        "SELECT content, checked FROM contract_definition_of_done WHERE contract_id = $1 ORDER BY id",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|r| DodItem::new(r.get("content"), r.get::<i32, _>("checked") != 0))
+    .collect();
+
+    let tags: Vec<String> = sqlx::query(
+        "SELECT tag FROM contract_tags WHERE contract_id = $1 ORDER BY id",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|r| r.get("tag"))
+    .collect();
+
+    let notes: Vec<ContractNote> = sqlx::query(
+        "SELECT content, source_task_id, created_at FROM contract_notes WHERE contract_id = $1 ORDER BY id",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|r| ContractNote::new(r.get("content"), r.get("source_task_id"), r.get("created_at")))
+    .collect();
+
+    Ok(Contract::new(
+        id,
+        row.get("project_id"),
+        row.get("title"),
+        row.get("description"),
+        definition_of_done,
+        tags,
+        metadata,
+        notes,
+        row.get("created_at"),
+        row.get("updated_at"),
+    ))
+}
+
+#[async_trait]
+impl ContractRepository for PostgresBackend {
+    async fn create_contract(
+        &self,
+        project_id: i64,
+        params: &CreateContractParams,
+    ) -> Result<Contract> {
+        let pool = self.pool().await?;
+        self.get_project(project_id).await?;
+
+        let mut tx = pool.begin().await?;
+
+        let row = sqlx::query(
+            "INSERT INTO contracts (project_id, title, description, metadata) \
+             VALUES ($1, $2, $3, $4) RETURNING id",
+        )
+        .bind(project_id)
+        .bind(&params.title)
+        .bind(&params.description)
+        .bind(&params.metadata)
+        .fetch_one(&mut *tx)
+        .await?;
+        let contract_id: i64 = row.get("id");
+
+        for content in &params.definition_of_done {
+            sqlx::query(
+                "INSERT INTO contract_definition_of_done (contract_id, content) VALUES ($1, $2)",
+            )
+            .bind(contract_id)
+            .bind(content)
+            .execute(&mut *tx)
+            .await?;
+        }
+        for tag in &params.tags {
+            sqlx::query("INSERT INTO contract_tags (contract_id, tag) VALUES ($1, $2)")
+                .bind(contract_id)
+                .bind(tag)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        tx.commit().await?;
+        get_contract_by_id(pool, contract_id).await
+    }
+
+    async fn get_contract(&self, id: i64) -> Result<Contract> {
+        let pool = self.pool().await?;
+        get_contract_by_id(pool, id).await
+    }
+
+    async fn list_contracts(&self, project_id: i64) -> Result<Vec<Contract>> {
+        let pool = self.pool().await?;
+        let ids: Vec<i64> = sqlx::query(
+            "SELECT id FROM contracts WHERE project_id = $1 ORDER BY id",
+        )
+        .bind(project_id)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|r| r.get("id"))
+        .collect();
+
+        let mut result = Vec::with_capacity(ids.len());
+        for id in ids {
+            result.push(get_contract_by_id(pool, id).await?);
+        }
+        Ok(result)
+    }
+
+    async fn update_contract(
+        &self,
+        id: i64,
+        update: &UpdateContractParams,
+        array_update: &UpdateContractArrayParams,
+    ) -> Result<Contract> {
+        let pool = self.pool().await?;
+        let _existing = get_contract_by_id(pool, id).await?;
+
+        let mut tx = pool.begin().await?;
+        let mut touched = false;
+
+        if let Some(ref title) = update.title {
+            sqlx::query("UPDATE contracts SET title = $1 WHERE id = $2")
+                .bind(title)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            touched = true;
+        }
+        if let Some(ref description) = update.description {
+            sqlx::query("UPDATE contracts SET description = $1 WHERE id = $2")
+                .bind(description)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            touched = true;
+        }
+        if let Some(ref meta_update) = update.metadata {
+            let resolved: Option<serde_json::Value> = match meta_update {
+                MetadataUpdate::Clear => None,
+                MetadataUpdate::Replace(v) => Some(v.clone()),
+                MetadataUpdate::Merge(patch) => {
+                    let existing: Option<serde_json::Value> =
+                        sqlx::query_scalar("SELECT metadata FROM contracts WHERE id = $1")
+                            .bind(id)
+                            .fetch_one(&mut *tx)
+                            .await?;
+                    shallow_merge_metadata(existing.as_ref(), patch)
+                }
+            };
+            sqlx::query("UPDATE contracts SET metadata = $1 WHERE id = $2")
+                .bind(&resolved)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            touched = true;
+        }
+
+        // Tags
+        if let Some(ref set) = array_update.set_tags {
+            sqlx::query("DELETE FROM contract_tags WHERE contract_id = $1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            for tag in set {
+                sqlx::query("INSERT INTO contract_tags (contract_id, tag) VALUES ($1, $2)")
+                    .bind(id)
+                    .bind(tag)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            touched = true;
+        }
+        for tag in &array_update.add_tags {
+            sqlx::query(
+                "INSERT INTO contract_tags (contract_id, tag) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            )
+            .bind(id)
+            .bind(tag)
+            .execute(&mut *tx)
+            .await?;
+            touched = true;
+        }
+        for tag in &array_update.remove_tags {
+            sqlx::query("DELETE FROM contract_tags WHERE contract_id = $1 AND tag = $2")
+                .bind(id)
+                .bind(tag)
+                .execute(&mut *tx)
+                .await?;
+            touched = true;
+        }
+
+        // DoD
+        if let Some(ref set) = array_update.set_definition_of_done {
+            sqlx::query("DELETE FROM contract_definition_of_done WHERE contract_id = $1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            for content in set {
+                sqlx::query(
+                    "INSERT INTO contract_definition_of_done (contract_id, content) VALUES ($1, $2)",
+                )
+                .bind(id)
+                .bind(content)
+                .execute(&mut *tx)
+                .await?;
+            }
+            touched = true;
+        }
+        for content in &array_update.add_definition_of_done {
+            sqlx::query(
+                "INSERT INTO contract_definition_of_done (contract_id, content) VALUES ($1, $2)",
+            )
+            .bind(id)
+            .bind(content)
+            .execute(&mut *tx)
+            .await?;
+            touched = true;
+        }
+        for content in &array_update.remove_definition_of_done {
+            sqlx::query(
+                "DELETE FROM contract_definition_of_done WHERE contract_id = $1 AND content = $2",
+            )
+            .bind(id)
+            .bind(content)
+            .execute(&mut *tx)
+            .await?;
+            touched = true;
+        }
+
+        if touched {
+            sqlx::query("UPDATE contracts SET updated_at = $1 WHERE id = $2")
+                .bind(now_utc())
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        tx.commit().await?;
+        get_contract_by_id(pool, id).await
+    }
+
+    async fn delete_contract(&self, id: i64) -> Result<()> {
+        let pool = self.pool().await?;
+        let result = sqlx::query("DELETE FROM contracts WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(DomainError::ContractNotFound.into());
+        }
+        Ok(())
+    }
+
+    async fn add_note(
+        &self,
+        contract_id: i64,
+        note: &ContractNote,
+    ) -> Result<ContractNote> {
+        let pool = self.pool().await?;
+        let _existing = get_contract_by_id(pool, contract_id).await?;
+
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO contract_notes (contract_id, content, source_task_id, created_at) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(contract_id)
+        .bind(note.content())
+        .bind(note.source_task_id())
+        .bind(note.created_at())
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE contracts SET updated_at = $1 WHERE id = $2")
+            .bind(now_utc())
+            .bind(contract_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+
+        Ok(ContractNote::new(
+            note.content().to_string(),
+            note.source_task_id(),
+            note.created_at().to_string(),
+        ))
+    }
+
+    async fn check_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
+        set_contract_dod_checked_pg(self, contract_id, index, true).await
+    }
+
+    async fn uncheck_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
+        set_contract_dod_checked_pg(self, contract_id, index, false).await
+    }
+}
+
+async fn set_contract_dod_checked_pg(
+    backend: &PostgresBackend,
+    contract_id: i64,
+    index: usize,
+    checked: bool,
+) -> Result<Contract> {
+    let pool = backend.pool().await?;
+    let contract = get_contract_by_id(pool, contract_id).await?;
+    let dod_len = contract.definition_of_done().len();
+    if index == 0 || index > dod_len {
+        return Err(DomainError::DodIndexOutOfRange {
+            index,
+            task_id: contract_id,
+            count: dod_len,
+        }
+        .into());
+    }
+
+    let dod_row_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM contract_definition_of_done WHERE contract_id = $1 ORDER BY id OFFSET $2 LIMIT 1",
+    )
+    .bind(contract_id)
+    .bind((index - 1) as i64)
+    .fetch_one(pool)
+    .await?;
+
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE contract_definition_of_done SET checked = $1 WHERE id = $2")
+        .bind(if checked { 1i32 } else { 0i32 })
+        .bind(dod_row_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE contracts SET updated_at = $1 WHERE id = $2")
+        .bind(now_utc())
+        .bind(contract_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    get_contract_by_id(pool, contract_id).await
 }
 
 crate::impl_task_transition_default!(PostgresBackend);
@@ -2129,5 +2505,137 @@ mod tests {
         );
 
         pg.stop().await.expect("failed to stop embedded PostgreSQL");
+    }
+
+    // --- Contract tests ---
+
+    fn contract_params(title: &str) -> CreateContractParams {
+        CreateContractParams {
+            title: title.to_string(),
+            description: Some("spec".to_string()),
+            definition_of_done: vec!["item1".to_string(), "item2".to_string()],
+            tags: vec!["api".to_string()],
+            metadata: Some(serde_json::json!({"owner": "team-a"})),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_contract_create_and_get() {
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+        let created = backend
+            .create_contract(1, &contract_params("Spec"))
+            .await
+            .unwrap();
+        assert_eq!(created.title(), "Spec");
+        assert_eq!(created.project_id(), 1);
+        assert_eq!(created.definition_of_done().len(), 2);
+        assert_eq!(created.tags(), &["api".to_string()]);
+
+        let got = backend.get_contract(created.id()).await.unwrap();
+        assert_eq!(got.id(), created.id());
+        assert_eq!(got.definition_of_done()[0].content(), "item1");
+    }
+
+    #[tokio::test]
+    async fn test_contract_update_and_check_dod() {
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+        let c = backend
+            .create_contract(1, &contract_params("Update me"))
+            .await
+            .unwrap();
+
+        let updated = backend
+            .update_contract(
+                c.id(),
+                &UpdateContractParams {
+                    title: Some("Renamed".to_string()),
+                    description: None,
+                    metadata: Some(MetadataUpdate::Merge(serde_json::json!({"stage": "review"}))),
+                },
+                &UpdateContractArrayParams {
+                    add_tags: vec!["backend".to_string()],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.title(), "Renamed");
+        assert!(updated.tags().contains(&"backend".to_string()));
+        assert_eq!(
+            updated.metadata(),
+            Some(&serde_json::json!({"owner": "team-a", "stage": "review"}))
+        );
+
+        let checked = backend.check_dod(c.id(), 1).await.unwrap();
+        assert!(checked.definition_of_done()[0].checked());
+        assert!(!checked.definition_of_done()[1].checked());
+
+        let unchecked = backend.uncheck_dod(c.id(), 1).await.unwrap();
+        assert!(!unchecked.definition_of_done()[0].checked());
+    }
+
+    #[tokio::test]
+    async fn test_contract_delete_cascades() {
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+        let c = backend
+            .create_contract(1, &contract_params("Delete"))
+            .await
+            .unwrap();
+        backend.add_note(
+            c.id(),
+            &ContractNote::new("n".to_string(), None, "2026-04-17T00:00:00Z".to_string()),
+        ).await.unwrap();
+
+        backend.delete_contract(c.id()).await.unwrap();
+        assert!(backend.get_contract(c.id()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_task_contract_id_roundtrip() {
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+        let c = backend
+            .create_contract(1, &contract_params("linked"))
+            .await
+            .unwrap();
+        let task = backend.create_task(1, &params("linked task")).await.unwrap();
+        assert_eq!(task.contract_id(), None);
+
+        let updated = backend
+            .update_task(
+                1,
+                task.id(),
+                &UpdateTaskParams {
+                    title: None,
+                    background: None,
+                    description: None,
+                    plan: None,
+                    priority: None,
+                    assignee_session_id: None,
+                    assignee_user_id: None,
+                    started_at: None,
+                    completed_at: None,
+                    canceled_at: None,
+                    cancel_reason: None,
+                    branch: None,
+                    pr_url: None,
+                    contract_id: Some(Some(c.id())),
+                    metadata: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.contract_id(), Some(c.id()));
     }
 }

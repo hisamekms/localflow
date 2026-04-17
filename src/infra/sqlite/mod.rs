@@ -3,6 +3,10 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
+use crate::domain::contract::{
+    Contract, ContractNote, ContractRepository, CreateContractParams, UpdateContractArrayParams,
+    UpdateContractParams,
+};
 use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
     CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
@@ -207,6 +211,52 @@ const MIGRATIONS: &[Migration] = &[
             ALTER TABLE users ADD COLUMN sub TEXT;
             UPDATE users SET sub = username WHERE sub IS NULL;
             CREATE UNIQUE INDEX idx_users_sub ON users(sub);
+        ",
+    },
+    Migration {
+        version: 10,
+        name: "add_contracts",
+        sql: "
+            CREATE TABLE contracts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                metadata TEXT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX idx_contracts_project_id ON contracts(project_id);
+
+            CREATE TABLE contract_definition_of_done (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contract_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                checked INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE contract_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contract_id INTEGER NOT NULL,
+                tag TEXT NOT NULL,
+                UNIQUE(contract_id, tag),
+                FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE contract_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contract_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                source_task_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
+                FOREIGN KEY (source_task_id) REFERENCES tasks(id) ON DELETE SET NULL
+            );
+
+            ALTER TABLE tasks ADD COLUMN contract_id INTEGER REFERENCES contracts(id) ON DELETE SET NULL;
         ",
     },
 ];
@@ -888,7 +938,7 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
         )?;
 
     conn.execute(
-        "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number, assignee_user_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number, assignee_user_id, contract_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
         rusqlite::params![params.title, params.background, params.description, priority, params.branch, params.pr_url, metadata_str, project_id, task_number, params.assignee_user_id.as_ref().and_then(|a| a.as_id())],
     )?;
     let task_id = conn.last_insert_rowid();
@@ -940,13 +990,13 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
 type TaskRow = (
     i64, i64, String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>,
     String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
-    Option<String>, Option<String>, Option<i64>,
+    Option<String>, Option<String>, Option<i64>, Option<i64>,
 );
 
 fn get_task(conn: &Connection, id: i64) -> Result<Task> {
-    let (project_id, task_number, title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata_str, assignee_user_id): TaskRow = conn
+    let (project_id, task_number, title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata_str, assignee_user_id, contract_id): TaskRow = conn
         .query_row(
-            "SELECT project_id, task_number, title, background, description, plan, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata, assignee_user_id FROM tasks WHERE id = ?1",
+            "SELECT project_id, task_number, title, background, description, plan, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata, assignee_user_id, contract_id FROM tasks WHERE id = ?1",
             params![id],
             |row| {
                 Ok((
@@ -954,7 +1004,7 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
                     row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
                     row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?,
                     row.get(12)?, row.get(13)?, row.get(14)?, row.get(15)?,
-                    row.get(16)?, row.get(17)?, row.get(18)?,
+                    row.get(16)?, row.get(17)?, row.get(18)?, row.get(19)?,
                 ))
             },
         )
@@ -1007,7 +1057,7 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
         cancel_reason,
         branch,
         pr_url,
-        None,
+        contract_id,
         metadata,
         definition_of_done,
         in_scope,
@@ -1072,6 +1122,10 @@ fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<
     if let Some(ref pr_url) = params.pr_url {
         columns.push(TaskColumn::PrUrl);
         values.push(Box::new(pr_url.clone()));
+    }
+    if let Some(ref contract_id) = params.contract_id {
+        columns.push(TaskColumn::ContractId);
+        values.push(Box::new(*contract_id));
     }
     if let Some(ref meta_update) = params.metadata {
         columns.push(TaskColumn::Metadata);
@@ -1179,8 +1233,8 @@ fn save_task(conn: &Connection, task: &Task) -> Result<()> {
             priority = ?6, status = ?7,
             assignee_session_id = ?8, assignee_user_id = ?9,
             started_at = ?10, completed_at = ?11, canceled_at = ?12, cancel_reason = ?13,
-            branch = ?14, pr_url = ?15, metadata = ?16,
-            updated_at = ?17
+            branch = ?14, pr_url = ?15, metadata = ?16, contract_id = ?17,
+            updated_at = ?18
         WHERE id = ?1",
         params![
             task.id(),
@@ -1199,6 +1253,7 @@ fn save_task(conn: &Connection, task: &Task) -> Result<()> {
             task.branch(),
             task.pr_url(),
             metadata_str,
+            task.contract_id(),
             task.updated_at(),
         ],
     )?;
@@ -1236,6 +1291,7 @@ enum TaskColumn {
     Title,
     Background,
     Description,
+    ContractId,
     Plan,
     Priority,
     AssigneeSessionId,
@@ -1265,6 +1321,7 @@ impl TaskColumn {
             TaskColumn::CancelReason => "cancel_reason",
             TaskColumn::Branch => "branch",
             TaskColumn::PrUrl => "pr_url",
+            TaskColumn::ContractId => "contract_id",
             TaskColumn::Metadata => "metadata",
         }
     }
@@ -1714,6 +1771,315 @@ fn delete_metadata_field(conn: &Connection, project_id: i64, field_id: i64) -> R
     Ok(())
 }
 
+// --- Contract CRUD (sync helpers) ---
+
+fn get_contract(conn: &Connection, id: i64) -> Result<Contract> {
+    let (project_id, title, description, metadata_str, created_at, updated_at): (
+        i64, String, Option<String>, Option<String>, String, String,
+    ) = conn
+        .query_row(
+            "SELECT project_id, title, description, metadata, created_at, updated_at \
+             FROM contracts WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok((
+                    row.get(0)?, row.get(1)?, row.get(2)?,
+                    row.get(3)?, row.get(4)?, row.get(5)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(DomainError::ContractNotFound)?;
+
+    let metadata: Option<serde_json::Value> = metadata_str
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .context("invalid contract metadata JSON in database")?;
+
+    let definition_of_done = {
+        let mut stmt = conn.prepare(
+            "SELECT content, checked FROM contract_definition_of_done WHERE contract_id = ?1 ORDER BY id",
+        )?;
+        stmt.query_map(params![id], |row| {
+            Ok(DodItem::new(row.get(0)?, row.get::<_, i32>(1)? != 0))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+
+    let tags: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT tag FROM contract_tags WHERE contract_id = ?1 ORDER BY id")?;
+        stmt.query_map(params![id], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+
+    let notes: Vec<ContractNote> = {
+        let mut stmt = conn.prepare(
+            "SELECT content, source_task_id, created_at FROM contract_notes WHERE contract_id = ?1 ORDER BY id",
+        )?;
+        stmt.query_map(params![id], |row| {
+            Ok(ContractNote::new(
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+
+    Ok(Contract::new(
+        id,
+        project_id,
+        title,
+        description,
+        definition_of_done,
+        tags,
+        metadata,
+        notes,
+        created_at,
+        updated_at,
+    ))
+}
+
+fn create_contract(
+    conn: &Connection,
+    project_id: i64,
+    params: &CreateContractParams,
+) -> Result<Contract> {
+    get_project(conn, project_id)?;
+
+    let metadata_str = params
+        .metadata
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
+
+    conn.execute(
+        "INSERT INTO contracts (project_id, title, description, metadata) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![project_id, params.title, params.description, metadata_str],
+    )?;
+    let contract_id = conn.last_insert_rowid();
+
+    for content in &params.definition_of_done {
+        conn.execute(
+            "INSERT INTO contract_definition_of_done (contract_id, content) VALUES (?1, ?2)",
+            params![contract_id, content],
+        )?;
+    }
+    for tag in &params.tags {
+        conn.execute(
+            "INSERT INTO contract_tags (contract_id, tag) VALUES (?1, ?2)",
+            params![contract_id, tag],
+        )?;
+    }
+
+    get_contract(conn, contract_id)
+}
+
+fn list_contracts(conn: &Connection, project_id: i64) -> Result<Vec<Contract>> {
+    let ids: Vec<i64> = {
+        let mut stmt = conn.prepare("SELECT id FROM contracts WHERE project_id = ?1 ORDER BY id")?;
+        stmt.query_map(params![project_id], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    let mut result = Vec::with_capacity(ids.len());
+    for id in ids {
+        result.push(get_contract(conn, id)?);
+    }
+    Ok(result)
+}
+
+fn update_contract(
+    conn: &Connection,
+    id: i64,
+    update: &UpdateContractParams,
+    array_update: &UpdateContractArrayParams,
+) -> Result<Contract> {
+    // Verify exists
+    let _existing = get_contract(conn, id)?;
+
+    let mut touched = false;
+
+    if let Some(ref title) = update.title {
+        conn.execute(
+            "UPDATE contracts SET title = ?1 WHERE id = ?2",
+            params![title, id],
+        )?;
+        touched = true;
+    }
+    if let Some(ref description) = update.description {
+        conn.execute(
+            "UPDATE contracts SET description = ?1 WHERE id = ?2",
+            params![description, id],
+        )?;
+        touched = true;
+    }
+    if let Some(ref meta_update) = update.metadata {
+        let resolved: Option<serde_json::Value> = match meta_update {
+            MetadataUpdate::Clear => None,
+            MetadataUpdate::Replace(v) => Some(v.clone()),
+            MetadataUpdate::Merge(patch) => {
+                let existing_str: Option<String> = conn.query_row(
+                    "SELECT metadata FROM contracts WHERE id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )?;
+                let existing: Option<serde_json::Value> = existing_str
+                    .as_deref()
+                    .map(serde_json::from_str)
+                    .transpose()?;
+                shallow_merge_metadata(existing.as_ref(), patch)
+            }
+        };
+        let metadata_str: Option<String> = resolved
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
+        conn.execute(
+            "UPDATE contracts SET metadata = ?1 WHERE id = ?2",
+            params![metadata_str, id],
+        )?;
+        touched = true;
+    }
+
+    // Tags
+    if let Some(ref set) = array_update.set_tags {
+        conn.execute("DELETE FROM contract_tags WHERE contract_id = ?1", params![id])?;
+        for tag in set {
+            conn.execute(
+                "INSERT INTO contract_tags (contract_id, tag) VALUES (?1, ?2)",
+                params![id, tag],
+            )?;
+        }
+        touched = true;
+    }
+    for tag in &array_update.add_tags {
+        conn.execute(
+            "INSERT OR IGNORE INTO contract_tags (contract_id, tag) VALUES (?1, ?2)",
+            params![id, tag],
+        )?;
+        touched = true;
+    }
+    for tag in &array_update.remove_tags {
+        conn.execute(
+            "DELETE FROM contract_tags WHERE contract_id = ?1 AND tag = ?2",
+            params![id, tag],
+        )?;
+        touched = true;
+    }
+
+    // Definition of done (reset checked on `set`)
+    if let Some(ref set) = array_update.set_definition_of_done {
+        conn.execute(
+            "DELETE FROM contract_definition_of_done WHERE contract_id = ?1",
+            params![id],
+        )?;
+        for content in set {
+            conn.execute(
+                "INSERT INTO contract_definition_of_done (contract_id, content) VALUES (?1, ?2)",
+                params![id, content],
+            )?;
+        }
+        touched = true;
+    }
+    for content in &array_update.add_definition_of_done {
+        conn.execute(
+            "INSERT INTO contract_definition_of_done (contract_id, content) VALUES (?1, ?2)",
+            params![id, content],
+        )?;
+        touched = true;
+    }
+    for content in &array_update.remove_definition_of_done {
+        conn.execute(
+            "DELETE FROM contract_definition_of_done WHERE contract_id = ?1 AND content = ?2",
+            params![id, content],
+        )?;
+        touched = true;
+    }
+
+    if touched {
+        conn.execute(
+            "UPDATE contracts SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+            params![id],
+        )?;
+    }
+
+    get_contract(conn, id)
+}
+
+fn delete_contract(conn: &Connection, id: i64) -> Result<()> {
+    let affected = conn.execute("DELETE FROM contracts WHERE id = ?1", params![id])?;
+    if affected == 0 {
+        return Err(DomainError::ContractNotFound.into());
+    }
+    Ok(())
+}
+
+fn add_contract_note(
+    conn: &Connection,
+    contract_id: i64,
+    note: &ContractNote,
+) -> Result<ContractNote> {
+    // Verify exists
+    let _existing = get_contract(conn, contract_id)?;
+
+    conn.execute(
+        "INSERT INTO contract_notes (contract_id, content, source_task_id, created_at) \
+         VALUES (?1, ?2, ?3, ?4)",
+        params![
+            contract_id,
+            note.content(),
+            note.source_task_id(),
+            note.created_at(),
+        ],
+    )?;
+    conn.execute(
+        "UPDATE contracts SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+        params![contract_id],
+    )?;
+
+    Ok(ContractNote::new(
+        note.content().to_string(),
+        note.source_task_id(),
+        note.created_at().to_string(),
+    ))
+}
+
+fn set_contract_dod_checked(
+    conn: &Connection,
+    contract_id: i64,
+    index: usize,
+    checked: bool,
+) -> Result<Contract> {
+    // 1-based; verify exists
+    let contract = get_contract(conn, contract_id)?;
+    let dod_len = contract.definition_of_done().len();
+    if index == 0 || index > dod_len {
+        return Err(DomainError::DodIndexOutOfRange {
+            index,
+            task_id: contract_id,
+            count: dod_len,
+        }
+        .into());
+    }
+
+    let dod_row_id: i64 = conn.query_row(
+        "SELECT id FROM contract_definition_of_done WHERE contract_id = ?1 ORDER BY id LIMIT 1 OFFSET ?2",
+        params![contract_id, (index - 1) as i64],
+        |row| row.get(0),
+    )?;
+
+    conn.execute(
+        "UPDATE contract_definition_of_done SET checked = ?1 WHERE id = ?2",
+        params![if checked { 1i32 } else { 0i32 }, dod_row_id],
+    )?;
+    conn.execute(
+        "UPDATE contracts SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+        params![contract_id],
+    )?;
+
+    get_contract(conn, contract_id)
+}
+
 // --- SqliteBackend implementation ---
 
 use std::sync::Arc;
@@ -2023,6 +2389,60 @@ impl MetadataFieldRepository for SqliteBackend {
     async fn delete_metadata_field(&self, project_id: i64, field_id: i64) -> Result<()> {
         blocking!(self, |conn: &Connection| delete_metadata_field(
             conn, project_id, field_id
+        ))
+    }
+}
+
+#[async_trait]
+impl ContractRepository for SqliteBackend {
+    async fn create_contract(
+        &self,
+        project_id: i64,
+        params: &CreateContractParams,
+    ) -> Result<Contract> {
+        let params = params.clone();
+        blocking!(self, |conn: &Connection| create_contract(conn, project_id, &params))
+    }
+
+    async fn get_contract(&self, id: i64) -> Result<Contract> {
+        blocking!(self, |conn: &Connection| get_contract(conn, id))
+    }
+
+    async fn list_contracts(&self, project_id: i64) -> Result<Vec<Contract>> {
+        blocking!(self, |conn: &Connection| list_contracts(conn, project_id))
+    }
+
+    async fn update_contract(
+        &self,
+        id: i64,
+        update: &UpdateContractParams,
+        array_update: &UpdateContractArrayParams,
+    ) -> Result<Contract> {
+        let update = update.clone();
+        let array_update = array_update.clone();
+        blocking!(self, |conn: &Connection| update_contract(
+            conn, id, &update, &array_update
+        ))
+    }
+
+    async fn delete_contract(&self, id: i64) -> Result<()> {
+        blocking!(self, |conn: &Connection| delete_contract(conn, id))
+    }
+
+    async fn add_note(&self, contract_id: i64, note: &ContractNote) -> Result<ContractNote> {
+        let note = note.clone();
+        blocking!(self, |conn: &Connection| add_contract_note(conn, contract_id, &note))
+    }
+
+    async fn check_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
+        blocking!(self, |conn: &Connection| set_contract_dod_checked(
+            conn, contract_id, index, true
+        ))
+    }
+
+    async fn uncheck_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
+        blocking!(self, |conn: &Connection| set_contract_dod_checked(
+            conn, contract_id, index, false
         ))
     }
 }
@@ -3107,7 +3527,7 @@ mod tests {
     fn fresh_db_records_migration_version() {
         let (_tmp, conn) = setup();
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
     }
 
     #[test]
@@ -3202,7 +3622,7 @@ mod tests {
 
         // Version should include all migrations
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
 
         // Legacy columns should have been migrated
         let has_description: bool = conn.prepare("SELECT description FROM tasks LIMIT 0").is_ok();
@@ -3246,7 +3666,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 9);
+        assert_eq!(count, 10);
     }
 
     #[test]
@@ -4048,5 +4468,216 @@ mod tests {
             },
         );
         assert!(err.is_err());
+    }
+
+    // ---------------------------------------------------------------
+    // Contract tests
+    // ---------------------------------------------------------------
+
+    fn make_contract_params(title: &str) -> CreateContractParams {
+        CreateContractParams {
+            title: title.to_string(),
+            description: Some("spec".to_string()),
+            definition_of_done: vec!["item1".to_string(), "item2".to_string()],
+            tags: vec!["api".to_string()],
+            metadata: Some(serde_json::json!({"owner": "team-a"})),
+        }
+    }
+
+    #[tokio::test]
+    async fn inmem_contract_create_and_get() {
+        let backend = mem_backend();
+        let created = backend
+            .create_contract(1, &make_contract_params("Contract A"))
+            .await
+            .unwrap();
+        assert_eq!(created.title(), "Contract A");
+        assert_eq!(created.project_id(), 1);
+        assert_eq!(created.definition_of_done().len(), 2);
+        assert_eq!(created.tags(), &["api".to_string()]);
+        assert_eq!(created.metadata(), Some(&serde_json::json!({"owner": "team-a"})));
+
+        let got = backend.get_contract(created.id()).await.unwrap();
+        assert_eq!(got.id(), created.id());
+        assert_eq!(got.title(), "Contract A");
+        assert_eq!(got.definition_of_done()[0].content(), "item1");
+        assert!(!got.definition_of_done()[0].checked());
+    }
+
+    #[tokio::test]
+    async fn inmem_contract_list_ordered() {
+        let backend = mem_backend();
+        let a = backend.create_contract(1, &make_contract_params("A")).await.unwrap();
+        let b = backend.create_contract(1, &make_contract_params("B")).await.unwrap();
+
+        let list = backend.list_contracts(1).await.unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id(), a.id());
+        assert_eq!(list[1].id(), b.id());
+    }
+
+    #[tokio::test]
+    async fn inmem_contract_update_scalar_and_arrays() {
+        let backend = mem_backend();
+        let c = backend.create_contract(1, &make_contract_params("Spec")).await.unwrap();
+
+        let updated = backend
+            .update_contract(
+                c.id(),
+                &UpdateContractParams {
+                    title: Some("Spec v2".to_string()),
+                    description: Some(None),
+                    metadata: Some(MetadataUpdate::Merge(serde_json::json!({"stage": "review"}))),
+                },
+                &UpdateContractArrayParams {
+                    add_tags: vec!["backend".to_string()],
+                    set_definition_of_done: Some(vec!["done-a".to_string()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.title(), "Spec v2");
+        assert_eq!(updated.description(), None);
+        assert_eq!(
+            updated.metadata(),
+            Some(&serde_json::json!({"owner": "team-a", "stage": "review"}))
+        );
+        assert!(updated.tags().contains(&"backend".to_string()));
+        assert_eq!(updated.definition_of_done().len(), 1);
+        assert_eq!(updated.definition_of_done()[0].content(), "done-a");
+        assert!(!updated.definition_of_done()[0].checked());
+    }
+
+    #[tokio::test]
+    async fn inmem_contract_check_and_uncheck_dod() {
+        let backend = mem_backend();
+        let c = backend
+            .create_contract(1, &make_contract_params("DoD"))
+            .await
+            .unwrap();
+        let checked = backend.check_dod(c.id(), 1).await.unwrap();
+        assert!(checked.definition_of_done()[0].checked());
+        assert!(!checked.definition_of_done()[1].checked());
+
+        let unchecked = backend.uncheck_dod(c.id(), 1).await.unwrap();
+        assert!(!unchecked.definition_of_done()[0].checked());
+
+        // Out-of-range returns an error
+        assert!(backend.check_dod(c.id(), 0).await.is_err());
+        assert!(backend.check_dod(c.id(), 99).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn inmem_contract_add_note_preserves_source_task() {
+        let backend = mem_backend();
+        let c = backend
+            .create_contract(1, &make_contract_params("With note"))
+            .await
+            .unwrap();
+        let task = backend.create_task(1, &params("source")).await.unwrap();
+        let note = ContractNote::new(
+            "first observation".to_string(),
+            Some(task.id()),
+            "2026-04-17T00:00:00Z".to_string(),
+        );
+        backend.add_note(c.id(), &note).await.unwrap();
+
+        let refreshed = backend.get_contract(c.id()).await.unwrap();
+        assert_eq!(refreshed.notes().len(), 1);
+        assert_eq!(refreshed.notes()[0].content(), "first observation");
+        assert_eq!(refreshed.notes()[0].source_task_id(), Some(task.id()));
+
+        // ON DELETE SET NULL: deleting the source task nullifies the reference
+        backend.delete_task(1, task.task_number()).await.unwrap();
+        let refreshed = backend.get_contract(c.id()).await.unwrap();
+        assert_eq!(refreshed.notes().len(), 1);
+        assert_eq!(refreshed.notes()[0].source_task_id(), None);
+    }
+
+    #[tokio::test]
+    async fn inmem_contract_delete_cascades_children() {
+        let backend = mem_backend();
+        let c = backend
+            .create_contract(1, &make_contract_params("Delete me"))
+            .await
+            .unwrap();
+        backend.add_note(
+            c.id(),
+            &ContractNote::new("n".to_string(), None, "2026-04-17T00:00:00Z".to_string()),
+        ).await.unwrap();
+
+        backend.delete_contract(c.id()).await.unwrap();
+
+        // Child rows must be gone (SQLite FK cascade)
+        assert!(backend.get_contract(c.id()).await.is_err());
+        let list = backend.list_contracts(1).await.unwrap();
+        assert!(list.is_empty());
+    }
+
+    #[tokio::test]
+    async fn inmem_task_contract_id_roundtrip() {
+        let backend = mem_backend();
+        let c = backend
+            .create_contract(1, &make_contract_params("linked"))
+            .await
+            .unwrap();
+        let task = backend.create_task(1, &params("linked task")).await.unwrap();
+
+        // Initially NULL
+        assert_eq!(task.contract_id(), None);
+
+        let updated = backend
+            .update_task(
+                1,
+                task.id(),
+                &UpdateTaskParams {
+                    title: None,
+                    background: None,
+                    description: None,
+                    plan: None,
+                    priority: None,
+                    assignee_session_id: None,
+                    assignee_user_id: None,
+                    started_at: None,
+                    completed_at: None,
+                    canceled_at: None,
+                    cancel_reason: None,
+                    branch: None,
+                    pr_url: None,
+                    contract_id: Some(Some(c.id())),
+                    metadata: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.contract_id(), Some(c.id()));
+
+        // Clearing back to None
+        let cleared = backend
+            .update_task(
+                1,
+                task.id(),
+                &UpdateTaskParams {
+                    title: None,
+                    background: None,
+                    description: None,
+                    plan: None,
+                    priority: None,
+                    assignee_session_id: None,
+                    assignee_user_id: None,
+                    started_at: None,
+                    completed_at: None,
+                    canceled_at: None,
+                    cancel_reason: None,
+                    branch: None,
+                    pr_url: None,
+                    contract_id: Some(None),
+                    metadata: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(cleared.contract_id(), None);
     }
 }

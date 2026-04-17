@@ -223,7 +223,8 @@ fn classify_error(e: anyhow::Error) -> ApiError {
             | DomainError::ApiKeyNotFound
             | DomainError::DependencyNotFound { .. }
             | DomainError::NoEligibleTask
-            | DomainError::MetadataFieldNotFound => ApiError::NotFound(msg),
+            | DomainError::MetadataFieldNotFound
+            | DomainError::ContractNotFound => ApiError::NotFound(msg),
 
             DomainError::InvalidTaskStatus { .. }
             | DomainError::InvalidPriority { .. }

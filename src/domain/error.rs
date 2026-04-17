@@ -22,6 +22,9 @@ pub enum DomainError {
     #[error("metadata field not found")]
     MetadataFieldNotFound,
 
+    #[error("contract not found")]
+    ContractNotFound,
+
     #[error("no eligible task found")]
     NoEligibleTask,
 
