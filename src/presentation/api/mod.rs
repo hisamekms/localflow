@@ -889,6 +889,7 @@ async fn edit_task(
         } else {
             body.pr_url.map(Some)
         },
+        contract_id: None,
         metadata: if body.clear_metadata {
             Some(MetadataUpdate::Clear)
         } else if let Some(v) = body.replace_metadata {

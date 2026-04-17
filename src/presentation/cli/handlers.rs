@@ -1193,6 +1193,7 @@ pub async fn cmd_edit(
         } else {
             pr_url.clone().map(Some)
         },
+        contract_id: None,
         metadata: if clear_metadata {
             Some(MetadataUpdate::Clear)
         } else if let Some(m) = replace_metadata {

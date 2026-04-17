@@ -1007,6 +1007,7 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
         cancel_reason,
         branch,
         pr_url,
+        None,
         metadata,
         definition_of_done,
         in_scope,
@@ -2232,6 +2233,7 @@ mod tests {
                 cancel_reason: None,
                 branch: None,
                 pr_url: None,
+                contract_id: None,
                 metadata: None,
             },
         )
@@ -3055,6 +3057,7 @@ mod tests {
                 cancel_reason: None,
                 branch: None,
                 pr_url: None,
+                contract_id: None,
                 metadata: None,
             },
         )

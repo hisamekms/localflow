@@ -282,6 +282,7 @@ pub struct Task {
     cancel_reason: Option<String>,
     branch: Option<String>,
     pr_url: Option<String>,
+    contract_id: Option<i64>,
     metadata: Option<serde_json::Value>,
     definition_of_done: Vec<DodItem>,
     in_scope: Vec<String>,
@@ -312,6 +313,7 @@ impl Task {
         cancel_reason: Option<String>,
         branch: Option<String>,
         pr_url: Option<String>,
+        contract_id: Option<i64>,
         metadata: Option<serde_json::Value>,
         definition_of_done: Vec<DodItem>,
         in_scope: Vec<String>,
@@ -339,6 +341,7 @@ impl Task {
             cancel_reason,
             branch,
             pr_url,
+            contract_id,
             metadata,
             definition_of_done,
             in_scope,
@@ -428,6 +431,10 @@ impl Task {
 
     pub fn pr_url(&self) -> Option<&str> {
         self.pr_url.as_deref()
+    }
+
+    pub fn contract_id(&self) -> Option<i64> {
+        self.contract_id
     }
 
     pub fn metadata(&self) -> Option<&serde_json::Value> {
@@ -527,6 +534,10 @@ impl Task {
         }
         if let Some(ref pr_url) = params.pr_url {
             self.pr_url = pr_url.clone();
+            changed = true;
+        }
+        if let Some(ref contract_id) = params.contract_id {
+            self.contract_id = *contract_id;
             changed = true;
         }
         if let Some(ref meta_update) = params.metadata {
@@ -976,6 +987,7 @@ pub struct UpdateTaskParams {
     pub cancel_reason: Option<Option<String>>,
     pub branch: Option<Option<String>>,
     pub pr_url: Option<Option<String>>,
+    pub contract_id: Option<Option<i64>>,
     pub metadata: Option<MetadataUpdate>,
 }
 
@@ -1241,7 +1253,7 @@ mod tests {
             1, 1, 1, "test".to_string(), None, None, None, Priority::P2, status,
             None, None,
             "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         )
     }
@@ -1261,6 +1273,7 @@ mod tests {
             cancel_reason: None,
             branch: None,
             pr_url: None,
+            contract_id: None,
             metadata: None,
         }
     }
@@ -1448,7 +1461,7 @@ mod tests {
             1, 1, 1, "test".to_string(), None, None, None, Priority::P2, TaskStatus::Todo,
             None, Some(5),
             "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
         let (task, _) = task.start(None, Some(5), "2026-01-02T00:00:00Z".to_string(), None).unwrap();
@@ -1461,7 +1474,7 @@ mod tests {
             1, 1, 1, "test".to_string(), None, None, None, Priority::P2, TaskStatus::Todo,
             None, Some(5),
             "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
         let err = task.start(None, Some(99), "2026-01-02T00:00:00Z".to_string(), None).unwrap_err();
@@ -1475,7 +1488,7 @@ mod tests {
             1, 1, 1, "test".to_string(), None, None, None, Priority::P2, TaskStatus::Todo,
             None, Some(5),
             "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
         let (task, _) = task.start(None, None, "2026-01-02T00:00:00Z".to_string(), None).unwrap();
@@ -1611,7 +1624,7 @@ mod tests {
             1, 1, 1, "test".to_string(), None, None, None, Priority::P2, TaskStatus::InProgress,
             None, None,
             "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![
                 DodItem::new("Write tests".to_string(), false),
                 DodItem::new("Update docs".to_string(), false),
@@ -1636,7 +1649,7 @@ mod tests {
             1, 1, 1, "test".to_string(), None, None, None, Priority::P2, TaskStatus::InProgress,
             None, None,
             "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![
                 DodItem::new("Write tests".to_string(), true),
                 DodItem::new("Update docs".to_string(), false),
@@ -1724,7 +1737,7 @@ mod tests {
             id, id, 1, format!("task-{id}"), None, None, None, Priority::P2, status,
             None, None,
             "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         )
     }
@@ -1736,7 +1749,7 @@ mod tests {
             id, id, 1, format!("task-{id}"), None, None, None, priority, status,
             None, None,
             created_at.to_string(), created_at.to_string(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         )
     }

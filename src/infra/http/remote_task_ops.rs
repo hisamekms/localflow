@@ -358,7 +358,7 @@ impl TaskOperations for RemoteTaskOperations {
                     None, None,
                     String::new(), String::new(),
                     None, None, None, None,
-                    None, None, None,
+                    None, None, None, None,
                     Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
                 ))
             })

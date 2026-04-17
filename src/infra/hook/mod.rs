@@ -804,7 +804,7 @@ command = "echo completed"
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
         let event = build_event("task_added", &task, &backend, None, None).await;
@@ -827,7 +827,7 @@ command = "echo completed"
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
         let event = build_event("task_added", &task, &backend, None, None).await;
@@ -996,7 +996,7 @@ command = "echo completed"
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
         fire_hooks(&config, "task_added", &task, &backend, None, None, &RuntimeMode::Cli, &BackendInfo::Sqlite { db_file_path: "test.db".into() }).await;
@@ -1025,7 +1025,7 @@ command = "echo completed"
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
         // Should not panic
@@ -1109,7 +1109,7 @@ command = "echo completed"
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
 
@@ -1166,7 +1166,7 @@ command = "echo completed"
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
 
@@ -1197,7 +1197,7 @@ command = "echo completed"
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
 
@@ -1232,7 +1232,7 @@ command = "echo completed"
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
 
@@ -1284,7 +1284,7 @@ command = "echo completed"
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
         let event = build_event("task_added", &task, &backend, None, None).await;
@@ -1663,7 +1663,7 @@ on_task_added = "echo added"
             crate::domain::task::Priority::P1, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
         fire_hooks(&config, "task_added", &task, &backend, None, None, &RuntimeMode::Cli, &BackendInfo::Sqlite { db_file_path: "test.db".into() }).await;
@@ -2186,7 +2186,7 @@ command = "project-cmd"
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
 
@@ -2214,7 +2214,7 @@ command = "project-cmd"
             crate::domain::task::Priority::P2, TaskStatus::Draft,
             None, None,
             "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
 
