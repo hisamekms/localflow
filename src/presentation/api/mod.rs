@@ -16,10 +16,13 @@ use tower_http::trace::TraceLayer;
 mod auth;
 
 use crate::domain::error::DomainError;
-use crate::application::{LocalTaskOperations, MetadataFieldOperations, MetadataFieldService, ProjectOperations, ProjectService, TaskOperations, UserOperations, UserService};
+use crate::application::{ContractOperations, LocalTaskOperations, MetadataFieldOperations, MetadataFieldService, ProjectOperations, ProjectService, TaskOperations, UserOperations, UserService};
 use crate::application::auth::Permission;
 use crate::application::port::auth::AuthError;
 use crate::application::port::TaskBackend;
+use crate::domain::contract::{
+    CreateContractParams, UpdateContractArrayParams, UpdateContractParams,
+};
 use self::auth::{AuthUser, HasAuth, OptionalAuthUser};
 use crate::bootstrap;
 use crate::bootstrap::AuthMode;
@@ -33,15 +36,16 @@ use crate::domain::task::{
 use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role, UpdateUserParams,
 };
+use crate::infra::http::remote_contract_ops::RemoteContractOperations;
 use crate::infra::http::remote_task_ops::RemoteTaskOperations;
 use crate::infra::http::remote_project_ops::RemoteProjectOperations;
 use crate::infra::http::remote_user_ops::RemoteUserOperations;
 use crate::infra::http::remote_metadata_field_ops::RemoteMetadataFieldOperations;
 use super::dto::{
     ApiKeyResponse, ApiKeyWithSecretResponse, AuthConfigOidc, AuthConfigResponse,
-    CompleteTaskResponse, ConfigResponse, MeResponse, MetadataFieldResponse,
-    PreviewTransitionResponse, ProjectMemberResponse, ProjectResponse, SessionResponse,
-    TaskResponse, TokenResponse, UserResponse,
+    CompleteTaskResponse, ConfigResponse, ContractNoteResponse, ContractResponse, MeResponse,
+    MetadataFieldResponse, PreviewTransitionResponse, ProjectMemberResponse, ProjectResponse,
+    SessionResponse, TaskResponse, TokenResponse, UserResponse,
 };
 
 #[derive(Clone)]
@@ -52,6 +56,7 @@ struct AppState {
     project_service: Arc<dyn ProjectOperations>,
     user_service: Arc<dyn UserOperations>,
     metadata_service: Arc<dyn MetadataFieldOperations>,
+    contract_service: Arc<dyn ContractOperations>,
     auth_mode: Option<Arc<AuthMode>>,
     master_key_configured: bool,
     proxy_mode: bool,
@@ -400,6 +405,9 @@ struct EditTaskBody {
     pr_url: Option<String>,
     #[serde(default)]
     clear_pr_url: bool,
+    contract_id: Option<i64>,
+    #[serde(default)]
+    clear_contract: bool,
     metadata: Option<serde_json::Value>,
     replace_metadata: Option<serde_json::Value>,
     #[serde(default)]
@@ -464,7 +472,8 @@ pub async fn serve(
         task_service: Arc::new(LocalTaskOperations::new(backend.clone(), hook_executor, pr_verifier, completion_policy)),
         project_service: Arc::new(ProjectService::new(backend.clone())),
         user_service: Arc::new(UserService::new(backend.clone())),
-        metadata_service: Arc::new(MetadataFieldService::new(backend)),
+        metadata_service: Arc::new(MetadataFieldService::new(backend.clone())),
+        contract_service: Arc::new(bootstrap::create_contract_service(backend)),
         auth_mode: auth_mode.map(Arc::new),
         master_key_configured: config.server.auth.api_key.master_key.is_some(),
         proxy_mode: false,
@@ -498,7 +507,8 @@ pub async fn serve_proxy(
         task_service: Arc::new(RemoteTaskOperations::new(remote_url, api_key.clone(), hook_executor)),
         project_service: Arc::new(RemoteProjectOperations::new(remote_url, api_key.clone())),
         user_service: Arc::new(RemoteUserOperations::new(remote_url, api_key.clone())),
-        metadata_service: Arc::new(RemoteMetadataFieldOperations::new(remote_url, api_key)),
+        metadata_service: Arc::new(RemoteMetadataFieldOperations::new(remote_url, api_key.clone())),
+        contract_service: Arc::new(RemoteContractOperations::new(remote_url, api_key)),
         auth_mode: None,
         master_key_configured: false,
         proxy_mode: true,
@@ -609,6 +619,27 @@ async fn start_server(
         .route(
             "/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/uncheck",
             post(uncheck_dod),
+        )
+        // Contract CRUD
+        .route(
+            "/api/v1/projects/{project_id}/contracts",
+            get(list_contracts).post(create_contract),
+        )
+        .route(
+            "/api/v1/contracts/{id}",
+            get(get_contract).put(edit_contract).delete(delete_contract),
+        )
+        .route(
+            "/api/v1/contracts/{id}/dod/{index}/check",
+            post(check_contract_dod),
+        )
+        .route(
+            "/api/v1/contracts/{id}/dod/{index}/uncheck",
+            post(uncheck_contract_dod),
+        )
+        .route(
+            "/api/v1/contracts/{id}/notes",
+            get(list_contract_notes).post(add_contract_note),
         )
         // Metadata fields
         .route(
@@ -890,7 +921,11 @@ async fn edit_task(
         } else {
             body.pr_url.map(Some)
         },
-        contract_id: None,
+        contract_id: if body.clear_contract {
+            Some(None)
+        } else {
+            body.contract_id.map(Some)
+        },
         metadata: if body.clear_metadata {
             Some(MetadataUpdate::Clear)
         } else if let Some(v) = body.replace_metadata {
@@ -1119,6 +1154,231 @@ async fn uncheck_dod(
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let task = state.task_service.uncheck_dod(project_id, id, index).await.map_err(classify_error)?;
     Ok(Json(TaskResponse::from(task)))
+}
+
+// --- Contract handlers ---
+
+#[derive(Deserialize)]
+struct CreateContractBody {
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    definition_of_done: Vec<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct EditContractBody {
+    title: Option<String>,
+    description: Option<String>,
+    #[serde(default)]
+    clear_description: bool,
+    metadata: Option<serde_json::Value>,
+    replace_metadata: Option<serde_json::Value>,
+    #[serde(default)]
+    clear_metadata: bool,
+    set_tags: Option<Vec<String>>,
+    #[serde(default)]
+    add_tags: Vec<String>,
+    #[serde(default)]
+    remove_tags: Vec<String>,
+    set_definition_of_done: Option<Vec<String>>,
+    #[serde(default)]
+    add_definition_of_done: Vec<String>,
+    #[serde(default)]
+    remove_definition_of_done: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct AddContractNoteBody {
+    content: String,
+    #[serde(default)]
+    source_task_id: Option<i64>,
+}
+
+async fn contract_project_id(state: &AppState, id: i64) -> Result<i64, ApiError> {
+    let contract = state.contract_service.get_contract(id).await.map_err(classify_error)?;
+    Ok(contract.project_id())
+}
+
+// POST /api/v1/projects/{project_id}/contracts
+async fn create_contract(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(project_id): Path<i64>,
+    Json(body): Json<CreateContractBody>,
+) -> Result<Json<ContractResponse>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
+    let params = CreateContractParams {
+        title: body.title,
+        description: body.description,
+        definition_of_done: body.definition_of_done,
+        tags: body.tags,
+        metadata: body.metadata,
+    };
+    let contract = state
+        .contract_service
+        .create_contract(project_id, &params)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(ContractResponse::from(contract)))
+}
+
+// GET /api/v1/projects/{project_id}/contracts
+async fn list_contracts(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(project_id): Path<i64>,
+) -> Result<Json<Vec<ContractResponse>>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::View).await?;
+    let contracts = state
+        .contract_service
+        .list_contracts(project_id)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(contracts.into_iter().map(ContractResponse::from).collect()))
+}
+
+// GET /api/v1/contracts/{id}
+async fn get_contract(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(id): Path<i64>,
+) -> Result<Json<ContractResponse>, ApiError> {
+    let project_id = contract_project_id(&state, id).await?;
+    check_project_permission(&state, &auth, project_id, Permission::View).await?;
+    let contract = state
+        .contract_service
+        .get_contract(id)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(ContractResponse::from(contract)))
+}
+
+// PUT /api/v1/contracts/{id}
+async fn edit_contract(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(id): Path<i64>,
+    Json(body): Json<EditContractBody>,
+) -> Result<Json<ContractResponse>, ApiError> {
+    let project_id = contract_project_id(&state, id).await?;
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
+
+    let scalar = UpdateContractParams {
+        title: body.title,
+        description: if body.clear_description {
+            Some(None)
+        } else {
+            body.description.map(Some)
+        },
+        metadata: if body.clear_metadata {
+            Some(MetadataUpdate::Clear)
+        } else if let Some(v) = body.replace_metadata {
+            Some(MetadataUpdate::Replace(v))
+        } else {
+            body.metadata.map(MetadataUpdate::Merge)
+        },
+    };
+    let array = UpdateContractArrayParams {
+        set_tags: body.set_tags,
+        add_tags: body.add_tags,
+        remove_tags: body.remove_tags,
+        set_definition_of_done: body.set_definition_of_done,
+        add_definition_of_done: body.add_definition_of_done,
+        remove_definition_of_done: body.remove_definition_of_done,
+    };
+    let contract = state
+        .contract_service
+        .edit_contract(id, &scalar, &array)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(ContractResponse::from(contract)))
+}
+
+// DELETE /api/v1/contracts/{id}
+async fn delete_contract(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let project_id = contract_project_id(&state, id).await?;
+    check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
+    state
+        .contract_service
+        .delete_contract(id)
+        .await
+        .map_err(classify_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// POST /api/v1/contracts/{id}/dod/{index}/check
+async fn check_contract_dod(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path((id, index)): Path<(i64, usize)>,
+) -> Result<Json<ContractResponse>, ApiError> {
+    let project_id = contract_project_id(&state, id).await?;
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
+    let contract = state
+        .contract_service
+        .check_dod(id, index)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(ContractResponse::from(contract)))
+}
+
+// POST /api/v1/contracts/{id}/dod/{index}/uncheck
+async fn uncheck_contract_dod(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path((id, index)): Path<(i64, usize)>,
+) -> Result<Json<ContractResponse>, ApiError> {
+    let project_id = contract_project_id(&state, id).await?;
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
+    let contract = state
+        .contract_service
+        .uncheck_dod(id, index)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(ContractResponse::from(contract)))
+}
+
+// POST /api/v1/contracts/{id}/notes
+async fn add_contract_note(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(id): Path<i64>,
+    Json(body): Json<AddContractNoteBody>,
+) -> Result<Json<ContractNoteResponse>, ApiError> {
+    let project_id = contract_project_id(&state, id).await?;
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
+    let note = state
+        .contract_service
+        .add_note(id, body.content, body.source_task_id)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(ContractNoteResponse::from(&note)))
+}
+
+// GET /api/v1/contracts/{id}/notes
+async fn list_contract_notes(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Vec<ContractNoteResponse>>, ApiError> {
+    let project_id = contract_project_id(&state, id).await?;
+    check_project_permission(&state, &auth, project_id, Permission::View).await?;
+    let notes = state
+        .contract_service
+        .list_notes(id)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(notes.iter().map(ContractNoteResponse::from).collect()))
 }
 
 // GET /auth/config (public, no auth required)

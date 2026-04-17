@@ -1,4 +1,5 @@
 pub(crate) mod client;
+pub mod remote_contract_ops;
 pub mod remote_hook_data;
 pub mod remote_metadata_field_ops;
 pub mod remote_project_ops;
@@ -84,6 +85,17 @@ pub(crate) fn update_params_to_json(params: &UpdateTaskParams) -> serde_json::Va
     clearable!(plan);
     clearable!(branch);
     clearable!(pr_url);
+    // contract_id uses a different key naming: the API expects "contract_id" / "clear_contract"
+    if let Some(ref outer) = params.contract_id {
+        match outer {
+            None => {
+                map.insert("clear_contract".into(), json!(true));
+            }
+            Some(val) => {
+                map.insert("contract_id".into(), json!(val));
+            }
+        }
+    }
     // metadata uses MetadataUpdate enum instead of clearable! pattern
     if let Some(ref meta_update) = params.metadata {
         match meta_update {

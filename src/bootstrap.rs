@@ -11,6 +11,7 @@ use crate::infra::xdg::XdgDirs;
 use crate::domain::task::CompletionPolicy;
 use crate::application::port::TaskBackend;
 use crate::infra::config::{Config, LogConfig, LogFormat, RawConfig};
+use crate::infra::http::remote_contract_ops::RemoteContractOperations;
 use crate::infra::http::remote_hook_data::RemoteHookDataSource;
 use crate::infra::http::remote_metadata_field_ops::RemoteMetadataFieldOperations;
 use crate::infra::http::remote_project_ops::RemoteProjectOperations;
@@ -267,6 +268,17 @@ pub fn create_metadata_field_service(backend: Arc<dyn TaskBackend>) -> MetadataF
 
 pub fn create_contract_service(backend: Arc<dyn TaskBackend>) -> LocalContractOperations {
     LocalContractOperations::new(backend)
+}
+
+pub fn create_remote_contract_operations(config: &Config) -> RemoteContractOperations {
+    let url = config
+        .cli
+        .remote
+        .url
+        .as_ref()
+        .expect("cli.remote.url required for remote operations");
+    let api_key = config.cli.remote.token.clone();
+    RemoteContractOperations::new(url, api_key)
 }
 
 pub fn create_remote_hook_data(config: &Config) -> Arc<dyn HookDataSource> {

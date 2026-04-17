@@ -5,15 +5,16 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 
 use super::{
-    Cli, DepsCommand, DodCommand, DryRunOperation, HooksCommand, MemberAction,
-    MetadataFieldAction, OutputFormat, ProjectAction, UserAction, CONFIG_TEMPLATE, print_dry_run,
+    Cli, ContractAction, ContractDodCommand, ContractNoteCommand, DepsCommand, DodCommand,
+    DryRunOperation, HooksCommand, MemberAction, MetadataFieldAction, OutputFormat, ProjectAction,
+    UserAction, CONFIG_TEMPLATE, print_dry_run,
 };
-use crate::application::UserOperations;
+use crate::application::{ContractOperations, UserOperations};
 use crate::bootstrap::{
-    create_backend, create_hook_test_service, create_project_service,
-    create_remote_hook_data, create_remote_metadata_field_operations,
-    create_remote_project_operations, create_remote_user_operations,
-    create_task_operations, create_user_service,
+    create_backend, create_contract_service, create_hook_test_service, create_project_service,
+    create_remote_contract_operations, create_remote_hook_data,
+    create_remote_metadata_field_operations, create_remote_project_operations,
+    create_remote_user_operations, create_task_operations, create_user_service,
     resolve_project_id, resolve_user_id,
 };
 #[cfg(test)]
@@ -21,11 +22,13 @@ use crate::bootstrap::DEFAULT_PROJECT_ID;
 use crate::bootstrap::hook as hooks;
 use crate::application::{HookTrigger, ProjectOperations};
 use crate::infra::config::{CliOverrides, Config};
+use crate::domain::contract::{CreateContractParams, UpdateContractArrayParams, UpdateContractParams};
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
     AssigneeUserId, CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
+use crate::presentation::dto::{ContractNoteResponse, ContractResponse};
 use crate::domain::metadata_field::{CreateMetadataFieldParams, MetadataFieldType, validate_field_name};
 use crate::domain::user::{AddProjectMemberParams, CreateUserParams, UpdateUserParams};
 use crate::bootstrap::resolve_project_root;
@@ -1068,6 +1071,8 @@ pub async fn cmd_edit(
     clear_branch: bool,
     pr_url: &Option<String>,
     clear_pr_url: bool,
+    contract: &Option<i64>,
+    clear_contract: bool,
     metadata: &Option<String>,
     replace_metadata: &Option<String>,
     clear_metadata: bool,
@@ -1133,6 +1138,11 @@ pub async fn cmd_edit(
             operations.push(format!("Update task #{}: clear pr_url", id));
         } else if let Some(url) = pr_url {
             operations.push(format!("Update task #{}: set pr_url to \"{}\"", id, url));
+        }
+        if clear_contract {
+            operations.push(format!("Update task #{}: clear contract", id));
+        } else if let Some(cid) = contract {
+            operations.push(format!("Update task #{}: set contract to {}", id, cid));
         }
         if clear_metadata {
             operations.push(format!("Update task #{}: clear metadata", id));
@@ -1205,7 +1215,11 @@ pub async fn cmd_edit(
         } else {
             pr_url.clone().map(Some)
         },
-        contract_id: None,
+        contract_id: if clear_contract {
+            Some(None)
+        } else {
+            contract.map(Some)
+        },
         metadata: if clear_metadata {
             Some(MetadataUpdate::Clear)
         } else if let Some(m) = replace_metadata {
@@ -2167,6 +2181,422 @@ pub async fn cmd_auth_revoke(cli: &Cli, id: Option<i64>, all: bool) -> Result<()
         bail!("Provide a session ID or use --all to revoke all sessions.");
     }
     Ok(())
+}
+
+// --- Contract commands ---
+
+fn build_contract_ops(
+    config: &Config,
+    root: &Path,
+) -> Result<Arc<dyn ContractOperations>> {
+    if config.cli.remote.url.is_some() {
+        Ok(Arc::new(create_remote_contract_operations(config)))
+    } else {
+        let backend = create_backend(root, config)?;
+        Ok(Arc::new(create_contract_service(backend)))
+    }
+}
+
+fn print_contract_text(c: &crate::domain::contract::Contract) {
+    println!("Contract #{}", c.id());
+    println!("  title: {}", c.title());
+    if let Some(desc) = c.description() {
+        println!("  description: {desc}");
+    }
+    if !c.tags().is_empty() {
+        println!("  tags: {}", c.tags().join(", "));
+    }
+    if let Some(meta) = c.metadata() {
+        if let Ok(s) = serde_json::to_string(meta) {
+            println!("  metadata: {s}");
+        }
+    }
+    if !c.definition_of_done().is_empty() {
+        println!("  definition_of_done:");
+        print_dod_items_contract(c.definition_of_done());
+    }
+    if !c.notes().is_empty() {
+        println!("  notes: {}", c.notes().len());
+    }
+    println!("  is_completed: {}", c.is_completed());
+}
+
+fn print_dod_items_contract(items: &[crate::domain::task::DodItem]) {
+    for (i, item) in items.iter().enumerate() {
+        let mark = if item.checked() { "x" } else { " " };
+        println!("    {}. [{mark}] {}", i + 1, item.content());
+    }
+}
+
+pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let config = load_config(cli, &root)?;
+    let contract_ops = build_contract_ops(&config, &root)?;
+
+    match action {
+        ContractAction::Add {
+            title,
+            description,
+            definition_of_done,
+            tag,
+            metadata,
+            from_json,
+            from_json_file,
+        } => {
+            let params = if *from_json {
+                let mut buf = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut buf)
+                    .context("failed to read from stdin")?;
+                serde_json::from_str::<CreateContractParams>(&buf)
+                    .context("invalid JSON from stdin")?
+            } else if let Some(path) = from_json_file {
+                let content = fs::read_to_string(path)
+                    .with_context(|| format!("failed to read file: {}", path.display()))?;
+                serde_json::from_str::<CreateContractParams>(&content)
+                    .context("invalid JSON in file")?
+            } else {
+                let Some(title) = title.clone() else {
+                    bail!("--title is required when not using --from-json or --from-json-file");
+                };
+                let metadata_val = match metadata {
+                    Some(m) => Some(
+                        serde_json::from_str::<serde_json::Value>(m)
+                            .context("invalid JSON for --metadata")?,
+                    ),
+                    None => None,
+                };
+                CreateContractParams {
+                    title,
+                    description: description.clone(),
+                    definition_of_done: definition_of_done.clone(),
+                    tags: tag.clone(),
+                    metadata: metadata_val,
+                }
+            };
+
+            if cli.dry_run {
+                let operations = vec![format!("Create contract with title \"{}\"", params.title)];
+                return print_dry_run(
+                    &cli.output,
+                    &DryRunOperation {
+                        command: "contract add".into(),
+                        operations,
+                    },
+                );
+            }
+
+            let (_task_ops_unused, project_ops) = build_project_ops_pair(&config, &root)?;
+            let project_id = resolve_project_id(&*project_ops, &config).await?;
+            let contract = contract_ops.create_contract(project_id, &params).await?;
+            let response = ContractResponse::from(contract.clone());
+            match cli.output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&response)?),
+                OutputFormat::Text => {
+                    println!("Created contract #{}", contract.id());
+                    print_contract_text(&contract);
+                }
+            }
+        }
+        ContractAction::List { tag } => {
+            let (_task_ops_unused, project_ops) = build_project_ops_pair(&config, &root)?;
+            let project_id = resolve_project_id(&*project_ops, &config).await?;
+            let contracts = contract_ops.list_contracts(project_id).await?;
+            let filtered: Vec<_> = if tag.is_empty() {
+                contracts
+            } else {
+                contracts
+                    .into_iter()
+                    .filter(|c| tag.iter().all(|t| c.tags().iter().any(|ct| ct == t)))
+                    .collect()
+            };
+            match cli.output {
+                OutputFormat::Json => {
+                    let responses: Vec<ContractResponse> =
+                        filtered.into_iter().map(ContractResponse::from).collect();
+                    println!("{}", serde_json::to_string_pretty(&responses)?);
+                }
+                OutputFormat::Text => {
+                    if filtered.is_empty() {
+                        println!("No contracts.");
+                    } else {
+                        for c in &filtered {
+                            let tags = if c.tags().is_empty() {
+                                String::new()
+                            } else {
+                                format!(" [{}]", c.tags().join(", "))
+                            };
+                            let status = if c.is_completed() { "done" } else { "open" };
+                            println!("#{} ({status}) {}{}", c.id(), c.title(), tags);
+                        }
+                    }
+                }
+            }
+        }
+        ContractAction::Get { id } => {
+            let contract = contract_ops.get_contract(*id).await?;
+            match cli.output {
+                OutputFormat::Json => {
+                    let response = ContractResponse::from(contract);
+                    println!("{}", serde_json::to_string_pretty(&response)?);
+                }
+                OutputFormat::Text => print_contract_text(&contract),
+            }
+        }
+        ContractAction::Edit {
+            id,
+            title,
+            description,
+            clear_description,
+            metadata,
+            replace_metadata,
+            clear_metadata,
+            set_tags,
+            set_definition_of_done,
+            add_tag,
+            add_definition_of_done,
+            remove_tag,
+            remove_definition_of_done,
+        } => {
+            let id = *id;
+            if cli.dry_run {
+                let mut operations = Vec::new();
+                if let Some(t) = title {
+                    operations.push(format!("Update contract #{}: set title to \"{}\"", id, t));
+                }
+                if *clear_description {
+                    operations.push(format!("Update contract #{}: clear description", id));
+                } else if let Some(d) = description {
+                    operations.push(format!("Update contract #{}: set description to \"{}\"", id, d));
+                }
+                if *clear_metadata {
+                    operations.push(format!("Update contract #{}: clear metadata", id));
+                } else if let Some(m) = replace_metadata {
+                    operations.push(format!("Update contract #{}: replace metadata with {}", id, m));
+                } else if let Some(m) = metadata {
+                    operations.push(format!("Update contract #{}: merge metadata with {}", id, m));
+                }
+                if let Some(tags) = set_tags {
+                    operations.push(format!("Update contract #{}: set tags to [{}]", id, tags.join(", ")));
+                }
+                if !add_tag.is_empty() {
+                    operations.push(format!("Update contract #{}: add tags [{}]", id, add_tag.join(", ")));
+                }
+                if !remove_tag.is_empty() {
+                    operations.push(format!("Update contract #{}: remove tags [{}]", id, remove_tag.join(", ")));
+                }
+                if let Some(dod) = set_definition_of_done {
+                    operations.push(format!("Update contract #{}: set DoD to [{}]", id, dod.join(", ")));
+                }
+                if !add_definition_of_done.is_empty() {
+                    operations.push(format!("Update contract #{}: add DoD [{}]", id, add_definition_of_done.join(", ")));
+                }
+                if !remove_definition_of_done.is_empty() {
+                    operations.push(format!("Update contract #{}: remove DoD [{}]", id, remove_definition_of_done.join(", ")));
+                }
+                if operations.is_empty() {
+                    operations.push(format!("Update contract #{}: no changes", id));
+                }
+                return print_dry_run(
+                    &cli.output,
+                    &DryRunOperation { command: "contract edit".into(), operations },
+                );
+            }
+
+            let scalar = UpdateContractParams {
+                title: title.clone(),
+                description: if *clear_description {
+                    Some(None)
+                } else {
+                    description.clone().map(Some)
+                },
+                metadata: if *clear_metadata {
+                    Some(MetadataUpdate::Clear)
+                } else if let Some(m) = replace_metadata {
+                    let val: serde_json::Value =
+                        serde_json::from_str(m).context("invalid JSON for --replace-metadata")?;
+                    Some(MetadataUpdate::Replace(val))
+                } else {
+                    match metadata {
+                        Some(m) => {
+                            let val: serde_json::Value =
+                                serde_json::from_str(m).context("invalid JSON for --metadata")?;
+                            Some(MetadataUpdate::Merge(val))
+                        }
+                        None => None,
+                    }
+                },
+            };
+
+            let array = UpdateContractArrayParams {
+                set_tags: set_tags.clone(),
+                add_tags: add_tag.clone(),
+                remove_tags: remove_tag.clone(),
+                set_definition_of_done: set_definition_of_done.clone(),
+                add_definition_of_done: add_definition_of_done.clone(),
+                remove_definition_of_done: remove_definition_of_done.clone(),
+            };
+
+            let contract = contract_ops.edit_contract(id, &scalar, &array).await?;
+            match cli.output {
+                OutputFormat::Json => {
+                    let response = ContractResponse::from(contract);
+                    println!("{}", serde_json::to_string_pretty(&response)?);
+                }
+                OutputFormat::Text => {
+                    println!("Updated contract #{}", contract.id());
+                    print_contract_text(&contract);
+                }
+            }
+        }
+        ContractAction::Delete { id } => {
+            let id = *id;
+            if cli.dry_run {
+                return print_dry_run(
+                    &cli.output,
+                    &DryRunOperation {
+                        command: "contract delete".into(),
+                        operations: vec![format!("Delete contract #{}", id)],
+                    },
+                );
+            }
+            contract_ops.delete_contract(id).await?;
+            match cli.output {
+                OutputFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                        "deleted": true,
+                        "id": id,
+                    }))?);
+                }
+                OutputFormat::Text => println!("Deleted contract #{}", id),
+            }
+        }
+        ContractAction::Dod { command } => match command {
+            ContractDodCommand::Check { contract_id, index } => {
+                let (cid, idx) = (*contract_id, *index);
+                if cli.dry_run {
+                    return print_dry_run(
+                        &cli.output,
+                        &DryRunOperation {
+                            command: "contract dod check".into(),
+                            operations: vec![format!(
+                                "Check DoD item #{idx} of contract #{cid}"
+                            )],
+                        },
+                    );
+                }
+                let contract = contract_ops.check_dod(cid, idx).await?;
+                match cli.output {
+                    OutputFormat::Json => {
+                        let response = ContractResponse::from(contract);
+                        println!("{}", serde_json::to_string_pretty(&response)?);
+                    }
+                    OutputFormat::Text => {
+                        println!("Checked DoD item #{idx} of contract #{cid}");
+                        print_dod_items_contract(contract.definition_of_done());
+                    }
+                }
+            }
+            ContractDodCommand::Uncheck { contract_id, index } => {
+                let (cid, idx) = (*contract_id, *index);
+                if cli.dry_run {
+                    return print_dry_run(
+                        &cli.output,
+                        &DryRunOperation {
+                            command: "contract dod uncheck".into(),
+                            operations: vec![format!(
+                                "Uncheck DoD item #{idx} of contract #{cid}"
+                            )],
+                        },
+                    );
+                }
+                let contract = contract_ops.uncheck_dod(cid, idx).await?;
+                match cli.output {
+                    OutputFormat::Json => {
+                        let response = ContractResponse::from(contract);
+                        println!("{}", serde_json::to_string_pretty(&response)?);
+                    }
+                    OutputFormat::Text => {
+                        println!("Unchecked DoD item #{idx} of contract #{cid}");
+                        print_dod_items_contract(contract.definition_of_done());
+                    }
+                }
+            }
+        },
+        ContractAction::Note { command } => match command {
+            ContractNoteCommand::Add {
+                contract_id,
+                content,
+                source_task,
+            } => {
+                let cid = *contract_id;
+                if cli.dry_run {
+                    return print_dry_run(
+                        &cli.output,
+                        &DryRunOperation {
+                            command: "contract note add".into(),
+                            operations: vec![format!(
+                                "Add note to contract #{cid}: \"{}\"",
+                                content
+                            )],
+                        },
+                    );
+                }
+                let note = contract_ops
+                    .add_note(cid, content.clone(), *source_task)
+                    .await?;
+                let response = ContractNoteResponse::from(&note);
+                match cli.output {
+                    OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&response)?),
+                    OutputFormat::Text => {
+                        println!("Added note to contract #{cid}");
+                        println!("  content: {}", note.content());
+                        if let Some(src) = note.source_task_id() {
+                            println!("  source_task_id: {src}");
+                        }
+                        println!("  created_at: {}", note.created_at());
+                    }
+                }
+            }
+            ContractNoteCommand::List { contract_id } => {
+                let notes = contract_ops.list_notes(*contract_id).await?;
+                match cli.output {
+                    OutputFormat::Json => {
+                        let responses: Vec<ContractNoteResponse> =
+                            notes.iter().map(ContractNoteResponse::from).collect();
+                        println!("{}", serde_json::to_string_pretty(&responses)?);
+                    }
+                    OutputFormat::Text => {
+                        if notes.is_empty() {
+                            println!("No notes.");
+                        } else {
+                            for n in &notes {
+                                let src = match n.source_task_id() {
+                                    Some(id) => format!(" (source: task #{id})"),
+                                    None => String::new(),
+                                };
+                                println!("[{}]{src} {}", n.created_at(), n.content());
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    }
+
+    Ok(())
+}
+
+fn build_project_ops_pair(
+    config: &Config,
+    root: &Path,
+) -> Result<(
+    Arc<dyn crate::application::TaskOperations>,
+    Arc<dyn ProjectOperations>,
+)> {
+    // Reuse existing task_operations bootstrap to satisfy resolve_project_id with the same
+    // local/remote switching semantics.
+    create_task_operations(root, config)
 }
 
 #[cfg(test)]

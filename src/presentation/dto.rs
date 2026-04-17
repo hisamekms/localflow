@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::application::{CompleteResult, PreviewResult};
 use crate::infra::config::Config;
+use crate::domain::contract::{Contract, ContractNote};
 use crate::domain::metadata_field::{MetadataField, MetadataFieldType};
 use crate::domain::project::Project;
 use crate::domain::task::{DodItem, Task};
@@ -92,6 +93,7 @@ pub struct TaskResponse {
     cancel_reason: Option<String>,
     branch: Option<String>,
     pr_url: Option<String>,
+    contract_id: Option<i64>,
     metadata: Option<serde_json::Value>,
     definition_of_done: Vec<DodItemResponse>,
     in_scope: Vec<String>,
@@ -121,12 +123,76 @@ impl From<Task> for TaskResponse {
             cancel_reason: t.cancel_reason().map(|s| s.to_owned()),
             branch: t.branch().map(|s| s.to_owned()),
             pr_url: t.pr_url().map(|s| s.to_owned()),
+            contract_id: t.contract_id(),
             metadata: t.metadata().cloned(),
             definition_of_done: t.definition_of_done().iter().map(DodItemResponse::from).collect(),
             in_scope: t.in_scope().to_vec(),
             out_of_scope: t.out_of_scope().to_vec(),
             tags: t.tags().to_vec(),
             dependencies: t.dependencies().to_vec(),
+        }
+    }
+}
+
+// --- Contract ---
+
+#[derive(Serialize)]
+pub struct ContractNoteResponse {
+    content: String,
+    source_task_id: Option<i64>,
+    created_at: String,
+}
+
+impl From<&ContractNote> for ContractNoteResponse {
+    fn from(n: &ContractNote) -> Self {
+        Self {
+            content: n.content().to_owned(),
+            source_task_id: n.source_task_id(),
+            created_at: n.created_at().to_owned(),
+        }
+    }
+}
+
+impl From<ContractNote> for ContractNoteResponse {
+    fn from(n: ContractNote) -> Self {
+        ContractNoteResponse::from(&n)
+    }
+}
+
+#[derive(Serialize)]
+pub struct ContractResponse {
+    id: i64,
+    project_id: i64,
+    title: String,
+    description: Option<String>,
+    definition_of_done: Vec<DodItemResponse>,
+    tags: Vec<String>,
+    metadata: Option<serde_json::Value>,
+    notes: Vec<ContractNoteResponse>,
+    is_completed: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<Contract> for ContractResponse {
+    fn from(c: Contract) -> Self {
+        let is_completed = c.is_completed();
+        Self {
+            id: c.id(),
+            project_id: c.project_id(),
+            title: c.title().to_owned(),
+            description: c.description().map(|s| s.to_owned()),
+            definition_of_done: c
+                .definition_of_done()
+                .iter()
+                .map(DodItemResponse::from)
+                .collect(),
+            tags: c.tags().to_vec(),
+            metadata: c.metadata().cloned(),
+            notes: c.notes().iter().map(ContractNoteResponse::from).collect(),
+            is_completed,
+            created_at: c.created_at().to_owned(),
+            updated_at: c.updated_at().to_owned(),
         }
     }
 }
@@ -541,5 +607,104 @@ mod tests {
 
         assert_eq!(obj["workflow"]["merge_via"], json!("direct"));
         assert!(obj.get("backend").is_none());
+    }
+
+    // --- Contract ---
+
+    #[test]
+    fn contract_response_from_domain_includes_is_completed_and_notes() {
+        use crate::domain::contract::{Contract, ContractNote};
+        use crate::domain::task::DodItem;
+
+        let note = ContractNote::new("n1".into(), Some(42), "2026-04-17T00:00:00Z".into());
+        let contract = Contract::new(
+            7,
+            1,
+            "Title".into(),
+            Some("desc".into()),
+            vec![
+                DodItem::new("a".into(), true),
+                DodItem::new("b".into(), true),
+            ],
+            vec!["tag1".into()],
+            Some(json!({"k": "v"})),
+            vec![note],
+            "2026-04-17T00:00:00Z".into(),
+            "2026-04-17T01:00:00Z".into(),
+        );
+
+        let response = ContractResponse::from(contract);
+        let value = serde_json::to_value(&response).unwrap();
+
+        assert_eq!(value["id"], json!(7));
+        assert_eq!(value["project_id"], json!(1));
+        assert_eq!(value["title"], json!("Title"));
+        assert_eq!(value["description"], json!("desc"));
+        assert_eq!(value["tags"], json!(["tag1"]));
+        assert_eq!(value["metadata"], json!({"k": "v"}));
+        assert_eq!(value["is_completed"], json!(true));
+        assert_eq!(value["definition_of_done"].as_array().unwrap().len(), 2);
+        assert_eq!(value["notes"].as_array().unwrap().len(), 1);
+        assert_eq!(value["notes"][0]["content"], json!("n1"));
+        assert_eq!(value["notes"][0]["source_task_id"], json!(42));
+    }
+
+    #[test]
+    fn contract_response_is_completed_false_for_unchecked_dod() {
+        use crate::domain::contract::Contract;
+        use crate::domain::task::DodItem;
+
+        let contract = Contract::new(
+            1,
+            1,
+            "t".into(),
+            None,
+            vec![DodItem::new("a".into(), false)],
+            vec![],
+            None,
+            vec![],
+            "2026-04-17T00:00:00Z".into(),
+            "2026-04-17T00:00:00Z".into(),
+        );
+        let response = ContractResponse::from(contract);
+        let value = serde_json::to_value(&response).unwrap();
+        assert_eq!(value["is_completed"], json!(false));
+    }
+
+    #[test]
+    fn task_response_includes_contract_id() {
+        use crate::domain::task::{Priority, Task, TaskStatus};
+
+        let task = Task::new(
+            1,                                  // id
+            1,                                  // task_number
+            1,                                  // project_id
+            "title".into(),                     // title
+            None,                               // background
+            None,                               // description
+            None,                               // plan
+            Priority::P2,
+            TaskStatus::Draft,
+            None,                               // assignee_session_id
+            None,                               // assignee_user_id
+            "2026-04-17T00:00:00Z".into(),      // created_at
+            "2026-04-17T00:00:00Z".into(),      // updated_at
+            None,                               // started_at
+            None,                               // completed_at
+            None,                               // canceled_at
+            None,                               // cancel_reason
+            None,                               // branch
+            None,                               // pr_url
+            Some(99),                           // contract_id
+            None,                               // metadata
+            vec![],                             // definition_of_done
+            vec![],                             // in_scope
+            vec![],                             // out_of_scope
+            vec![],                             // tags
+            vec![],                             // dependencies
+        );
+        let response = TaskResponse::from(task);
+        let value = serde_json::to_value(&response).unwrap();
+        assert_eq!(value["contract_id"], json!(99));
     }
 }

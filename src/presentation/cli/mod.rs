@@ -230,6 +230,12 @@ pub enum Command {
         pr_url: Option<String>,
         #[arg(long)]
         clear_pr_url: bool,
+        /// Link this task to a contract
+        #[arg(long, conflicts_with = "clear_contract")]
+        contract: Option<i64>,
+        /// Remove contract link from this task
+        #[arg(long)]
+        clear_contract: bool,
         /// JSON metadata (shallow-merged into existing metadata)
         #[arg(long, conflicts_with = "replace_metadata")]
         metadata: Option<String>,
@@ -361,6 +367,130 @@ pub enum Command {
     Auth {
         #[command(subcommand)]
         command: AuthCommand,
+    },
+    /// Manage contracts
+    Contract {
+        #[command(subcommand)]
+        action: ContractAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ContractAction {
+    /// Create a new contract
+    Add {
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        definition_of_done: Vec<String>,
+        #[arg(long)]
+        tag: Vec<String>,
+        /// Arbitrary JSON metadata
+        #[arg(long)]
+        metadata: Option<String>,
+        /// Read JSON from stdin
+        #[arg(long, conflicts_with_all = ["title", "description", "definition_of_done", "tag", "metadata"])]
+        from_json: bool,
+        /// Read JSON from file
+        #[arg(long, conflicts_with_all = ["title", "description", "definition_of_done", "tag", "metadata", "from_json"])]
+        from_json_file: Option<PathBuf>,
+    },
+    /// List contracts
+    List {
+        /// Filter by tag; repeatable
+        #[arg(long)]
+        tag: Vec<String>,
+    },
+    /// Get contract details
+    Get {
+        /// Contract ID
+        id: i64,
+    },
+    /// Edit a contract
+    Edit {
+        /// Contract ID
+        id: i64,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        clear_description: bool,
+        /// JSON metadata (shallow-merged into existing metadata)
+        #[arg(long, conflicts_with = "replace_metadata")]
+        metadata: Option<String>,
+        /// Replace entire metadata with JSON value
+        #[arg(long, conflicts_with = "metadata")]
+        replace_metadata: Option<String>,
+        #[arg(long, conflicts_with_all = ["metadata", "replace_metadata"])]
+        clear_metadata: bool,
+        #[arg(long, num_args = 0..)]
+        set_tags: Option<Vec<String>>,
+        #[arg(long, num_args = 0..)]
+        set_definition_of_done: Option<Vec<String>>,
+        #[arg(long)]
+        add_tag: Vec<String>,
+        #[arg(long)]
+        add_definition_of_done: Vec<String>,
+        #[arg(long)]
+        remove_tag: Vec<String>,
+        #[arg(long)]
+        remove_definition_of_done: Vec<String>,
+    },
+    /// Delete a contract
+    Delete {
+        /// Contract ID
+        id: i64,
+    },
+    /// Manage Definition of Done items
+    Dod {
+        #[command(subcommand)]
+        command: ContractDodCommand,
+    },
+    /// Manage contract notes
+    Note {
+        #[command(subcommand)]
+        command: ContractNoteCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ContractDodCommand {
+    /// Mark a DoD item as checked
+    Check {
+        /// Contract ID
+        contract_id: i64,
+        /// DoD item index (1-based)
+        index: usize,
+    },
+    /// Unmark a DoD item
+    Uncheck {
+        /// Contract ID
+        contract_id: i64,
+        /// DoD item index (1-based)
+        index: usize,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ContractNoteCommand {
+    /// Add a note to a contract
+    Add {
+        /// Contract ID
+        contract_id: i64,
+        /// Note content
+        #[arg(long)]
+        content: String,
+        /// Optional task ID that produced this note
+        #[arg(long)]
+        source_task: Option<i64>,
+    },
+    /// List notes on a contract
+    List {
+        /// Contract ID
+        contract_id: i64,
     },
 }
 
@@ -834,6 +964,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             clear_branch,
             ref pr_url,
             clear_pr_url,
+            ref contract,
+            clear_contract,
             ref metadata,
             ref replace_metadata,
             clear_metadata,
@@ -869,6 +1001,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             clear_branch,
             pr_url,
             clear_pr_url,
+            contract,
+            clear_contract,
             metadata,
             replace_metadata,
             clear_metadata,
@@ -964,6 +1098,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 handlers::cmd_auth_revoke(&cli, *id, *all).await
             }
         },
+        Command::Contract { ref action } => handlers::cmd_contract(&cli, action).await,
     }
 }
 
