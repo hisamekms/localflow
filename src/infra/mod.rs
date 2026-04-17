@@ -9,8 +9,5 @@ pub mod sqlite;
 #[cfg(feature = "aws-secrets")]
 pub mod secrets;
 
-#[cfg(feature = "dynamodb")]
-pub mod dynamodb;
-
 #[cfg(feature = "postgres")]
 pub mod postgres;

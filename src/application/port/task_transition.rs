@@ -7,7 +7,7 @@ use crate::domain::TaskRepository;
 
 /// Port for task state transitions.
 ///
-/// Local backends (Sqlite, Postgres, DynamoDB) use the default implementation
+/// Local backends (Sqlite, Postgres) use the default implementation
 /// via `impl_task_transition_default!`, which performs get → domain transition → save.
 /// Remote mode uses `RemoteTaskOperations` which calls the server's POST endpoints directly.
 #[async_trait]

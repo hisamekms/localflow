@@ -29,7 +29,6 @@ pub enum RuntimeMode {
 pub enum BackendInfo {
     Sqlite { db_file_path: String },
     Postgresql,
-    Dynamodb,
     Http { api_url: String },
 }
 
@@ -1347,10 +1346,6 @@ command = "echo completed"
         let pg = BackendInfo::Postgresql;
         let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&pg).unwrap()).unwrap();
         assert_eq!(v["type"], "postgresql");
-
-        let ddb = BackendInfo::Dynamodb;
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&ddb).unwrap()).unwrap();
-        assert_eq!(v["type"], "dynamodb");
 
         let http = BackendInfo::Http { api_url: "http://example.com".into() };
         let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&http).unwrap()).unwrap();

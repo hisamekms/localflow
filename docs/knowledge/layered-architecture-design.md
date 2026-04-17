@@ -46,7 +46,7 @@ presentation → application → domain ← infra
 - aggregateに所属するエンティティの操作はaggregate rootを通じて行う
 
 ### infra層
-- portの実装（sqlite, dynamodb, http等）
+- portの実装（sqlite, postgres, http等）
 
 ## 主要な設計判断
 

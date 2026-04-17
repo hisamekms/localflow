@@ -358,13 +358,6 @@ fn default_log_level() -> String {
 
 // --- Backend config ---
 
-#[cfg(feature = "dynamodb")]
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct DynamoDbConfig {
-    pub table_name: Option<String>,
-    pub region: Option<String>,
-}
-
 #[cfg(feature = "postgres")]
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct PostgresConfig {
@@ -384,9 +377,6 @@ pub struct SqliteConfig {
 pub struct BackendConfig {
     #[serde(default)]
     pub sqlite: SqliteConfig,
-    #[cfg(feature = "dynamodb")]
-    #[serde(default)]
-    pub dynamodb: Option<DynamoDbConfig>,
     #[cfg(feature = "postgres")]
     #[serde(default)]
     pub postgres: Option<PostgresConfig>,
@@ -586,8 +576,6 @@ pub struct RawWorkflowConfig {
 pub struct RawBackendConfig {
     #[serde(default)]
     pub sqlite: RawSqliteConfig,
-    #[cfg(feature = "dynamodb")]
-    pub dynamodb: Option<DynamoDbConfig>,
     #[cfg(feature = "postgres")]
     pub postgres: Option<PostgresConfig>,
 }
@@ -725,8 +713,6 @@ impl RawConfig {
                         .db_path
                         .or(self.backend.sqlite.db_path),
                 },
-                #[cfg(feature = "dynamodb")]
-                dynamodb: overlay.backend.dynamodb.or(self.backend.dynamodb),
                 #[cfg(feature = "postgres")]
                 postgres: overlay.backend.postgres.or(self.backend.postgres),
             },
@@ -915,8 +901,6 @@ impl RawConfig {
                 sqlite: SqliteConfig {
                     db_path: self.backend.sqlite.db_path,
                 },
-                #[cfg(feature = "dynamodb")]
-                dynamodb: self.backend.dynamodb,
                 #[cfg(feature = "postgres")]
                 postgres: self.backend.postgres,
             },
@@ -1199,27 +1183,6 @@ impl Config {
                 self.server.port = Some(port);
             }
 
-        // DynamoDB settings (feature-gated)
-        #[cfg(feature = "dynamodb")]
-        {
-            if let Ok(val) = std::env::var("SENKO_DYNAMODB_TABLE") {
-                if !val.is_empty() {
-                    self.backend
-                        .dynamodb
-                        .get_or_insert_with(DynamoDbConfig::default)
-                        .table_name = Some(val);
-                }
-            }
-            if let Ok(val) = std::env::var("SENKO_DYNAMODB_REGION") {
-                if !val.is_empty() {
-                    self.backend
-                        .dynamodb
-                        .get_or_insert_with(DynamoDbConfig::default)
-                        .region = Some(val);
-                }
-            }
-        }
-
         // PostgreSQL settings (feature-gated)
         #[cfg(feature = "postgres")]
         {
@@ -1439,21 +1402,7 @@ impl Config {
     pub async fn resolve_secrets(&mut self) -> anyhow::Result<()> {
         use crate::infra::secrets::SecretsManagerClient;
 
-        let region: Option<String> = {
-            #[cfg(feature = "dynamodb")]
-            {
-                self.backend
-                    .dynamodb
-                    .as_ref()
-                    .and_then(|d| d.region.clone())
-            }
-            #[cfg(not(feature = "dynamodb"))]
-            {
-                None
-            }
-        };
-
-        let client = SecretsManagerClient::new(region);
+        let client = SecretsManagerClient::new(None);
         self.resolve_secrets_with(&client).await
     }
 

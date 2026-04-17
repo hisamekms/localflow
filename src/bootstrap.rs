@@ -29,28 +29,12 @@ pub use crate::domain::{DEFAULT_PROJECT_ID, DEFAULT_USER_ID};
 
 /// Create the appropriate backend based on config (env + CLI already applied).
 ///
-/// Returns a local database backend (SQLite / DynamoDB / PostgreSQL).
+/// Returns a local database backend (SQLite / PostgreSQL).
 /// Remote HTTP mode is handled separately via `Remote*Operations`.
 pub fn create_backend(
     project_root: &Path,
     config: &Config,
 ) -> Result<Arc<dyn TaskBackend>> {
-    // 1. DynamoDB backend
-    #[cfg(feature = "dynamodb")]
-    {
-        use crate::infra::dynamodb::DynamoDbBackend;
-
-        if let Some(ref ddb_config) = config.backend.dynamodb {
-            if let Some(ref table_name) = ddb_config.table_name {
-                return Ok(Arc::new(DynamoDbBackend::new(
-                    table_name.clone(),
-                    ddb_config.region.clone(),
-                )));
-            }
-        }
-    }
-
-    // 3. PostgreSQL backend
     #[cfg(feature = "postgres")]
     {
         use crate::infra::postgres::PostgresBackend;
@@ -62,7 +46,6 @@ pub fn create_backend(
         }
     }
 
-    // 4. Default: SqliteBackend
     let sqlite = crate::infra::sqlite::SqliteBackend::new(
         project_root,
         None,
@@ -84,10 +67,6 @@ pub fn resolve_backend_info(config: &Config, project_root: &Path) -> BackendInfo
     }
     if let Some(ref url) = config.server.relay.url {
         return BackendInfo::Http { api_url: url.clone() };
-    }
-    #[cfg(feature = "dynamodb")]
-    if config.backend.dynamodb.as_ref().and_then(|d| d.table_name.as_ref()).is_some() {
-        return BackendInfo::Dynamodb;
     }
     #[cfg(feature = "postgres")]
     if config.backend.postgres.as_ref().and_then(|p| p.url.as_ref()).is_some() {

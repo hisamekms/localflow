@@ -9,7 +9,6 @@ path = "src/main.rs"
 
 [features]
 aws-secrets = ["dep:aws-sdk-secretsmanager", "dep:aws-config"]
-dynamodb = ["dep:aws-sdk-dynamodb", "dep:aws-config"]
 postgres = ["dep:sqlx"]
 
 [dependencies]
@@ -36,7 +35,6 @@ sha2 = "0.11"
 subtle = "2"
 thiserror = "2"
 zeroize = "1"
-aws-sdk-dynamodb = { version = "1", optional = true }
 aws-sdk-secretsmanager = { version = "1", optional = true }
 aws-config = { version = "1", optional = true, features = ["behavior-version-latest"] }
 sqlx = { version = "0.8", optional = true, default-features = false, features = ["runtime-tokio", "postgres", "tls-rustls"] }
