@@ -3,7 +3,7 @@
 ## Normal vs Simple Mode
 
 - **Normal** (`add <description>`): Phase 1 → 2 → 3 → 4 (full workflow)
-- **Simple** (`add --simple <description>`): Create draft → set description → `ready` (no planning)
+- **Simple** (`add --simple <description>`): Create draft → set description → `task ready` (no planning)
 
 ## Procedure
 
@@ -61,7 +61,7 @@ bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh add
 Parse the JSON output (`{"resolved": {...}, "prompts": [...]}`):
 
 - If `prompts` array is non-empty, ask the user each prompt question using `AskUserQuestion`. Merge user answers into `resolved`.
-- If `resolved` is non-empty (has keys), pass `--metadata '<json>'` to each `senko add` call below.
+- If `resolved` is non-empty (has keys), pass `--metadata '<json>'` to each `senko task add` call below.
 
 #### Create draft tasks
 
@@ -70,7 +70,7 @@ Create one or multiple draft tasks based on Phase 1 results.
 **Single task:**
 
 ```bash
-senko add --title "<title>" --assignee-user-id self --metadata '<metadata-json>'
+senko task add --title "<title>" --assignee-user-id self --metadata '<metadata-json>'
 ```
 
 **Multiple tasks (split):**
@@ -93,8 +93,8 @@ The split path has a strict ordering — Contract must exist before the sub-task
 2. **Create each sub-task**:
 
    ```bash
-   senko add --title "<sub-task 1 title>" --assignee-user-id self --metadata '<metadata-json>'
-   senko add --title "<sub-task 2 title>" --assignee-user-id self --metadata '<metadata-json>'
+   senko task add --title "<sub-task 1 title>" --assignee-user-id self --metadata '<metadata-json>'
+   senko task add --title "<sub-task 2 title>" --assignee-user-id self --metadata '<metadata-json>'
    # ...
    ```
 
@@ -103,7 +103,7 @@ The split path has a strict ordering — Contract must exist before the sub-task
 3. **Auto-create the terminal task** — its sole job is to verify `$CONTRACT_ID` at the end:
 
    ```bash
-   senko add --title "Verify contract: <contract_title>" --assignee-user-id self
+   senko task add --title "Verify contract: <contract_title>" --assignee-user-id self
    ```
 
    Capture the `id` as `$TERMINAL_ID`.
@@ -111,10 +111,10 @@ The split path has a strict ordering — Contract must exist before the sub-task
 4. **Link every task (sub-tasks + terminal) to the Contract**:
 
    ```bash
-   senko edit $SUB_ID_1 --contract $CONTRACT_ID
-   senko edit $SUB_ID_2 --contract $CONTRACT_ID
+   senko task edit $SUB_ID_1 --contract $CONTRACT_ID
+   senko task edit $SUB_ID_2 --contract $CONTRACT_ID
    # ...
-   senko edit $TERMINAL_ID --contract $CONTRACT_ID --add-tag contract-terminal \
+   senko task edit $TERMINAL_ID --contract $CONTRACT_ID --add-tag contract-terminal \
      --add-definition-of-done "Verify Contract DoD items"
    ```
 
@@ -138,7 +138,7 @@ Set up dependencies between tasks:
 1. Check existing active tasks for potential dependencies:
 
 ```bash
-senko list --status todo --status in_progress
+senko task list --status todo --status in_progress
 ```
 
 2. For **split tasks**: set dependencies between the new tasks where one must complete before another can start (sequential relationships). Tasks that can run in parallel should have no dependency between them.
@@ -146,13 +146,13 @@ senko list --status todo --status in_progress
 3. For **split tasks**: the terminal task (`$TERMINAL_ID`) must depend on **every** sub-task so it only becomes ready once all sub-tasks are completed:
 
    ```bash
-   senko deps set $TERMINAL_ID --on $SUB_ID_1 $SUB_ID_2  # ...and every other sub-task ID
+   senko task deps set $TERMINAL_ID --on $SUB_ID_1 $SUB_ID_2  # ...and every other sub-task ID
    ```
 
 4. For **all new tasks**: check if any depend on existing active tasks.
 
 ```bash
-senko deps add <task_id> --on <dep_id>
+senko task deps add <task_id> --on <dep_id>
 ```
 
 ### Phase 4: Finalize Tasks
@@ -168,7 +168,7 @@ For each created task:
 3. Apply confirmed settings:
 
 ```bash
-senko edit <id> \
+senko task edit <id> \
   --title "Final title" \
   --description "Planning description" \
   --priority p1 \
@@ -177,7 +177,7 @@ senko edit <id> \
   --add-definition-of-done "E2E tests pass"
 ```
 
-4. **Branch setting** (before `senko ready`):
+4. **Branch setting** (before `senko task ready`):
    - Determine whether the task involves repository operations (code changes, file edits, configuration changes, etc.) based on the task's title and description. If unclear, use `AskUserQuestion` to ask the user.
    - If the task does NOT involve repository operations (e.g., investigation only, external service setup), skip branch setting.
    - If the task involves repository operations:
@@ -187,12 +187,12 @@ senko edit <id> \
         - `{{slug}}` → kebab-case slug derived from the task title
         - `{{context.<key>}}` → resolve from session context. If unavailable, use `AskUserQuestion` to ask the user for the value.
         - `{{<name>:<opt1>|<opt2>|...}}` → enum variable. Infer the appropriate value from the task's title and description (e.g., new feature → `feat`, bug fix → `fix`, maintenance → `chore`). If unclear, use `AskUserQuestion` to present the options.
-     3. Set it: `senko edit <id> --branch <branch-name>`
+     3. Set it: `senko task edit <id> --branch <branch-name>`
 
 5. Transition to todo:
 
 ```bash
-senko ready <id>
+senko task ready <id>
 ```
 
 **Note on the terminal task**: its `--add-definition-of-done "Verify Contract DoD items"` (set in Phase 2 step 4) is usually the only DoD it needs. The user may add more in Phase 4 if the split has side-artifacts that should be verified at the terminal step. Its branch can be set with the normal `branch_template` flow — no special handling.
@@ -203,7 +203,7 @@ Display the finalized task details (or task graph if multiple) to the user. For 
 
 **Simple mode procedure:**
 
-1. Create draft: `senko add --title "<description>"`
-2. Set description: `senko edit <id> --description "<description>"`
+1. Create draft: `senko task add --title "<description>"`
+2. Set description: `senko task edit <id> --description "<description>"`
 3. **Branch setting**: Same as Phase 4 step 4 above.
-4. Transition: `senko ready <id>`
+4. Transition: `senko task ready <id>`

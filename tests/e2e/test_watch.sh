@@ -38,7 +38,7 @@ echo "[1] on_task_added hook fires"
 HOOK_OUTPUT="$TEST_DIR/added_output.json"
 create_config "cat > $HOOK_OUTPUT" ""
 
-run_lf add --title "Hook Test Task" >/dev/null 2>&1
+run_lf task add --title "Hook Test Task" >/dev/null 2>&1
 
 # Hooks are fire-and-forget child processes; wait briefly
 wait_for "hook output created" 5 "[ -f '$HOOK_OUTPUT' ]"
@@ -63,12 +63,12 @@ HOOK_OUTPUT="$TEST_DIR/completed_output.json"
 create_config "" "cat > $HOOK_OUTPUT"
 
 # Create and move task to in_progress first
-TASK_ID="$(run_lf --output json add --title "Complete Me" 2>/dev/null | jq -r '.id')"
-run_lf ready "$TASK_ID" >/dev/null 2>&1
-run_lf start "$TASK_ID" >/dev/null 2>&1
+TASK_ID="$(run_lf --output json task add --title "Complete Me" 2>/dev/null | jq -r '.id')"
+run_lf task ready "$TASK_ID" >/dev/null 2>&1
+run_lf task start "$TASK_ID" >/dev/null 2>&1
 
 # Complete the task (should trigger on_task_completed inline)
-run_lf complete "$TASK_ID" >/dev/null 2>&1
+run_lf task complete "$TASK_ID" >/dev/null 2>&1
 
 wait_for "completed hook output" 5 "[ -f '$HOOK_OUTPUT' ]"
 
@@ -88,7 +88,7 @@ echo "[3] No config file — commands run without error"
 
 setup_test_env
 
-OUTPUT="$(run_lf --output json add --title "No Config Task" 2>/dev/null)"
+OUTPUT="$(run_lf --output json task add --title "No Config Task" 2>/dev/null)"
 TITLE="$(echo "$OUTPUT" | jq -r '.title')"
 assert_eq "No Config Task" "$TITLE" "task created without config"
 
@@ -100,7 +100,7 @@ setup_test_env
 HOOK_OUTPUT="$TEST_DIR/json_check.json"
 create_config "cat > $HOOK_OUTPUT" ""
 
-run_lf add --title "JSON Check" --priority p1 >/dev/null 2>&1
+run_lf task add --title "JSON Check" --priority p1 >/dev/null 2>&1
 
 wait_for "hook output created" 5 "[ -f '$HOOK_OUTPUT' ]"
 
@@ -145,7 +145,7 @@ command = "echo hook1 > $MARKER1"
 command = "echo hook2 > $MARKER2"
 EOF
 
-run_lf add --title "Multi Hook Task" >/dev/null 2>&1
+run_lf task add --title "Multi Hook Task" >/dev/null 2>&1
 
 wait_for "first marker" 5 "[ -f '$MARKER1' ]"
 wait_for "second marker" 5 "[ -f '$MARKER2' ]"

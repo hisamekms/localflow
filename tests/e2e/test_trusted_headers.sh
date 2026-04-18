@@ -166,7 +166,7 @@ assert_eq "200" "$STATUS" "request with only subject header succeeds"
 
 echo ""
 echo "=== Setup: Add alice to project ==="
-run_lf members add --user-id "$ALICE_ID" --role owner >/dev/null
+run_lf project members add --user-id "$ALICE_ID" --role owner >/dev/null
 
 echo ""
 echo "=== Create task ==="

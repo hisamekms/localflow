@@ -67,7 +67,7 @@ The `/senko` skill gives Claude Code a full task management workflow:
 Once the skill is installed, use it directly in Claude Code:
 
 ```
-/senko add Implement user authentication
+/senko task add Implement user authentication
 ```
 Add a task with interactive planning — Claude will ask clarifying questions, discover dependencies, and finalize the task.
 
@@ -77,7 +77,7 @@ Add a task with interactive planning — Claude will ask clarifying questions, d
 Auto-select the highest-priority ready task and start working on it.
 
 ```
-/senko list
+/senko task list
 ```
 Show all tasks with their status and priority.
 
@@ -87,7 +87,7 @@ Show all tasks with their status and priority.
 Visualize task dependencies as a text-based graph.
 
 ```
-/senko complete 3
+/senko task complete 3
 ```
 Mark task #3 as completed (checks DoD items first).
 
@@ -133,13 +133,13 @@ Use `senko config` to view current settings, or `senko config --init` to generat
 To use a config file at a custom location, use the `--config` flag or the `SENKO_CONFIG` environment variable:
 
 ```bash
-senko --config /path/to/config.toml list
-SENKO_CONFIG=/path/to/config.toml senko list
+senko --config /path/to/config.toml task list
+SENKO_CONFIG=/path/to/config.toml senko task list
 ```
 
 When `merge_via = "pr"`:
-1. Set the PR URL on the task: `senko edit <id> --pr-url <url>`
-2. The PR must be merged before `senko complete <id>` succeeds
+1. Set the PR URL on the task: `senko task edit <id> --pr-url <url>`
+2. The PR must be merged before `senko task complete <id>` succeeds
 3. Use `--skip-pr-check` to bypass verification when needed
 
 ## Master API Key

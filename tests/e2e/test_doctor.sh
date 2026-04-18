@@ -12,7 +12,7 @@ trap cleanup_test_env EXIT
 echo "--- Test: Doctor Subcommand ---"
 
 # Initialize DB
-run_lf --output json list >/dev/null 2>&1
+run_lf --output json task list >/dev/null 2>&1
 
 # 1. No hooks configured
 echo "[1] No hooks configured"

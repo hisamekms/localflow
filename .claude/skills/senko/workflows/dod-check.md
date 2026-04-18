@@ -7,7 +7,7 @@ Manage the checked state of Definition of Done items. Indices are **1-based** (f
 Mark a DoD item as done:
 
 ```bash
-senko dod check <task_id> <index>
+senko task dod check <task_id> <index>
 ```
 
 ## `dod uncheck <task_id> <index>`
@@ -15,7 +15,7 @@ senko dod check <task_id> <index>
 Unmark a DoD item:
 
 ```bash
-senko dod uncheck <task_id> <index>
+senko task dod uncheck <task_id> <index>
 ```
 
 ## Display format

@@ -12,13 +12,13 @@
 --log-dir <PATH>        ログ出力ディレクトリを上書き（デフォルト: $XDG_STATE_HOME/senko）
 ```
 
-> **注意**: `--output` と `--dry-run` はグローバルフラグです。サブコマンドの**前**に配置してください: `senko --output text list`
+> **注意**: `--output` と `--dry-run` はグローバルフラグです。サブコマンドの**前**に配置してください: `senko --output text task list`
 
-## `add` – タスク作成
+## `task add` – タスク作成
 
 ```bash
-senko add --title "ドキュメント作成" --priority p0
-senko add --title "バグ修正" \
+senko task add --title "ドキュメント作成" --priority p0
+senko task add --title "バグ修正" \
   --background "ユーザーから500エラーの報告" \
   --definition-of-done "ログに500エラーなし" \
   --in-scope "エラーハンドラ" \
@@ -28,97 +28,97 @@ senko add --title "バグ修正" \
 
 新規タスクは `draft` ステータスで作成されます。デフォルト優先度は `p2`。
 
-## `list` – タスク一覧
+## `task list` – タスク一覧
 
 ```bash
-senko list                    # 全タスク
-senko list --status todo      # ステータスで絞り込み
-senko list --ready            # 依存解決済みのtodoタスク
-senko list --tag backend      # タグで絞り込み
+senko task list                    # 全タスク
+senko task list --status todo      # ステータスで絞り込み
+senko task list --ready            # 依存解決済みのtodoタスク
+senko task list --tag backend      # タグで絞り込み
 ```
 
 CLIフラグのステータス値はスネークケース: `todo`, `in_progress`, `completed`, `canceled`, `draft`
 
-## `get <id>` – タスク詳細
+## `task get <id>` – タスク詳細
 
 ```bash
-senko get 1
+senko task get 1
 ```
 
 > `get` はJSON出力のみ（`--output text` 非対応）。
 
-## `next` – 次のタスクを開始
+## `task next` – 次のタスクを開始
 
 依存タスクがすべて完了済みの最高優先度 `todo` タスクを選択し、`in_progress` に変更します。
 
 ```bash
-senko next
-senko next --session-id "session-abc"
+senko task next
+senko task next --session-id "session-abc"
 ```
 
 選択順序: 優先度（P0優先）→ 作成日時 → ID
 
-## `edit <id>` – タスク編集
+## `task edit <id>` – タスク編集
 
 ```bash
 # スカラーフィールド
-senko edit 1 --title "新しいタイトル"
-senko edit 1 --status todo
-senko edit 1 --priority p0
+senko task edit 1 --title "新しいタイトル"
+senko task edit 1 --status todo
+senko task edit 1 --priority p0
 
 # 配列フィールド（タグ、完了定義、スコープ）
-senko edit 1 --add-tag "urgent"
-senko edit 1 --remove-tag "old"
-senko edit 1 --set-tags "a" "b"         # 全置換
+senko task edit 1 --add-tag "urgent"
+senko task edit 1 --remove-tag "old"
+senko task edit 1 --set-tags "a" "b"         # 全置換
 
 # 完了定義（Definition of Done）
-senko edit 1 --add-definition-of-done "ユニットテストを書く"
+senko task edit 1 --add-definition-of-done "ユニットテストを書く"
 
 # PR URL
-senko edit 1 --pr-url "https://github.com/org/repo/pull/42"
-senko edit 1 --clear-pr-url
+senko task edit 1 --pr-url "https://github.com/org/repo/pull/42"
+senko task edit 1 --clear-pr-url
 
 # メタデータ（シャローマージ — キーの追加・上書き、未指定キーは保持）
-senko edit 1 --metadata '{"sprint":"2026-Q2","points":3}'
+senko task edit 1 --metadata '{"sprint":"2026-Q2","points":3}'
 # メタデータ全置換（既存キーをすべて削除して置き換え）
-senko edit 1 --replace-metadata '{"new_key":"only this"}'
+senko task edit 1 --replace-metadata '{"new_key":"only this"}'
 # 特定キーの削除（マージ時にnullを指定）
-senko edit 1 --metadata '{"points":null}'
+senko task edit 1 --metadata '{"points":null}'
 # メタデータ全クリア
-senko edit 1 --clear-metadata
+senko task edit 1 --clear-metadata
 ```
 
-## `complete <id>` – タスク完了
+## `task complete <id>` – タスク完了
 
 ```bash
-senko complete 1
-senko complete 1 --skip-pr-check    # PR検証をスキップ
+senko task complete 1
+senko task complete 1 --skip-pr-check    # PR検証をスキップ
 ```
 
 未チェックのDoD項目がある場合は失敗します。先に `dod check` でマークしてください。
 
 `merge_via = "pr"` 設定時は、PRがマージ済みであることも検証します。`--skip-pr-check` で検証をスキップできます。
 
-## `cancel <id>` – タスクキャンセル
+## `task cancel <id>` – タスクキャンセル
 
 ```bash
-senko cancel 1 --reason "スコープ外"
+senko task cancel 1 --reason "スコープ外"
 ```
 
-## `dod` – 完了定義（DoD）の管理
+## `task dod` – 完了定義（DoD）の管理
 
 ```bash
-senko dod check <task_id> <index>      # DoD項目をチェック（1始まり）
-senko dod uncheck <task_id> <index>    # DoD項目のチェックを外す
+senko task dod check <task_id> <index>      # DoD項目をチェック（1始まり）
+senko task dod uncheck <task_id> <index>    # DoD項目のチェックを外す
 ```
 
-## `deps` – 依存関係管理
+## `task deps` – 依存関係管理
 
 ```bash
-senko deps add 5 --on 3        # タスク5がタスク3に依存
-senko deps remove 5 --on 3     # 依存を削除
-senko deps set 5 --on 1 2 3    # 依存を一括設定
-senko deps list 5              # タスク5の依存一覧
+senko task deps add 5 --on 3        # タスク5がタスク3に依存
+senko task deps remove 5 --on 3     # 依存を削除
+senko task deps set 5 --on 1 2 3    # 依存を一括設定
+senko task deps list 5              # タスク5の依存一覧
 ```
 
 ## `config` – 設定の表示・初期化
@@ -199,7 +199,7 @@ ENTRYPOINT ["senko"]
 docker build -t senko .
 
 # コマンドを実行
-docker run --rm -v "$(pwd)/.senko:/project/.senko" senko list
+docker run --rm -v "$(pwd)/.senko:/project/.senko" senko task list
 
 # APIサーバーを起動
 docker run --rm -p 3142:3142 \
@@ -266,12 +266,12 @@ command = "curl https://example.com/done"
 
 | フック | トリガー |
 |------|---------|
-| `on_task_added` | `senko add` で新しいタスクを作成 |
-| `on_task_ready` | `senko ready` でタスクを draft から todo に遷移 |
-| `on_task_started` | `senko start` または `senko next` でタスクを開始 |
-| `on_task_completed` | `senko complete` でタスクを完了 |
-| `on_task_canceled` | `senko cancel` でタスクをキャンセル |
-| `on_no_eligible_task` | `senko next` で該当タスクなし |
+| `on_task_added` | `senko task add` で新しいタスクを作成 |
+| `on_task_ready` | `senko task ready` でタスクを draft から todo に遷移 |
+| `on_task_started` | `senko task start` または `senko task next` でタスクを開始 |
+| `on_task_completed` | `senko task complete` でタスクを完了 |
+| `on_task_canceled` | `senko task cancel` でタスクをキャンセル |
+| `on_no_eligible_task` | `senko task next` で該当タスクなし |
 
 フックは **stdin** でイベントペイロード（JSON）を受け取り、`sh -c` で実行されます。
 
@@ -355,14 +355,14 @@ command = "curl https://example.com/done"
 | `event` | string | イベント名（例: `"task_added"`, `"task_completed"`） |
 | `timestamp` | string | ISO 8601（RFC 3339）タイムスタンプ |
 | `from_status` | string \| null | 遷移前のステータス |
-| `task` | object | タスクオブジェクト全体（`senko get` と同じスキーマ — 下記参照） |
+| `task` | object | タスクオブジェクト全体（`senko task get` と同じスキーマ — 下記参照） |
 | `stats` | object | ステータス別タスク数（`{"todo": 3, "completed": 5, ...}`） |
 | `ready_count` | integer | 依存解決済みの `todo` タスク数 |
 | `unblocked_tasks` | array \| null | このイベントで新たにブロック解除されたタスク（`task_completed` のみ） |
 
 #### `task` オブジェクト
 
-イベントペイロードに含まれるタスクオブジェクト全体。`senko get` の出力と同じスキーマです。
+イベントペイロードに含まれるタスクオブジェクト全体。`senko task get` の出力と同じスキーマです。
 
 | フィールド | 型 | 説明 |
 |-------|------|-------------|
@@ -467,7 +467,7 @@ command = "curl https://example.com/done"
 | `SENKO_HOOK_ON_TASK_STARTED` | タスク開始時に実行するシェルコマンド |
 | `SENKO_HOOK_ON_TASK_COMPLETED` | タスク完了時に実行するシェルコマンド |
 | `SENKO_HOOK_ON_TASK_CANCELED` | タスクキャンセル時に実行するシェルコマンド |
-| `SENKO_HOOK_ON_NO_ELIGIBLE_TASK` | `senko next` で該当タスクなし時に実行するシェルコマンド |
+| `SENKO_HOOK_ON_NO_ELIGIBLE_TASK` | `senko task next` で該当タスクなし時に実行するシェルコマンド |
 
 フック環境変数は `config.toml` の `[hooks]` セクションの設定をオーバーライドします。
 

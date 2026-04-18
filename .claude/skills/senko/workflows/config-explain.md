@@ -133,7 +133,7 @@ Stage-specific keys:
 | `on_task_started` | Triggered when a task moves to `in_progress`. |
 | `on_task_completed` | Triggered when a task is completed. |
 | `on_task_canceled` | Triggered when a task is canceled. |
-| `on_no_eligible_task` | Triggered when `senko next` finds no eligible tasks. |
+| `on_no_eligible_task` | Triggered when `senko task next` finds no eligible tasks. |
 
 Each hook entry has: `command` (shell command), `enabled` (bool, default true), `requires_env` (list of required env vars).
 

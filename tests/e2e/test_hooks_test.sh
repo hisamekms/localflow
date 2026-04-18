@@ -12,11 +12,11 @@ trap cleanup_test_env EXIT
 echo "--- Test: hooks test subcommand ---"
 
 # Initialize DB
-run_lf --output json list >/dev/null 2>&1
+run_lf --output json task list >/dev/null 2>&1
 
 # Create a task to use for testing
-TASK_ID="$(run_lf --output json add --title "Hook test task" --description "Test description" | jq -r '.id')"
-run_lf ready "$TASK_ID" >/dev/null
+TASK_ID="$(run_lf --output json task add --title "Hook test task" --description "Test description" | jq -r '.id')"
+run_lf task ready "$TASK_ID" >/dev/null
 
 # Configure a hook for task_ready
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
@@ -95,7 +95,7 @@ assert_contains "$MULTI_STDERR" "hook 2/2" "multi hook header 2"
 
 # 8. task state unchanged after test
 echo "[8] task state unchanged"
-STATUS_AFTER="$(run_lf get "$TASK_ID" | jq -r '.status')"
+STATUS_AFTER="$(run_lf task get "$TASK_ID" | jq -r '.status')"
 assert_eq "todo" "$STATUS_AFTER" "task status unchanged"
 
 # 9. dry-run includes stats and ready_count inside event

@@ -28,7 +28,7 @@ Manage and execute project tasks using the `senko` CLI. senko is a SQLite-backed
 
 ## Argument Parsing
 
-**Default action: When `$ARGUMENTS` is empty, blank, or contains only the literal placeholder `$ARGUMENTS`, execute Auto-Select (run `senko next`).** Do NOT show the task list — always run `next` when no arguments are provided.
+**Default action: When `$ARGUMENTS` is empty, blank, or contains only the literal placeholder `$ARGUMENTS`, execute Auto-Select (run `senko task next`).** Do NOT show the task list — always run `task next` when no arguments are provided.
 
 Parse `$ARGUMENTS` with these rules (check in order):
 

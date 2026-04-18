@@ -94,7 +94,7 @@ create_test_user_key() {
   user_id=$(echo "$user_json" | jq -r '.id')
 
   # Add user to project as owner (via CLI to bypass API auth)
-  run_lf members add --user-id "$user_id" --role owner >/dev/null
+  run_lf project members add --user-id "$user_id" --role owner >/dev/null
 
   local key_json
   key_json=$(curl -sf -X POST "$api_url/api/v1/users/$user_id/api-keys" \

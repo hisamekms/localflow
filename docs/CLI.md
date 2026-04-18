@@ -12,13 +12,13 @@
 --log-dir <PATH>        Override log output directory (default: $XDG_STATE_HOME/senko)
 ```
 
-> **Note**: `--output` and `--dry-run` are global flags — place them **before** the subcommand: `senko --output text list`
+> **Note**: `--output` and `--dry-run` are global flags — place them **before** the subcommand: `senko --output text task list`
 
-## `add` – Create a task
+## `task add` – Create a task
 
 ```bash
-senko add --title "Write docs" --priority p0
-senko add --title "Fix bug" \
+senko task add --title "Write docs" --priority p0
+senko task add --title "Fix bug" \
   --background "Users report 500 errors" \
   --definition-of-done "No 500 errors in logs" \
   --in-scope "Error handler" \
@@ -28,101 +28,101 @@ senko add --title "Fix bug" \
 
 New tasks start in `draft` status. Default priority is `p2`.
 
-## `list` – List tasks
+## `task list` – List tasks
 
 ```bash
-senko list                    # All tasks
-senko list --status todo      # Filter by status
-senko list --ready            # Todo tasks with all deps met
-senko list --tag backend      # Filter by tag
+senko task list                    # All tasks
+senko task list --status todo      # Filter by status
+senko task list --ready            # Todo tasks with all deps met
+senko task list --tag backend      # Filter by tag
 ```
 
 Status values use snake_case in CLI flags: `todo`, `in_progress`, `completed`, `canceled`, `draft`.
 
-## `get <id>` – Task details
+## `task get <id>` – Task details
 
 ```bash
-senko get 1
+senko task get 1
 ```
 
 > `get` outputs JSON only (no `--output text` support).
 
-## `next` – Start next task
+## `task next` – Start next task
 
 Selects the highest-priority `todo` task whose dependencies are all completed, and sets it to `in_progress`.
 
 ```bash
-senko next
-senko next --session-id "session-abc"
+senko task next
+senko task next --session-id "session-abc"
 ```
 
 Selection order: priority (P0 first) → created_at → id.
 
-## `edit <id>` – Edit a task
+## `task edit <id>` – Edit a task
 
 ```bash
 # Scalar fields
-senko edit 1 --title "New title"
-senko edit 1 --description "What to do"
-senko edit 1 --plan "How to do it"
-senko edit 1 --clear-description
-senko edit 1 --clear-plan
-senko edit 1 --status todo
-senko edit 1 --priority p0
+senko task edit 1 --title "New title"
+senko task edit 1 --description "What to do"
+senko task edit 1 --plan "How to do it"
+senko task edit 1 --clear-description
+senko task edit 1 --clear-plan
+senko task edit 1 --status todo
+senko task edit 1 --priority p0
 
 # Array fields (tags, definition-of-done, scope)
-senko edit 1 --add-tag "urgent"
-senko edit 1 --remove-tag "old"
-senko edit 1 --set-tags "a" "b"         # Replace all
+senko task edit 1 --add-tag "urgent"
+senko task edit 1 --remove-tag "old"
+senko task edit 1 --set-tags "a" "b"         # Replace all
 
 # Definition of Done
-senko edit 1 --add-definition-of-done "Write unit tests"
+senko task edit 1 --add-definition-of-done "Write unit tests"
 
 # PR URL
-senko edit 1 --pr-url "https://github.com/org/repo/pull/42"
-senko edit 1 --clear-pr-url
+senko task edit 1 --pr-url "https://github.com/org/repo/pull/42"
+senko task edit 1 --clear-pr-url
 
 # Metadata (shallow merge — adds/overwrites keys, preserves unmentioned keys)
-senko edit 1 --metadata '{"sprint":"2026-Q2","points":3}'
+senko task edit 1 --metadata '{"sprint":"2026-Q2","points":3}'
 # Replace entire metadata (removes all existing keys)
-senko edit 1 --replace-metadata '{"new_key":"only this"}'
+senko task edit 1 --replace-metadata '{"new_key":"only this"}'
 # Delete a specific key (set to null in merge)
-senko edit 1 --metadata '{"points":null}'
+senko task edit 1 --metadata '{"points":null}'
 # Clear all metadata
-senko edit 1 --clear-metadata
+senko task edit 1 --clear-metadata
 ```
 
-## `complete <id>` – Complete a task
+## `task complete <id>` – Complete a task
 
 ```bash
-senko complete 1
-senko complete 1 --skip-pr-check    # Bypass PR merge/review checks
+senko task complete 1
+senko task complete 1 --skip-pr-check    # Bypass PR merge/review checks
 ```
 
 Fails if any DoD items are unchecked. Use `dod check` to mark items before completing.
 
 When `merge_via = "pr"` in config, also verifies the PR is merged. Use `--skip-pr-check` to bypass.
 
-## `cancel <id>` – Cancel a task
+## `task cancel <id>` – Cancel a task
 
 ```bash
-senko cancel 1 --reason "out of scope"
+senko task cancel 1 --reason "out of scope"
 ```
 
-## `dod` – Manage Definition of Done items
+## `task dod` – Manage Definition of Done items
 
 ```bash
-senko dod check <task_id> <index>      # Mark DoD item as done (1-based)
-senko dod uncheck <task_id> <index>    # Unmark DoD item
+senko task dod check <task_id> <index>      # Mark DoD item as done (1-based)
+senko task dod uncheck <task_id> <index>    # Unmark DoD item
 ```
 
-## `deps` – Manage dependencies
+## `task deps` – Manage dependencies
 
 ```bash
-senko deps add 5 --on 3        # Task 5 depends on task 3
-senko deps remove 5 --on 3     # Remove dependency
-senko deps set 5 --on 1 2 3    # Set exact dependencies
-senko deps list 5              # List dependencies of task 5
+senko task deps add 5 --on 3        # Task 5 depends on task 3
+senko task deps remove 5 --on 3     # Remove dependency
+senko task deps set 5 --on 1 2 3    # Set exact dependencies
+senko task deps list 5              # List dependencies of task 5
 ```
 
 ## `config` – Show or initialize configuration
@@ -266,7 +266,7 @@ ENTRYPOINT ["senko"]
 docker build -t senko .
 
 # Run a one-off command
-docker run --rm -v "$(pwd)/.senko:/project/.senko" senko list
+docker run --rm -v "$(pwd)/.senko:/project/.senko" senko task list
 
 # Start the API server
 docker run --rm -p 3142:3142 \
@@ -327,12 +327,12 @@ requires_env = ["WEBHOOK_URL"]
 
 | Hook | Trigger |
 |------|---------|
-| `on_task_added` | `senko add` creates a new task |
-| `on_task_ready` | `senko ready` transitions a task from draft to todo |
-| `on_task_started` | `senko start` or `senko next` starts a task |
-| `on_task_completed` | `senko complete` completes a task |
-| `on_task_canceled` | `senko cancel` cancels a task |
-| `on_no_eligible_task` | `senko next` finds no eligible task |
+| `on_task_added` | `senko task add` creates a new task |
+| `on_task_ready` | `senko task ready` transitions a task from draft to todo |
+| `on_task_started` | `senko task start` or `senko task next` starts a task |
+| `on_task_completed` | `senko task complete` completes a task |
+| `on_task_canceled` | `senko task cancel` cancels a task |
+| `on_no_eligible_task` | `senko task next` finds no eligible task |
 
 Hooks receive the full event payload as JSON on **stdin** and are executed via `sh -c`.
 
@@ -416,14 +416,14 @@ The `project` and `user` fields reflect the current config. When `[project] name
 | `event` | string | Event name (e.g. `"task_added"`, `"task_completed"`) |
 | `timestamp` | string | ISO 8601 (RFC 3339) timestamp |
 | `from_status` | string \| null | Previous status before the transition |
-| `task` | object | Full task object (same schema as `senko get` — see below) |
+| `task` | object | Full task object (same schema as `senko task get` — see below) |
 | `stats` | object | Task count by status (`{"todo": 3, "completed": 5, ...}`) |
 | `ready_count` | integer | Number of `todo` tasks with all dependencies met |
 | `unblocked_tasks` | array \| null | Tasks newly unblocked by this event (only on `task_completed`) |
 
 #### `task` object
 
-The full task object included in the event payload. Same schema as `senko get` output.
+The full task object included in the event payload. Same schema as `senko task get` output.
 
 | Field | Type | Description |
 |-------|------|-------------|

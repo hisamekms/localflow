@@ -197,7 +197,7 @@ requires_env = ["WEBHOOK_URL"]
 | `on_task_started` | タスクが `in_progress` に遷移した。 |
 | `on_task_completed` | タスクが完了した。 |
 | `on_task_canceled` | タスクがキャンセルされた。 |
-| `on_no_eligible_task` | `senko next` で実行可能なタスクが見つからなかった。 |
+| `on_no_eligible_task` | `senko task next` で実行可能なタスクが見つからなかった。 |
 
 各フックエントリのフィールド:
 

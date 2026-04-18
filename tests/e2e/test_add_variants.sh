@@ -13,7 +13,7 @@ echo "--- Test: Add Variants ---"
 
 # 1. Minimal (title only) — verify defaults
 echo "[1] Minimal task (title only)"
-ADD_MIN="$(run_lf --output json add --title "Minimal Task")"
+ADD_MIN="$(run_lf --output json task add --title "Minimal Task")"
 
 assert_json_field "$ADD_MIN" '.title' "Minimal Task" "title is set"
 assert_json_field "$ADD_MIN" '.status' "draft" "default status is draft"
@@ -30,10 +30,10 @@ assert_json_field "$ADD_MIN" '.out_of_scope' "[]" "default out_of_scope is empty
 # 2. All fields specified
 echo "[2] Full task (all fields)"
 # Create dependency task first
-DEP_OUTPUT="$(run_lf --output json add --title "Dependency Task")"
+DEP_OUTPUT="$(run_lf --output json task add --title "Dependency Task")"
 DEP_ID="$(echo "$DEP_OUTPUT" | jq -r '.id')"
 
-ADD_FULL="$(run_lf --output json add \
+ADD_FULL="$(run_lf --output json task add \
   --title "Full Task" \
   --background "bg" \
   --description "det" \
@@ -66,7 +66,7 @@ assert_eq "[$DEP_ID]" "$DEPS" "full: dependencies"
 
 # 3. --from-json (stdin)
 echo "[3] Add from JSON (stdin)"
-ADD_JSON="$(echo '{"title":"From JSON","background":"json-bg","priority":"P0","tags":["a","b"]}' | run_lf --output json add --from-json)"
+ADD_JSON="$(echo '{"title":"From JSON","background":"json-bg","priority":"P0","tags":["a","b"]}' | run_lf --output json task add --from-json)"
 
 assert_json_field "$ADD_JSON" '.title' "From JSON" "from-json: title"
 assert_json_field "$ADD_JSON" '.background' "json-bg" "from-json: background"
@@ -87,7 +87,7 @@ cat > "$JSON_FILE" <<'JSONEOF'
 }
 JSONEOF
 
-ADD_FILE="$(run_lf --output json add --from-json-file "$JSON_FILE")"
+ADD_FILE="$(run_lf --output json task add --from-json-file "$JSON_FILE")"
 
 assert_json_field "$ADD_FILE" '.title' "From JSON File" "from-json-file: title"
 assert_json_field "$ADD_FILE" '.description' "file-description" "from-json-file: description"
@@ -99,10 +99,10 @@ assert_eq '["done1"]' "$FILE_DOD" "from-json-file: definition_of_done"
 # 5. --from-json with all fields (in_scope, out_of_scope, branch, dependencies)
 echo "[5] Add from JSON with all fields"
 # Create a dependency for the JSON task
-JSON_DEP_OUT="$(run_lf --output json add --title "JSON Dep")"
+JSON_DEP_OUT="$(run_lf --output json task add --title "JSON Dep")"
 JSON_DEP_ID="$(echo "$JSON_DEP_OUT" | jq -r '.id')"
 
-ADD_JSON_FULL="$(cat <<JSONEOF | run_lf --output json add --from-json
+ADD_JSON_FULL="$(cat <<JSONEOF | run_lf --output json task add --from-json
 {
   "title": "JSON Full Fields",
   "background": "json-bg-full",
@@ -142,8 +142,8 @@ assert_eq "[$JSON_DEP_ID]" "$FULL_DEPS" "from-json-full: dependencies"
 # 6. Error cases
 echo "[6] Error cases"
 # No title
-assert_exit_code 1 run_lf add
+assert_exit_code 1 run_lf task add
 # Non-existent dependency
-assert_exit_code 1 run_lf add --title "Bad Dep" --depends-on 99999
+assert_exit_code 1 run_lf task add --title "Bad Dep" --depends-on 99999
 
 test_summary

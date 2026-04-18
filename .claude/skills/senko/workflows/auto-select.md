@@ -16,7 +16,7 @@ Parse the JSON output (`{"resolved": {...}, "prompts": [...]}`):
 ## Step 2: Select next task
 
 ```bash
-senko next --metadata '<final-metadata-json>'
+senko task next --metadata '<final-metadata-json>'
 ```
 
 Omit `--metadata` entirely if there are no metadata fields to pass.

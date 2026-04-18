@@ -227,7 +227,7 @@ Clients connecting to the relay do not need any credentials — the relay inject
 ```bash
 # On the client (e.g., inside a container)
 export SENKO_CLI_REMOTE_URL="http://localhost:3142"
-senko --output text list
+senko --output text task list
 ```
 
 > For more relay patterns (token injection vs. passthrough), see the [Relay/Proxy section](AUTH_SETUP.md#relayproxy-mode) of the Authentication Setup Guide.

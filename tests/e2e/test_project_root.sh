@@ -13,7 +13,7 @@ echo "=== Project Root Detection Tests ==="
 echo ""
 echo "--- Test 1: --project-root で明示的にルート指定 ---"
 
-result=$(run_lf --output json add --title "explicit root task")
+result=$(run_lf --output json task add --title "explicit root task")
 assert_json_field "$result" ".title" "explicit root task" "task created with explicit --project-root"
 
 # Verify data.db was created at the explicit --db-path location
@@ -33,7 +33,7 @@ AUTO_ROOT="$TEST_DIR/auto_senko"
 AUTO_DB="$AUTO_ROOT/.senko/data.db"
 mkdir -p "$AUTO_ROOT/.senko"
 
-result=$(cd "$AUTO_ROOT" && "$SENKO" --output json --db-path "$AUTO_DB" add --title "auto detected task")
+result=$(cd "$AUTO_ROOT" && "$SENKO" --output json --db-path "$AUTO_DB" task add --title "auto detected task")
 assert_json_field "$result" ".title" "auto detected task" "task created via .senko/ auto-detection"
 
 if [[ -f "$AUTO_DB" ]]; then
@@ -52,7 +52,7 @@ GIT_ROOT="$TEST_DIR/git_fallback"
 GIT_DB="$GIT_ROOT/.senko/data.db"
 mkdir -p "$GIT_ROOT/.git"
 
-result=$(cd "$GIT_ROOT" && "$SENKO" --output json --db-path "$GIT_DB" add --title "git fallback task")
+result=$(cd "$GIT_ROOT" && "$SENKO" --output json --db-path "$GIT_DB" task add --title "git fallback task")
 assert_json_field "$result" ".title" "git fallback task" "task created via .git/ fallback"
 
 if [[ -f "$GIT_DB" ]]; then
@@ -73,7 +73,7 @@ mkdir -p "$PARENT_ROOT/.senko"
 SUBDIR="$PARENT_ROOT/sub/deep/nested"
 mkdir -p "$SUBDIR"
 
-result=$(cd "$SUBDIR" && "$SENKO" --output json --db-path "$PARENT_DB" add --title "upward search task")
+result=$(cd "$SUBDIR" && "$SENKO" --output json --db-path "$PARENT_DB" task add --title "upward search task")
 assert_json_field "$result" ".title" "upward search task" "task created via upward search from subdirectory"
 
 if [[ -f "$PARENT_DB" ]]; then
@@ -101,7 +101,7 @@ XDG_ROOT="$TEST_DIR/xdg_test"
 XDG_DATA="$TEST_DIR/xdg_data"
 mkdir -p "$XDG_ROOT/.senko"
 
-result=$(cd "$XDG_ROOT" && XDG_DATA_HOME="$XDG_DATA" "$SENKO" --output json add --title "xdg default task")
+result=$(cd "$XDG_ROOT" && XDG_DATA_HOME="$XDG_DATA" "$SENKO" --output json task add --title "xdg default task")
 assert_json_field "$result" ".title" "xdg default task" "task created with XDG default path"
 
 # Per-project XDG path uses a hash of the project root
@@ -126,7 +126,7 @@ OVERRIDE_ROOT="$TEST_DIR/override_test"
 OVERRIDE_DB="$TEST_DIR/custom_db.db"
 mkdir -p "$OVERRIDE_ROOT/.senko"
 
-result=$(cd "$OVERRIDE_ROOT" && "$SENKO" --output json --db-path "$OVERRIDE_DB" add --title "override task")
+result=$(cd "$OVERRIDE_ROOT" && "$SENKO" --output json --db-path "$OVERRIDE_DB" task add --title "override task")
 assert_json_field "$result" ".title" "override task" "task created with --db-path override"
 
 if [[ -f "$OVERRIDE_DB" ]]; then

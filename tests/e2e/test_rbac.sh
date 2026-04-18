@@ -71,7 +71,7 @@ VIEWER_KEY=$(mk_api_key "$VIEWER_UID")
 NONMEMBER_KEY=$(mk_api_key "$NONMEMBER_UID")
 
 # Add owner to default project via CLI (bypasses API auth)
-run_lf members add --user-id "$OWNER_UID" --role owner >/dev/null
+run_lf project members add --user-id "$OWNER_UID" --role owner >/dev/null
 
 # Owner adds member and viewer via API
 echo "=== Setup: Owner adds member to project ==="

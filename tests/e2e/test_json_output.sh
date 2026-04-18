@@ -13,7 +13,7 @@ echo "--- Test: JSON Output ---"
 
 # [1] add — JSON output structure
 echo "[1] add — JSON output"
-ADD_OUT="$(run_lf --output json add --title "JSON Test Task")"
+ADD_OUT="$(run_lf --output json task add --title "JSON Test Task")"
 
 # Verify it's valid JSON
 echo "$ADD_OUT" | jq . >/dev/null 2>&1
@@ -42,7 +42,7 @@ assert_json_field "$ADD_OUT" '.plan' "null" "add: plan is null"
 
 # [2] get — JSON output
 echo "[2] get — JSON output"
-GET_OUT="$(run_lf --output json get "$TASK_ID")"
+GET_OUT="$(run_lf --output json task get "$TASK_ID")"
 
 echo "$GET_OUT" | jq . >/dev/null 2>&1
 assert_eq "0" "$?" "get output is valid JSON"
@@ -55,8 +55,8 @@ assert_json_field "$GET_OUT" '.priority' "P2" "get: priority matches"
 # [3] list — JSON output
 echo "[3] list — JSON output"
 # Add a second task
-run_lf add --title "Second Task" >/dev/null
-LIST_OUT="$(run_lf --output json list)"
+run_lf task add --title "Second Task" >/dev/null
+LIST_OUT="$(run_lf --output json task list)"
 
 echo "$LIST_OUT" | jq . >/dev/null 2>&1
 assert_eq "0" "$?" "list output is valid JSON"
@@ -74,8 +74,8 @@ assert_eq "1" "$FOUND" "list: contains created task"
 # [4] next — JSON output
 echo "[4] next — JSON output"
 # Move task to todo first
-run_lf ready "$TASK_ID" >/dev/null
-NEXT_OUT="$(run_lf --output json next)"
+run_lf task ready "$TASK_ID" >/dev/null
+NEXT_OUT="$(run_lf --output json task next)"
 
 echo "$NEXT_OUT" | jq . >/dev/null 2>&1
 assert_eq "0" "$?" "next output is valid JSON"
@@ -86,7 +86,7 @@ assert_eq "false" "$([ "$STARTED_AT" = "null" ] && echo true || echo false)" "ne
 
 # [5] complete — JSON output
 echo "[5] complete — JSON output"
-COMPLETE_OUT="$(run_lf --output json complete "$TASK_ID")"
+COMPLETE_OUT="$(run_lf --output json task complete "$TASK_ID")"
 
 echo "$COMPLETE_OUT" | jq . >/dev/null 2>&1
 assert_eq "0" "$?" "complete output is valid JSON"
@@ -98,10 +98,10 @@ assert_eq "false" "$([ "$COMPLETED_AT" = "null" ] && echo true || echo false)" "
 # [6] cancel — JSON output
 echo "[6] cancel — JSON output"
 # Create a new task, move to todo, then cancel
-CANCEL_ADD="$(run_lf --output json add --title "Cancel Target")"
+CANCEL_ADD="$(run_lf --output json task add --title "Cancel Target")"
 CANCEL_ID="$(echo "$CANCEL_ADD" | jq -r '.id')"
-run_lf ready "$CANCEL_ID" >/dev/null
-CANCEL_OUT="$(run_lf --output json cancel "$CANCEL_ID" --reason "test cancel reason")"
+run_lf task ready "$CANCEL_ID" >/dev/null
+CANCEL_OUT="$(run_lf --output json task cancel "$CANCEL_ID" --reason "test cancel reason")"
 
 echo "$CANCEL_OUT" | jq . >/dev/null 2>&1
 assert_eq "0" "$?" "cancel output is valid JSON"

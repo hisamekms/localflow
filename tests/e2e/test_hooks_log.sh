@@ -36,9 +36,9 @@ TOML
 run_lf hooks log --clear >/dev/null 2>&1
 
 # Create tasks to trigger hook events
-run_lf add --title "Hook log test 1" >/dev/null 2>&1
-run_lf add --title "Hook log test 2" >/dev/null 2>&1
-run_lf add --title "Hook log test 3" >/dev/null 2>&1
+run_lf task add --title "Hook log test 1" >/dev/null 2>&1
+run_lf task add --title "Hook log test 2" >/dev/null 2>&1
+run_lf task add --title "Hook log test 3" >/dev/null 2>&1
 
 # Wait for async hooks to complete
 sleep 1

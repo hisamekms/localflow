@@ -14,7 +14,7 @@ echo "--- Test: Hook Events ---"
 HOOK_LOG="$TEST_DIR/hook.log"
 
 # Initialize DB first (creates .senko/)
-run_lf --output json list >/dev/null 2>&1
+run_lf --output json task list >/dev/null 2>&1
 
 # Configure hooks for all events (named hook format)
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
@@ -36,7 +36,7 @@ EOF
 
 # 1. Create a task → should fire task_added
 echo "[1] task_added event"
-TASK_ID="$(run_lf --output json add --title "Hook test" | jq -r '.id')"
+TASK_ID="$(run_lf --output json task add --title "Hook test" | jq -r '.id')"
 wait_for "task_added event" 5 "grep -q '\"event\":\"task_added\"' '$HOOK_LOG'"
 
 ADDED_EVENT="$(grep -c '"event":"task_added"' "$HOOK_LOG" 2>/dev/null || echo 0)"
@@ -50,7 +50,7 @@ fi
 
 # 2. Ready the task → should fire task_ready
 echo "[2] task_ready event"
-run_lf ready "$TASK_ID" >/dev/null
+run_lf task ready "$TASK_ID" >/dev/null
 wait_for "task_ready event" 5 "grep -q '\"event\":\"task_ready\"' '$HOOK_LOG'"
 
 READY_EVENT="$(grep -c '"event":"task_ready"' "$HOOK_LOG" 2>/dev/null || echo 0)"
@@ -74,7 +74,7 @@ fi
 
 # 3. Start the task → should fire task_started
 echo "[3] task_started event"
-run_lf start "$TASK_ID" >/dev/null
+run_lf task start "$TASK_ID" >/dev/null
 wait_for "task_started event" 5 "grep -q '\"event\":\"task_started\"' '$HOOK_LOG'"
 
 STARTED_EVENT="$(grep -c '"event":"task_started"' "$HOOK_LOG" 2>/dev/null || echo 0)"
@@ -97,7 +97,7 @@ fi
 
 # 4. Complete the task → should fire task_completed
 echo "[4] task_completed event"
-run_lf complete "$TASK_ID" >/dev/null
+run_lf task complete "$TASK_ID" >/dev/null
 wait_for "task_completed event" 5 "grep -q '\"event\":\"task_completed\"' '$HOOK_LOG'"
 
 COMPLETED_EVENT="$(grep -c '"event":"task_completed"' "$HOOK_LOG" 2>/dev/null || echo 0)"
@@ -120,9 +120,9 @@ fi
 
 # 5. Create and cancel a task → should fire task_canceled
 echo "[5] task_canceled event"
-TASK2_ID="$(run_lf --output json add --title "Cancel hook" | jq -r '.id')"
+TASK2_ID="$(run_lf --output json task add --title "Cancel hook" | jq -r '.id')"
 wait_for "task2 added event" 5 "grep -q 'Cancel hook' '$HOOK_LOG'"
-run_lf cancel "$TASK2_ID" >/dev/null
+run_lf task cancel "$TASK2_ID" >/dev/null
 wait_for "task_canceled event" 5 "grep -q '\"event\":\"task_canceled\"' '$HOOK_LOG'"
 
 CANCELED_EVENT="$(grep -c '"event":"task_canceled"' "$HOOK_LOG" 2>/dev/null || echo 0)"
@@ -150,7 +150,7 @@ setup_test_env
 
 HOOK_LOG2="$TEST_DIR/hook2.log"
 
-run_lf --output json list >/dev/null 2>&1
+run_lf --output json task list >/dev/null 2>&1
 
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
 [hooks.on_task_completed.default]
@@ -167,14 +167,14 @@ command = "true"
 EOF
 
 # Create task 1 and task 2 (depends on 1)
-T1="$(run_lf --output json add --title "Blocker" | jq -r '.id')"
-T2="$(run_lf --output json add --title "Blocked" --depends-on "$T1" | jq -r '.id')"
-run_lf ready "$T1" >/dev/null
-run_lf ready "$T2" >/dev/null
-run_lf start "$T1" >/dev/null
+T1="$(run_lf --output json task add --title "Blocker" | jq -r '.id')"
+T2="$(run_lf --output json task add --title "Blocked" --depends-on "$T1" | jq -r '.id')"
+run_lf task ready "$T1" >/dev/null
+run_lf task ready "$T2" >/dev/null
+run_lf task start "$T1" >/dev/null
 
 # Complete task 1 → should unblock task 2
-run_lf complete "$T1" >/dev/null
+run_lf task complete "$T1" >/dev/null
 wait_for "completed event" 5 "[ -f '$HOOK_LOG2' ]"
 
 if [ -f "$HOOK_LOG2" ]; then

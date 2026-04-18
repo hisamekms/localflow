@@ -22,22 +22,22 @@ echo "--- Test: Input Size Validation (CLI) ---"
 
 echo "[1] Title at limit (500 chars)"
 TITLE_500="$(gen_chars 500)"
-OUT="$(run_lf --output json add --title "$TITLE_500")"
+OUT="$(run_lf --output json task add --title "$TITLE_500")"
 assert_json_field "$OUT" '.title' "$TITLE_500" "title at 500 chars accepted"
 
 # ===== [2] Title: over limit (501 chars) → error =====
 
 echo "[2] Title over limit (501 chars)"
 TITLE_501="$(gen_chars 501)"
-ERR="$(run_lf --output json add --title "$TITLE_501" 2>&1 || true)"
-assert_exit_code 1 run_lf add --title "$TITLE_501"
+ERR="$(run_lf --output json task add --title "$TITLE_501" 2>&1 || true)"
+assert_exit_code 1 run_lf task add --title "$TITLE_501"
 assert_contains "$ERR" "500" "error mentions max length"
 
 # ===== [3] Tag too long (101 chars) → error =====
 
 echo "[3] Tag over limit (101 chars)"
 TAG_101="$(gen_chars 101)"
-assert_exit_code 1 run_lf add --title "Tag Test" --tag "$TAG_101"
+assert_exit_code 1 run_lf task add --title "Tag Test" --tag "$TAG_101"
 
 # ===== [4] Too many tags (21) → error =====
 
@@ -46,7 +46,7 @@ TAG_ARGS=""
 for i in $(seq 1 21); do
   TAG_ARGS="$TAG_ARGS --tag tag$i"
 done
-assert_exit_code 1 run_lf add --title "Many Tags" $TAG_ARGS
+assert_exit_code 1 run_lf task add --title "Many Tags" $TAG_ARGS
 
 # ===== [5] Tags at limit (20) → OK =====
 
@@ -55,7 +55,7 @@ TAG_ARGS=""
 for i in $(seq 1 20); do
   TAG_ARGS="$TAG_ARGS --tag t$i"
 done
-OUT="$(run_lf --output json add --title "Twenty Tags" $TAG_ARGS)"
+OUT="$(run_lf --output json task add --title "Twenty Tags" $TAG_ARGS)"
 TAG_COUNT="$(echo "$OUT" | jq '.tags | length')"
 assert_eq "20" "$TAG_COUNT" "20 tags accepted"
 
@@ -63,25 +63,25 @@ assert_eq "20" "$TAG_COUNT" "20 tags accepted"
 
 echo "[6] DoD item over limit (501 chars)"
 DOD_501="$(gen_chars 501)"
-assert_exit_code 1 run_lf add --title "DoD Test" --definition-of-done "$DOD_501"
+assert_exit_code 1 run_lf task add --title "DoD Test" --definition-of-done "$DOD_501"
 
 # ===== [7] Edit: title over limit → error =====
 
 echo "[7] Edit: title over limit"
-OUT="$(run_lf --output json add --title "Edit Target")"
+OUT="$(run_lf --output json task add --title "Edit Target")"
 EDIT_ID="$(echo "$OUT" | jq -r '.id')"
-assert_exit_code 1 run_lf edit "$EDIT_ID" --title "$TITLE_501"
+assert_exit_code 1 run_lf task edit "$EDIT_ID" --title "$TITLE_501"
 
 # ===== [8] Edit: add-tag over limit → error =====
 
 echo "[8] Edit: add-tag over limit"
-assert_exit_code 1 run_lf edit "$EDIT_ID" --add-tag "$TAG_101"
+assert_exit_code 1 run_lf task edit "$EDIT_ID" --add-tag "$TAG_101"
 
 # ===== [9] Cancel: reason over limit (50001 chars) → error =====
 
 echo "[9] Cancel: reason over limit"
 REASON_LONG="$(gen_chars 50001)"
-assert_exit_code 1 run_lf cancel "$EDIT_ID" --reason "$REASON_LONG"
+assert_exit_code 1 run_lf task cancel "$EDIT_ID" --reason "$REASON_LONG"
 
 echo ""
 echo "--- Test: Input Size Validation (HTTP API) ---"

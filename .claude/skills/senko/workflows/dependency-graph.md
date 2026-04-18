@@ -7,7 +7,7 @@ Visualize task dependencies as a text-based graph for terminal display.
 1. Fetch all tasks:
 
 ```bash
-senko list
+senko task list
 ```
 
 2. From the JSON output, build a dependency graph. Each task's `dependencies` array lists the IDs it depends on.

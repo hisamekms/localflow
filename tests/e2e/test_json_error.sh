@@ -14,7 +14,7 @@ echo "--- Test: JSON Error Output ---"
 # ===== [1] JSON mode: error is valid JSON on stdout =====
 
 echo "[1] JSON mode: non-existent task returns JSON error on stdout"
-JSON_OUT="$(run_lf --output json get 99999 2>/dev/null || true)"
+JSON_OUT="$(run_lf --output json task get 99999 2>/dev/null || true)"
 assert_contains "$JSON_OUT" '"error"' "stdout contains error key"
 
 # Validate it's valid JSON
@@ -24,33 +24,33 @@ assert_eq "0" "$?" "output is valid JSON with error field"
 # ===== [2] JSON mode: exit code is 1 =====
 
 echo "[2] JSON mode: exit code is 1 on error"
-assert_exit_code 1 run_lf --output json get 99999
+assert_exit_code 1 run_lf --output json task get 99999
 
 # ===== [3] Text mode: error goes to stderr =====
 
 echo "[3] Text mode: error goes to stderr"
-TEXT_STDERR="$(run_lf --output text get 99999 2>&1 1>/dev/null || true)"
+TEXT_STDERR="$(run_lf --output text task get 99999 2>&1 1>/dev/null || true)"
 assert_contains "$TEXT_STDERR" "Error:" "stderr contains Error: prefix"
 
 # ===== [4] JSON mode: invalid state transition =====
 
 echo "[4] JSON mode: invalid state transition"
-ADD_OUT="$(run_lf --output json add --title "State Test")"
+ADD_OUT="$(run_lf --output json task add --title "State Test")"
 TASK_ID="$(echo "$ADD_OUT" | jq -r '.id')"
-run_lf complete "$TASK_ID" >/dev/null 2>&1 || true
+run_lf task complete "$TASK_ID" >/dev/null 2>&1 || true
 # Try to complete again - should fail
-JSON_ERR="$(run_lf --output json complete "$TASK_ID" 2>/dev/null || true)"
+JSON_ERR="$(run_lf --output json task complete "$TASK_ID" 2>/dev/null || true)"
 assert_contains "$JSON_ERR" '"error"' "invalid transition returns JSON error"
 
 # ===== [5] JSON mode: no stderr leak =====
 
 echo "[5] JSON mode: no 'Error:' on stderr"
-STDERR_OUT="$(run_lf --output json get 99999 2>&1 1>/dev/null || true)"
+STDERR_OUT="$(run_lf --output json task get 99999 2>&1 1>/dev/null || true)"
 assert_eq "" "$STDERR_OUT" "no output on stderr in JSON mode"
 
 # ===== [6] Text mode: exit code is 1 =====
 
 echo "[6] Text mode: exit code is 1 on error"
-assert_exit_code 1 run_lf --output text get 99999
+assert_exit_code 1 run_lf --output text task get 99999
 
 test_summary

@@ -197,7 +197,7 @@ requires_env = ["WEBHOOK_URL"]
 | `on_task_started` | A task moves to `in_progress`. |
 | `on_task_completed` | A task is completed. |
 | `on_task_canceled` | A task is canceled. |
-| `on_no_eligible_task` | `senko next` finds no eligible tasks. |
+| `on_no_eligible_task` | `senko task next` finds no eligible tasks. |
 
 Each hook entry has:
 

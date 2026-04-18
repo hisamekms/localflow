@@ -69,8 +69,8 @@ fi
 # 5. Generated file content contains command names
 echo "[5] SKILL.md content verification"
 CONTENT="$(cat "$TEST_PROJECT_ROOT/.claude/skills/senko/SKILL.md")"
-assert_contains "$CONTENT" "senko add" "content contains 'senko add'"
-assert_contains "$CONTENT" "senko list" "content contains 'senko list'"
-assert_contains "$CONTENT" "senko next" "content contains 'senko next'"
+assert_contains "$CONTENT" "/senko add" "content contains '/senko add'"
+assert_contains "$CONTENT" "/senko list" "content contains '/senko list'"
+assert_contains "$CONTENT" "senko task next" "content contains 'senko task next'"
 
 test_summary

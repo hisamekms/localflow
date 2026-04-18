@@ -59,74 +59,74 @@ count_log_entries() {
 echo "=== Section 1: Local Mode Operations ==="
 
 echo "[1.1] State transitions: draft → todo → in_progress → completed"
-T1=$(run_lf add --title "Local lifecycle" --description "Local mode test")
+T1=$(run_lf task add --title "Local lifecycle" --description "Local mode test")
 T1_ID=$(echo "$T1" | jq -r '.id')
 assert_json_field "$T1" '.status' "draft" "local: add creates draft"
 
-READY=$(run_lf ready "$T1_ID")
+READY=$(run_lf task ready "$T1_ID")
 assert_json_field "$READY" '.status' "todo" "local: ready → todo"
 
-STARTED=$(run_lf start "$T1_ID")
+STARTED=$(run_lf task start "$T1_ID")
 assert_json_field "$STARTED" '.status' "in_progress" "local: start → in_progress"
 
-COMPLETED=$(run_lf complete "$T1_ID")
+COMPLETED=$(run_lf task complete "$T1_ID")
 assert_json_field "$COMPLETED" '.status' "completed" "local: complete → completed"
 
 echo "[1.2] Cancel transition"
-T2=$(run_lf add --title "Local cancel")
+T2=$(run_lf task add --title "Local cancel")
 T2_ID=$(echo "$T2" | jq -r '.id')
-run_lf ready "$T2_ID" >/dev/null
-CANCELED=$(run_lf cancel "$T2_ID" --reason "not needed")
+run_lf task ready "$T2_ID" >/dev/null
+CANCELED=$(run_lf task cancel "$T2_ID" --reason "not needed")
 assert_json_field "$CANCELED" '.status' "canceled" "local: cancel works"
 assert_json_field "$CANCELED" '.cancel_reason' "not needed" "local: cancel reason"
 
 echo "[1.3] DoD operations"
-T3=$(run_lf add --title "Local DoD" --definition-of-done "Item 1" --definition-of-done "Item 2")
+T3=$(run_lf task add --title "Local DoD" --definition-of-done "Item 1" --definition-of-done "Item 2")
 T3_ID=$(echo "$T3" | jq -r '.id')
-run_lf ready "$T3_ID" >/dev/null
-run_lf start "$T3_ID" >/dev/null
+run_lf task ready "$T3_ID" >/dev/null
+run_lf task start "$T3_ID" >/dev/null
 
-DOD_CHECK=$(run_lf dod check "$T3_ID" 1)
+DOD_CHECK=$(run_lf task dod check "$T3_ID" 1)
 assert_eq "true" "$(echo "$DOD_CHECK" | jq '.definition_of_done[0].checked')" "local: dod check"
 
-DOD_UNCHECK=$(run_lf dod uncheck "$T3_ID" 1)
+DOD_UNCHECK=$(run_lf task dod uncheck "$T3_ID" 1)
 assert_eq "false" "$(echo "$DOD_UNCHECK" | jq '.definition_of_done[0].checked')" "local: dod uncheck"
 
 # Complete should fail with unchecked DoD
-FAIL_COMPLETE=$(run_lf complete "$T3_ID" 2>&1 || true)
+FAIL_COMPLETE=$(run_lf task complete "$T3_ID" 2>&1 || true)
 assert_contains "$FAIL_COMPLETE" "unchecked DoD" "local: complete fails with unchecked DoD"
 
 # Check all DoD and complete
-run_lf dod check "$T3_ID" 1 >/dev/null
-run_lf dod check "$T3_ID" 2 >/dev/null
-COMPLETED3=$(run_lf complete "$T3_ID")
+run_lf task dod check "$T3_ID" 1 >/dev/null
+run_lf task dod check "$T3_ID" 2 >/dev/null
+COMPLETED3=$(run_lf task complete "$T3_ID")
 assert_json_field "$COMPLETED3" '.status' "completed" "local: complete after all DoD checked"
 
 echo "[1.4] Dependency operations"
-T4=$(run_lf add --title "Local parent")
+T4=$(run_lf task add --title "Local parent")
 T4_ID=$(echo "$T4" | jq -r '.id')
-T5=$(run_lf add --title "Local child")
+T5=$(run_lf task add --title "Local child")
 T5_ID=$(echo "$T5" | jq -r '.id')
 
-DEP_ADD=$(run_lf deps add "$T5_ID" --on "$T4_ID")
+DEP_ADD=$(run_lf task deps add "$T5_ID" --on "$T4_ID")
 assert_contains "$(echo "$DEP_ADD" | jq -r '.dependencies[]')" "$T4_ID" "local: deps add"
 
-DEPS_LIST=$(run_lf deps list "$T5_ID")
+DEPS_LIST=$(run_lf task deps list "$T5_ID")
 assert_eq "1" "$(echo "$DEPS_LIST" | jq 'length')" "local: deps list"
 
-DEP_RM=$(run_lf deps remove "$T5_ID" --on "$T4_ID")
+DEP_RM=$(run_lf task deps remove "$T5_ID" --on "$T4_ID")
 assert_eq "0" "$(echo "$DEP_RM" | jq '.dependencies | length')" "local: deps remove"
 
 echo "[1.5] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
 export SENKO_USER="default"
-T6=$(run_lf add --title "Local next" --priority p0 --assignee-user-id self --definition-of-done "Local DoD")
+T6=$(run_lf task add --title "Local next" --priority p0 --assignee-user-id self --definition-of-done "Local DoD")
 T6_ID=$(echo "$T6" | jq -r '.id')
-run_lf ready "$T6_ID" >/dev/null
-NEXT=$(run_lf next)
+run_lf task ready "$T6_ID" >/dev/null
+NEXT=$(run_lf task next)
 assert_json_field "$NEXT" '.status' "in_progress" "local: next auto-starts"
 assert_json_field "$NEXT" '.title' "Local next" "local: next picks correct task"
-run_lf dod check "$T6_ID" 1 >/dev/null
-run_lf complete "$T6_ID" >/dev/null
+run_lf task dod check "$T6_ID" 1 >/dev/null
+run_lf task complete "$T6_ID" >/dev/null
 unset SENKO_USER
 
 # ========================================
@@ -141,71 +141,71 @@ setup_test_env
 start_server
 
 echo "[2.1] State transitions via HTTP"
-T1=$(run_http add --title "Remote lifecycle" --description "Remote mode test")
+T1=$(run_http task add --title "Remote lifecycle" --description "Remote mode test")
 T1_ID=$(echo "$T1" | jq -r '.id')
 assert_json_field "$T1" '.status' "draft" "remote: add creates draft"
 
-READY=$(run_http ready "$T1_ID")
+READY=$(run_http task ready "$T1_ID")
 assert_json_field "$READY" '.status' "todo" "remote: ready → todo"
 
-STARTED=$(run_http start "$T1_ID")
+STARTED=$(run_http task start "$T1_ID")
 assert_json_field "$STARTED" '.status' "in_progress" "remote: start → in_progress"
 
-COMPLETED=$(run_http complete "$T1_ID")
+COMPLETED=$(run_http task complete "$T1_ID")
 assert_json_field "$COMPLETED" '.status' "completed" "remote: complete → completed"
 
 echo "[2.2] Cancel via HTTP"
-T2=$(run_http add --title "Remote cancel")
+T2=$(run_http task add --title "Remote cancel")
 T2_ID=$(echo "$T2" | jq -r '.id')
-run_http ready "$T2_ID" >/dev/null
-CANCELED=$(run_http cancel "$T2_ID" --reason "http cancel")
+run_http task ready "$T2_ID" >/dev/null
+CANCELED=$(run_http task cancel "$T2_ID" --reason "http cancel")
 assert_json_field "$CANCELED" '.status' "canceled" "remote: cancel works"
 assert_json_field "$CANCELED" '.cancel_reason' "http cancel" "remote: cancel reason"
 
 echo "[2.3] DoD operations via HTTP"
-T3=$(run_http add --title "Remote DoD" --definition-of-done "HTTP item 1" --definition-of-done "HTTP item 2")
+T3=$(run_http task add --title "Remote DoD" --definition-of-done "HTTP item 1" --definition-of-done "HTTP item 2")
 T3_ID=$(echo "$T3" | jq -r '.id')
-run_http ready "$T3_ID" >/dev/null
-run_http start "$T3_ID" >/dev/null
+run_http task ready "$T3_ID" >/dev/null
+run_http task start "$T3_ID" >/dev/null
 
-DOD_CHECK=$(run_http dod check "$T3_ID" 1)
+DOD_CHECK=$(run_http task dod check "$T3_ID" 1)
 assert_eq "true" "$(echo "$DOD_CHECK" | jq '.definition_of_done[0].checked')" "remote: dod check"
 
-DOD_UNCHECK=$(run_http dod uncheck "$T3_ID" 1)
+DOD_UNCHECK=$(run_http task dod uncheck "$T3_ID" 1)
 assert_eq "false" "$(echo "$DOD_UNCHECK" | jq '.definition_of_done[0].checked')" "remote: dod uncheck"
 
-FAIL_COMPLETE=$(run_http complete "$T3_ID" 2>&1 || true)
+FAIL_COMPLETE=$(run_http task complete "$T3_ID" 2>&1 || true)
 assert_contains "$FAIL_COMPLETE" "unchecked DoD" "remote: complete fails with unchecked DoD"
 
-run_http dod check "$T3_ID" 1 >/dev/null
-run_http dod check "$T3_ID" 2 >/dev/null
-COMPLETED3=$(run_http complete "$T3_ID")
+run_http task dod check "$T3_ID" 1 >/dev/null
+run_http task dod check "$T3_ID" 2 >/dev/null
+COMPLETED3=$(run_http task complete "$T3_ID")
 assert_json_field "$COMPLETED3" '.status' "completed" "remote: complete after all DoD checked"
 
 echo "[2.4] Dependency operations via HTTP"
-T4=$(run_http add --title "Remote parent")
+T4=$(run_http task add --title "Remote parent")
 T4_ID=$(echo "$T4" | jq -r '.id')
-T5=$(run_http add --title "Remote child")
+T5=$(run_http task add --title "Remote child")
 T5_ID=$(echo "$T5" | jq -r '.id')
 
-DEP_ADD=$(run_http deps add "$T5_ID" --on "$T4_ID")
+DEP_ADD=$(run_http task deps add "$T5_ID" --on "$T4_ID")
 assert_contains "$(echo "$DEP_ADD" | jq -r '.dependencies[]')" "$T4_ID" "remote: deps add"
 
-DEPS_LIST=$(run_http deps list "$T5_ID")
+DEPS_LIST=$(run_http task deps list "$T5_ID")
 assert_eq "1" "$(echo "$DEPS_LIST" | jq 'length')" "remote: deps list"
 
-DEP_RM=$(run_http deps remove "$T5_ID" --on "$T4_ID")
+DEP_RM=$(run_http task deps remove "$T5_ID" --on "$T4_ID")
 assert_eq "0" "$(echo "$DEP_RM" | jq '.dependencies | length')" "remote: deps remove"
 
 echo "[2.5] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
-T6=$(run_http add --title "Remote next" --priority p0 --assignee-user-id self --definition-of-done "Remote DoD")
+T6=$(run_http task add --title "Remote next" --priority p0 --assignee-user-id self --definition-of-done "Remote DoD")
 T6_ID=$(echo "$T6" | jq -r '.id')
-run_http ready "$T6_ID" >/dev/null
-NEXT=$(run_http next)
+run_http task ready "$T6_ID" >/dev/null
+NEXT=$(run_http task next)
 assert_json_field "$NEXT" '.status' "in_progress" "remote: next auto-starts"
 assert_json_field "$NEXT" '.title' "Remote next" "remote: next picks correct task"
-run_http dod check "$T6_ID" 1 >/dev/null
-run_http complete "$T6_ID" >/dev/null
+run_http task dod check "$T6_ID" 1 >/dev/null
+run_http task complete "$T6_ID" >/dev/null
 
 stop_server
 
@@ -220,20 +220,20 @@ setup_test_env
 start_server
 
 # Get project ID (created by first add)
-BLOCKER=$(run_http add --title "Blocker task")
+BLOCKER=$(run_http task add --title "Blocker task")
 BLOCKER_ID=$(echo "$BLOCKER" | jq -r '.id')
 PROJECT_ID=$(echo "$BLOCKER" | jq -r '.project_id')
 
-BLOCKED=$(run_http add --title "Blocked task")
+BLOCKED=$(run_http task add --title "Blocked task")
 BLOCKED_ID=$(echo "$BLOCKED" | jq -r '.id')
 
 # Set up dependency: BLOCKED depends on BLOCKER
-run_http deps add "$BLOCKED_ID" --on "$BLOCKER_ID" >/dev/null
+run_http task deps add "$BLOCKED_ID" --on "$BLOCKER_ID" >/dev/null
 
 # Move both to todo, start the blocker
-run_http ready "$BLOCKER_ID" >/dev/null
-run_http ready "$BLOCKED_ID" >/dev/null
-run_http start "$BLOCKER_ID" >/dev/null
+run_http task ready "$BLOCKER_ID" >/dev/null
+run_http task ready "$BLOCKED_ID" >/dev/null
+run_http task start "$BLOCKER_ID" >/dev/null
 
 echo "[3.1] Complete via API returns unblocked_tasks"
 # Call the API directly with curl to get the full CompleteTaskResponse
@@ -251,10 +251,10 @@ UNBLOCKED_ID=$(echo "$COMPLETE_RESP" | jq -r '.unblocked_tasks[0].id')
 assert_eq "$BLOCKED_ID" "$UNBLOCKED_ID" "api complete: unblocked task id"
 
 echo "[3.2] Complete with no dependencies returns empty unblocked_tasks"
-STANDALONE=$(run_http add --title "Standalone task")
+STANDALONE=$(run_http task add --title "Standalone task")
 STANDALONE_ID=$(echo "$STANDALONE" | jq -r '.id')
-run_http ready "$STANDALONE_ID" >/dev/null
-run_http start "$STANDALONE_ID" >/dev/null
+run_http task ready "$STANDALONE_ID" >/dev/null
+run_http task start "$STANDALONE_ID" >/dev/null
 
 COMPLETE_RESP2=$(curl -sf -H "Authorization: Bearer $TEST_TOKEN" -X POST "$API_URL/api/v1/projects/$PROJECT_ID/tasks/$STANDALONE_ID/complete")
 UNBLOCKED_COUNT2=$(echo "$COMPLETE_RESP2" | jq '.unblocked_tasks | length')
@@ -288,12 +288,12 @@ EOF
 
 run_hook_transitions() {
   local t1
-  t1=$(run_http add --title "Hook transition task")
+  t1=$(run_http task add --title "Hook transition task")
   local t1_id
   t1_id=$(echo "$t1" | jq -r '.id')
-  run_http ready "$t1_id" >/dev/null 2>&1
-  run_http start "$t1_id" >/dev/null 2>&1
-  run_http complete "$t1_id" >/dev/null 2>&1
+  run_http task ready "$t1_id" >/dev/null 2>&1
+  run_http task start "$t1_id" >/dev/null 2>&1
+  run_http task complete "$t1_id" >/dev/null 2>&1
 }
 
 echo "[4.1] hooks.enabled = false: API fires, CLI does not"

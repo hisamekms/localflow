@@ -26,7 +26,7 @@ USER_JSON=$(curl -sf -X POST "$API_BASE/users" \
 USER_ID=$(echo "$USER_JSON" | jq -r '.id')
 
 # Add user to project
-run_lf members add --user-id "$USER_ID" --role owner >/dev/null
+run_lf project members add --user-id "$USER_ID" --role owner >/dev/null
 
 # Helper: get HTTP status code (no auth)
 status_no_auth() {

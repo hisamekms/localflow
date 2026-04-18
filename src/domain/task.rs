@@ -1230,7 +1230,7 @@ impl CompletionPolicy {
         let pr_url = task.pr_url().ok_or_else(|| {
             anyhow::anyhow!(
                 "cannot complete task #{}: merge_via is pr but no pr_url is set. \
-                 Use `senko edit {} --pr-url <url>` to set it.",
+                 Use `senko task edit {} --pr-url <url>` to set it.",
                 task.task_number(),
                 task.task_number(),
             )

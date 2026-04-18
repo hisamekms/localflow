@@ -37,41 +37,41 @@ run_without_token() {
 echo "=== Section 1: SENKO_CLI_REMOTE_TOKEN forwarded to upstream ==="
 
 echo "[1] list with SENKO_CLI_REMOTE_TOKEN succeeds"
-LIST=$(run_with_token list)
+LIST=$(run_with_token task list)
 assert_eq "0" "$(echo "$LIST" | jq 'length')" "list: empty initially"
 
 echo "[2] add with SENKO_CLI_REMOTE_TOKEN succeeds"
-TASK=$(run_with_token add --title "Token Relay Task")
+TASK=$(run_with_token task add --title "Token Relay Task")
 TASK_ID=$(echo "$TASK" | jq -r '.id')
 assert_json_field "$TASK" '.title' "Token Relay Task" "add: title"
 
 echo "[3] get with SENKO_CLI_REMOTE_TOKEN succeeds"
-GOT=$(run_with_token get "$TASK_ID")
+GOT=$(run_with_token task get "$TASK_ID")
 assert_json_field "$GOT" '.title' "Token Relay Task" "get: title matches"
 
 echo ""
 echo "=== Section 2: Without SENKO_CLI_REMOTE_TOKEN, operations fail ==="
 
 echo "[4] list without SENKO_CLI_REMOTE_TOKEN fails"
-OUTPUT=$(run_without_token list 2>&1 || true)
+OUTPUT=$(run_without_token task list 2>&1 || true)
 assert_contains "$OUTPUT" "authentication required" "list without token: auth error"
 
 echo "[5] empty SENKO_CLI_REMOTE_TOKEN fails"
 OUTPUT=$(SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="" \
-  "$SENKO" --project-root "$TEST_PROJECT_ROOT" list 2>&1 || true)
+  "$SENKO" --project-root "$TEST_PROJECT_ROOT" task list 2>&1 || true)
 assert_contains "$OUTPUT" "authentication required" "list with empty token: auth error"
 
 echo "[6] invalid SENKO_CLI_REMOTE_TOKEN fails"
 OUTPUT=$(SENKO_CLI_REMOTE_URL="$API_URL" SENKO_CLI_REMOTE_TOKEN="invalid-token-xxxxx" \
-  "$SENKO" --project-root "$TEST_PROJECT_ROOT" list 2>&1 || true)
+  "$SENKO" --project-root "$TEST_PROJECT_ROOT" task list 2>&1 || true)
 assert_contains "$OUTPUT" "authentication required" "list with invalid token: auth error"
 
 echo ""
 echo "=== Section 3: Token not leaked in logs ==="
 
 # Generate additional log entries with the valid token
-run_with_token list >/dev/null 2>&1
-run_with_token get "$TASK_ID" >/dev/null 2>&1
+run_with_token task list >/dev/null 2>&1
+run_with_token task get "$TASK_ID" >/dev/null 2>&1
 
 # Give server a moment to flush logs
 sleep 0.5

@@ -85,45 +85,45 @@ start_upstream
 start_relay  # no relay token — uses PASSTHROUGH_TOKEN
 TEST_TOKEN=$(create_test_user_key "$UPSTREAM_URL" "$MASTER_KEY")
 
-A_ID="$(run_relay add --title "Task A" | jq -r '.id')"
-B_ID="$(run_relay add --title "Task B" | jq -r '.id')"
-C_ID="$(run_relay add --title "Task C" | jq -r '.id')"
+A_ID="$(run_relay task add --title "Task A" | jq -r '.id')"
+B_ID="$(run_relay task add --title "Task B" | jq -r '.id')"
+C_ID="$(run_relay task add --title "Task C" | jq -r '.id')"
 
-run_relay ready "$A_ID" >/dev/null
-run_relay ready "$B_ID" >/dev/null
-run_relay ready "$C_ID" >/dev/null
+run_relay task ready "$A_ID" >/dev/null
+run_relay task ready "$B_ID" >/dev/null
+run_relay task ready "$C_ID" >/dev/null
 
 echo "[1.1] deps add via CLI"
-ADD_OUTPUT="$(run_relay deps add "$A_ID" --on "$B_ID")"
+ADD_OUTPUT="$(run_relay task deps add "$A_ID" --on "$B_ID")"
 assert_contains "$(echo "$ADD_OUTPUT" | jq -r '.dependencies | map(tostring) | join(",")')" "$B_ID" "A depends on B"
 
 echo "[1.2] deps list via CLI"
-LIST_OUTPUT="$(run_relay deps list "$A_ID")"
+LIST_OUTPUT="$(run_relay task deps list "$A_ID")"
 assert_eq "1" "$(echo "$LIST_OUTPUT" | jq 'length')" "deps list shows 1 dependency"
 
 echo "[1.3] deps remove via CLI"
-REMOVE_OUTPUT="$(run_relay deps remove "$A_ID" --on "$B_ID")"
+REMOVE_OUTPUT="$(run_relay task deps remove "$A_ID" --on "$B_ID")"
 assert_eq "0" "$(echo "$REMOVE_OUTPUT" | jq '.dependencies | length')" "A has no deps after remove"
 
 echo "[1.4] deps set via CLI"
-SET_OUTPUT="$(run_relay deps set "$A_ID" --on "$B_ID" "$C_ID")"
+SET_OUTPUT="$(run_relay task deps set "$A_ID" --on "$B_ID" "$C_ID")"
 assert_eq "2" "$(echo "$SET_OUTPUT" | jq '.dependencies | length')" "A has 2 deps after set"
 
 # Clear and test cycle detection
-run_relay deps set "$A_ID" --on >/dev/null 2>&1 || true
-run_relay deps add "$A_ID" --on "$B_ID" >/dev/null
-run_relay deps add "$B_ID" --on "$C_ID" >/dev/null
+run_relay task deps set "$A_ID" --on >/dev/null 2>&1 || true
+run_relay task deps add "$A_ID" --on "$B_ID" >/dev/null
+run_relay task deps add "$B_ID" --on "$C_ID" >/dev/null
 
 echo "[1.5] cycle detection via CLI"
-CYCLE_OUTPUT="$(run_relay deps add "$C_ID" --on "$A_ID" 2>&1 || true)"
+CYCLE_OUTPUT="$(run_relay task deps add "$C_ID" --on "$A_ID" 2>&1 || true)"
 assert_contains "$CYCLE_OUTPUT" "cycle" "cycle detected for C→A"
 
 echo "[1.6] self-dependency via CLI"
-SELF_OUTPUT="$(run_relay deps add "$A_ID" --on "$A_ID" 2>&1 || true)"
+SELF_OUTPUT="$(run_relay task deps add "$A_ID" --on "$A_ID" 2>&1 || true)"
 assert_contains "$SELF_OUTPUT" "itself" "self-dependency error"
 
 echo "[1.7] deps add via direct curl"
-run_relay deps set "$A_ID" --on >/dev/null 2>&1 || true
+run_relay task deps set "$A_ID" --on >/dev/null 2>&1 || true
 CURL_RESULT="$(relay_post "/api/v1/projects/1/tasks/$A_ID/deps" "{\"dep_id\":$B_ID}")"
 assert_contains "$(echo "$CURL_RESULT" | jq -r '.dependencies | map(tostring) | join(",")')" "$B_ID" "curl deps add works"
 
@@ -144,19 +144,19 @@ start_upstream
 start_relay "$MASTER_KEY"
 TEST_TOKEN=$(create_test_user_key "$UPSTREAM_URL" "$MASTER_KEY")
 
-T1_ID="$(run_relay add --title "Token Task 1" | jq -r '.id')"
-T2_ID="$(run_relay add --title "Token Task 2" | jq -r '.id')"
+T1_ID="$(run_relay task add --title "Token Task 1" | jq -r '.id')"
+T2_ID="$(run_relay task add --title "Token Task 2" | jq -r '.id')"
 
 echo "[2.1] deps add with relay token"
-DEP_OUT="$(run_relay deps add "$T1_ID" --on "$T2_ID")"
+DEP_OUT="$(run_relay task deps add "$T1_ID" --on "$T2_ID")"
 assert_contains "$(echo "$DEP_OUT" | jq -r '.dependencies | map(tostring) | join(",")')" "$T2_ID" "deps add with relay token"
 
 echo "[2.2] deps list with relay token"
-DEP_LIST="$(run_relay deps list "$T1_ID")"
+DEP_LIST="$(run_relay task deps list "$T1_ID")"
 assert_eq "1" "$(echo "$DEP_LIST" | jq 'length')" "deps list with relay token"
 
 echo "[2.3] deps remove with relay token"
-DEP_RM="$(run_relay deps remove "$T1_ID" --on "$T2_ID")"
+DEP_RM="$(run_relay task deps remove "$T1_ID" --on "$T2_ID")"
 assert_eq "0" "$(echo "$DEP_RM" | jq '.dependencies | length')" "deps remove with relay token"
 
 echo "[2.4] deps add via direct curl with relay token"

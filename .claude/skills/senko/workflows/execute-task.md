@@ -2,10 +2,10 @@
 
 ## Pre-check
 
-> Skip this step if coming from `senko next` (already validated).
+> Skip this step if coming from `senko task next` (already validated).
 
 ```bash
-senko get <id>
+senko task get <id>
 ```
 
 - Verify `status` is `todo`. If not, inform the user and stop.
@@ -27,7 +27,7 @@ Parse the JSON output (`{"resolved": {...}, "prompts": [...]}`):
 Then transition:
 
 ```bash
-senko start <id> --metadata '<final-metadata-json>'
+senko task start <id> --metadata '<final-metadata-json>'
 ```
 
 Omit `--metadata` entirely if there are no metadata fields to pass.
@@ -38,7 +38,7 @@ Omit `--metadata` entirely if there are no metadata fields to pass.
 
 ### Step 1: Review Task
 
-Read full task info from `senko get <id>` output: `description`, `plan`, `definition_of_done`, `in_scope`, `out_of_scope`, and `contract_id`.
+Read full task info from `senko task get <id>` output: `description`, `plan`, `definition_of_done`, `in_scope`, `out_of_scope`, and `contract_id`.
 
 **If `contract_id` is set (non-null)**, also load the Contract context — these notes are the shared memory across every sub-task that is linked to this Contract:
 
@@ -51,7 +51,7 @@ Surface the Contract's title, description, DoD checklist, and the full note list
 
 ### Step 2: Create Worktree
 
-Use the `branch` field from `senko get <id>` as the branch name. If `branch` is not set (non-repo task), skip worktree creation and proceed to Step 3. Use the `/wth` skill to create a worktree.
+Use the `branch` field from `senko task get <id>` as the branch name. If `branch` is not set (non-repo task), skip worktree creation and proceed to Step 3. Use the `/wth` skill to create a worktree.
 
 ### Step 3: Plan Mode
 
@@ -79,4 +79,4 @@ senko contract note add <contract_id> --content "<text>" --source-task <task_id>
 
 1. **Major design decisions**: as soon as a non-trivial technical choice is made (library or pattern selection, architectural change, non-obvious trade-off), write a note naming the decision and the reason. Do this during planning or implementation, whichever is earlier.
 2. **Pitfalls / surprises**: when a non-obvious bug, undocumented constraint, or reproducible gotcha is hit, record it so the next sibling doesn't repeat the loss. One sentence of what went wrong + one sentence of what to do about it is enough.
-3. **Task-completion summary**: just before running `senko complete <id>` in the Finalization section, add a short summary note — what was done, what is explicitly left for other sub-tasks or the terminal, and any cross-cutting invariants newly established.
+3. **Task-completion summary**: just before running `senko task complete <id>` in the Finalization section, add a short summary note — what was done, what is explicitly left for other sub-tasks or the terminal, and any cross-cutting invariants newly established.

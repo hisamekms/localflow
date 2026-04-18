@@ -66,7 +66,7 @@ senko skill-install
 スキルをインストールしたら、Claude Code内で直接使用できます:
 
 ```
-/senko add ユーザー認証の実装
+/senko task add ユーザー認証の実装
 ```
 対話的な計画フェーズ付きでタスクを追加。Claudeが確認事項を質問し、依存関係を検出し、タスクを確定します。
 
@@ -76,7 +76,7 @@ senko skill-install
 最高優先度の実行可能タスクを自動選択して作業を開始します。
 
 ```
-/senko list
+/senko task list
 ```
 全タスクのステータスと優先度を表示します。
 
@@ -86,7 +86,7 @@ senko skill-install
 タスクの依存関係をテキストベースのグラフで可視化します。
 
 ```
-/senko complete 3
+/senko task complete 3
 ```
 タスク#3を完了としてマーク（DoD項目を先にチェックします）。
 
@@ -132,8 +132,8 @@ auto_merge = false      # デフォルト: true
 カスタムパスの設定ファイルを使用するには、`--config` フラグまたは `SENKO_CONFIG` 環境変数を使用します:
 
 ```bash
-senko --config /path/to/config.toml list
-SENKO_CONFIG=/path/to/config.toml senko list
+senko --config /path/to/config.toml task list
+SENKO_CONFIG=/path/to/config.toml senko task list
 ```
 
 ## マスターAPIキー

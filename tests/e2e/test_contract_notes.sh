@@ -32,7 +32,7 @@ fi
 
 # 2. note add with --source-task
 echo "[2] note add with --source-task"
-TID="$(run_lf --output json add --title "Source Task" | jq -r '.id')"
+TID="$(run_lf --output json task add --title "Source Task" | jq -r '.id')"
 NOTE2="$(run_lf --output json contract note add "$CID" --content "second note" --source-task "$TID")"
 assert_json_field "$NOTE2" '.content' "second note" "note2: content"
 assert_json_field "$NOTE2" '.source_task_id' "$TID" "note2: source_task_id matches task"

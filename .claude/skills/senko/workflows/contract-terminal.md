@@ -7,7 +7,7 @@ This workflow supersedes both `execute-task.md` and `complete-task.md` for termi
 ## Step 1: Pre-check
 
 ```bash
-senko get <id>
+senko task get <id>
 ```
 
 - Verify `status` is `todo` or `in_progress`. If something else, inform the user and stop.
@@ -20,7 +20,7 @@ senko get <id>
   Hold the contract DoD, description, and notes in working context.
 - Enumerate sibling tasks linked to the same Contract and verify they are all `completed`. Use the task's `dependencies` array (set up by `add-task.md` Phase 3) — every ID there should be a completed sub-task. For each dependency ID:
   ```bash
-  senko get <dep_id>
+  senko task get <dep_id>
   ```
   If any dependency is not `completed`, stop and tell the user to finish those first.
 
@@ -30,7 +30,7 @@ If the task is still `todo`, transition it (metadata handling follows `execute-t
 
 ```bash
 bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh start
-senko start <id> --metadata '<final-metadata-json>'   # omit --metadata if empty
+senko task start <id> --metadata '<final-metadata-json>'   # omit --metadata if empty
 ```
 
 Terminal tasks normally have no `branch` set (there's no code change). Skip worktree creation. If a branch IS set, treat this as an exceptional case (perhaps the user wants to commit a follow-up doc or snapshot) and follow the normal `/wth` flow.
@@ -42,7 +42,7 @@ For each Contract DoD item with `"checked": false`:
 1. Launch the `dod-verifier` subagent (via the Agent tool) with:
    - the Contract DoD text for that index
    - the Contract's full note list (decisions, pitfalls, completion summaries from sibling tasks)
-   - the `description`, `plan`, and `definition_of_done` of every linked sub-task (run `senko get <sub_id>` for each)
+   - the `description`, `plan`, and `definition_of_done` of every linked sub-task (run `senko task get <sub_id>` for each)
    - the Contract's title and description for framing
 2. Process the subagent's result for that item:
    - **VERIFIED**: `senko contract dod check <contract_id> <index>`
@@ -57,7 +57,7 @@ Do the DoD items sequentially unless they're clearly independent (the note conte
 
 The Contract is satisfied. Complete the terminal task itself:
 
-1. Run the `dod-verifier` subagent for any unchecked DoD items on the **terminal task** (its own DoD, typically just `"Verify Contract DoD items"` seeded in `add-task.md`). Process results the same way (VERIFIED → `senko dod check`, NEEDS_USER_APPROVAL → ask, NOT_ACHIEVED → address it).
+1. Run the `dod-verifier` subagent for any unchecked DoD items on the **terminal task** (its own DoD, typically just `"Verify Contract DoD items"` seeded in `add-task.md`). Process results the same way (VERIFIED → `senko task dod check`, NEEDS_USER_APPROVAL → ask, NOT_ACHIEVED → address it).
 2. Record a closing note on the Contract:
    ```bash
    senko contract note add <contract_id> \
@@ -68,7 +68,7 @@ The Contract is satisfied. Complete the terminal task itself:
 
 4. Complete:
    ```bash
-   senko complete <id>
+   senko task complete <id>
    ```
 
    Remind the user to clean up any worktree with `/wth rm`.
@@ -82,19 +82,19 @@ The Contract is not satisfied. Create follow-up tasks linked to the same Contrac
    - Confirm each follow-up with the user via `AskUserQuestion` before creating it. Allow the user to amend or drop any proposal.
 2. **Create each follow-up task** (reuse `add-task.md` Phase 4 wiring: title, description, priority, tags, DoD, branch, `ready`):
    ```bash
-   senko add --title "<title>" --assignee-user-id self
-   senko edit <new_id> --contract <contract_id> --description "<text>" \
+   senko task add --title "<title>" --assignee-user-id self
+   senko task edit <new_id> --contract <contract_id> --description "<text>" \
      --add-definition-of-done "<dod 1>"   # repeat for each DoD
    # ...branch setting per add-task.md Phase 4 step 4...
-   senko ready <new_id>
+   senko task ready <new_id>
    ```
 3. **Create a new terminal task** that depends on the new follow-ups:
    ```bash
-   senko add --title "Verify contract: <contract title> (retry)" --assignee-user-id self
-   senko edit <new_term_id> --contract <contract_id> --add-tag contract-terminal \
+   senko task add --title "Verify contract: <contract title> (retry)" --assignee-user-id self
+   senko task edit <new_term_id> --contract <contract_id> --add-tag contract-terminal \
      --add-definition-of-done "Verify Contract DoD items"
-   senko deps set <new_term_id> --on <follow_up_1> <follow_up_2>
-   senko ready <new_term_id>
+   senko task deps set <new_term_id> --on <follow_up_1> <follow_up_2>
+   senko task ready <new_term_id>
    ```
 4. **Record a Contract note** explaining the gap and the retry plan (one note is enough):
    ```bash
@@ -104,7 +104,7 @@ The Contract is not satisfied. Create follow-up tasks linked to the same Contrac
    ```
 5. **Cancel the current terminal task** — it has fulfilled its purpose (discovering the gap) and a fresh one is in place:
    ```bash
-   senko cancel <id> --reason "Contract DoDs not met; follow-ups <fu1>, <fu2>; new terminal <new_term_id>"
+   senko task cancel <id> --reason "Contract DoDs not met; follow-ups <fu1>, <fu2>; new terminal <new_term_id>"
    ```
 
 Display the new task graph to the user so they can pick up where the terminal left off.

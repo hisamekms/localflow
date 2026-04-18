@@ -85,21 +85,21 @@ count_log_entries() {
 # Run all four transitions: ready, start, complete (task 1), ready + cancel (task 2)
 run_transitions() {
   local t1
-  t1=$(run_http add --title "Transition task 1")
+  t1=$(run_http task add --title "Transition task 1")
   local t1_id
   t1_id=$(echo "$t1" | jq -r '.id')
 
-  run_http ready "$t1_id" >/dev/null 2>&1
-  run_http start "$t1_id" >/dev/null 2>&1
-  run_http complete "$t1_id" >/dev/null 2>&1
+  run_http task ready "$t1_id" >/dev/null 2>&1
+  run_http task start "$t1_id" >/dev/null 2>&1
+  run_http task complete "$t1_id" >/dev/null 2>&1
 
   local t2
-  t2=$(run_http add --title "Transition task 2")
+  t2=$(run_http task add --title "Transition task 2")
   local t2_id
   t2_id=$(echo "$t2" | jq -r '.id')
 
-  run_http ready "$t2_id" >/dev/null 2>&1
-  run_http cancel "$t2_id" --reason "test cancel" >/dev/null 2>&1
+  run_http task ready "$t2_id" >/dev/null 2>&1
+  run_http task cancel "$t2_id" --reason "test cancel" >/dev/null 2>&1
 }
 
 assert_gte() {

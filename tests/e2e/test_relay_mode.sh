@@ -93,7 +93,7 @@ start_servers
 echo "--- Section 1: Task CRUD via relay ---"
 
 echo "[1.1] Create task"
-TASK1=$(run_relay add --title "Relay Task 1" --description "Created via relay" --priority p1)
+TASK1=$(run_relay task add --title "Relay Task 1" --description "Created via relay" --priority p1)
 TASK1_ID=$(echo "$TASK1" | jq -r '.id')
 assert_json_field "$TASK1" '.title' "Relay Task 1" "create: title"
 assert_json_field "$TASK1" '.status' "draft" "create: status is draft"
@@ -101,13 +101,13 @@ assert_json_field "$TASK1" '.priority' "P1" "create: priority"
 assert_json_field "$TASK1" '.description' "Created via relay" "create: description"
 
 echo "[1.2] Get task"
-GOT=$(run_relay get "$TASK1_ID")
+GOT=$(run_relay task get "$TASK1_ID")
 assert_json_field "$GOT" '.id' "$TASK1_ID" "get: correct id"
 assert_json_field "$GOT" '.title' "Relay Task 1" "get: correct title"
 
 echo "[1.3] Edit task"
-run_relay edit "$TASK1_ID" --title "Relay Task 1 Updated" --add-tag relay >/dev/null
-EDITED=$(run_relay get "$TASK1_ID")
+run_relay task edit "$TASK1_ID" --title "Relay Task 1 Updated" --add-tag relay >/dev/null
+EDITED=$(run_relay task get "$TASK1_ID")
 assert_json_field "$EDITED" '.title' "Relay Task 1 Updated" "edit: title updated"
 assert_contains "$(echo "$EDITED" | jq -r '.tags[]')" "relay" "edit: tag added"
 
@@ -116,7 +116,7 @@ DEL_STATUS=$(relay_api_status -X DELETE "$RELAY_URL/api/v1/projects/1/tasks/$TAS
 assert_eq "204" "$DEL_STATUS" "delete: returns 204"
 
 echo "[1.5] Verify deleted task is gone"
-LIST_AFTER_DEL=$(run_relay list)
+LIST_AFTER_DEL=$(run_relay task list)
 REMAINING=$(echo "$LIST_AFTER_DEL" | jq "[.[] | select(.id == $TASK1_ID)] | length")
 assert_eq "0" "$REMAINING" "delete: task no longer in list"
 
@@ -126,57 +126,57 @@ assert_eq "0" "$REMAINING" "delete: task no longer in list"
 echo "--- Section 2: Status transitions via relay ---"
 
 echo "[2.1] Create and ready task"
-TASK2=$(run_relay add --title "Transition Task")
+TASK2=$(run_relay task add --title "Transition Task")
 TASK2_ID=$(echo "$TASK2" | jq -r '.id')
-READY=$(run_relay ready "$TASK2_ID")
+READY=$(run_relay task ready "$TASK2_ID")
 assert_json_field "$READY" '.status' "todo" "ready: status is todo"
 
 echo "[2.2] Start task"
-STARTED=$(run_relay start "$TASK2_ID")
+STARTED=$(run_relay task start "$TASK2_ID")
 assert_json_field "$STARTED" '.status' "in_progress" "start: status is in_progress"
 
 echo "[2.3] Complete task"
-COMPLETED=$(run_relay complete "$TASK2_ID")
+COMPLETED=$(run_relay task complete "$TASK2_ID")
 assert_json_field "$COMPLETED" '.status' "completed" "complete: status is completed"
 
 echo "[2.4] Create, ready, and cancel task"
-TASK3=$(run_relay add --title "Cancel Task")
+TASK3=$(run_relay task add --title "Cancel Task")
 TASK3_ID=$(echo "$TASK3" | jq -r '.id')
-run_relay ready "$TASK3_ID" >/dev/null
-CANCELED=$(run_relay cancel "$TASK3_ID" --reason "not needed")
+run_relay task ready "$TASK3_ID" >/dev/null
+CANCELED=$(run_relay task cancel "$TASK3_ID" --reason "not needed")
 assert_json_field "$CANCELED" '.status' "canceled" "cancel: status is canceled"
 assert_json_field "$CANCELED" '.cancel_reason' "not needed" "cancel: reason set"
 
 echo "[2.5] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
-TASK4=$(run_relay add --title "Next Candidate" --priority p0 --assignee-user-id self --definition-of-done "Next DoD")
+TASK4=$(run_relay task add --title "Next Candidate" --priority p0 --assignee-user-id self --definition-of-done "Next DoD")
 TASK4_ID=$(echo "$TASK4" | jq -r '.id')
-run_relay ready "$TASK4_ID" >/dev/null
-NEXT=$(run_relay next)
+run_relay task ready "$TASK4_ID" >/dev/null
+NEXT=$(run_relay task next)
 assert_json_field "$NEXT" '.status' "in_progress" "next: auto-starts task"
 assert_json_field "$NEXT" '.title' "Next Candidate" "next: picks correct task"
-run_relay dod check "$TASK4_ID" 1 >/dev/null
-run_relay complete "$TASK4_ID" >/dev/null
+run_relay task dod check "$TASK4_ID" 1 >/dev/null
+run_relay task complete "$TASK4_ID" >/dev/null
 
 # ========================================
 # Section 3: Dependencies (DoD #3)
 # ========================================
 echo "--- Section 3: Dependencies via relay ---"
 
-PARENT=$(run_relay add --title "Dep Parent")
+PARENT=$(run_relay task add --title "Dep Parent")
 PARENT_ID=$(echo "$PARENT" | jq -r '.id')
-CHILD=$(run_relay add --title "Dep Child")
+CHILD=$(run_relay task add --title "Dep Child")
 CHILD_ID=$(echo "$CHILD" | jq -r '.id')
 
 echo "[3.1] Add dependency"
-DEP_ADDED=$(run_relay deps add "$CHILD_ID" --on "$PARENT_ID")
+DEP_ADDED=$(run_relay task deps add "$CHILD_ID" --on "$PARENT_ID")
 assert_contains "$(echo "$DEP_ADDED" | jq -r '.dependencies[]')" "$PARENT_ID" "deps add: dependency added"
 
 echo "[3.2] List dependencies"
-DEPS_LIST=$(run_relay deps list "$CHILD_ID")
+DEPS_LIST=$(run_relay task deps list "$CHILD_ID")
 assert_eq "1" "$(echo "$DEPS_LIST" | jq 'length')" "deps list: 1 dependency"
 
 echo "[3.3] Remove dependency"
-DEP_REMOVED=$(run_relay deps remove "$CHILD_ID" --on "$PARENT_ID")
+DEP_REMOVED=$(run_relay task deps remove "$CHILD_ID" --on "$PARENT_ID")
 assert_eq "0" "$(echo "$DEP_REMOVED" | jq '.dependencies | length')" "deps remove: dependency removed"
 
 # ========================================
@@ -184,27 +184,27 @@ assert_eq "0" "$(echo "$DEP_REMOVED" | jq '.dependencies | length')" "deps remov
 # ========================================
 echo "--- Section 4: DoD operations via relay ---"
 
-TASK5=$(run_relay add --title "DoD Task" --definition-of-done "Write tests" --definition-of-done "Deploy")
+TASK5=$(run_relay task add --title "DoD Task" --definition-of-done "Write tests" --definition-of-done "Deploy")
 TASK5_ID=$(echo "$TASK5" | jq -r '.id')
-run_relay ready "$TASK5_ID" >/dev/null
-run_relay start "$TASK5_ID" >/dev/null
+run_relay task ready "$TASK5_ID" >/dev/null
+run_relay task start "$TASK5_ID" >/dev/null
 
 echo "[4.1] DoD check"
-DOD_CHECKED=$(run_relay dod check "$TASK5_ID" 1)
+DOD_CHECKED=$(run_relay task dod check "$TASK5_ID" 1)
 assert_eq "true" "$(echo "$DOD_CHECKED" | jq '.definition_of_done[0].checked')" "dod check: item 1 checked"
 
 echo "[4.2] DoD uncheck"
-DOD_UNCHECKED=$(run_relay dod uncheck "$TASK5_ID" 1)
+DOD_UNCHECKED=$(run_relay task dod uncheck "$TASK5_ID" 1)
 assert_eq "false" "$(echo "$DOD_UNCHECKED" | jq '.definition_of_done[0].checked')" "dod uncheck: item 1 unchecked"
 
 echo "[4.3] Complete with unchecked DoD should fail"
-COMPLETE_FAIL=$(run_relay complete "$TASK5_ID" 2>&1 || true)
+COMPLETE_FAIL=$(run_relay task complete "$TASK5_ID" 2>&1 || true)
 assert_contains "$COMPLETE_FAIL" "unchecked DoD" "complete with unchecked DoD fails"
 
 echo "[4.4] Check all DoD and complete"
-run_relay dod check "$TASK5_ID" 1 >/dev/null
-run_relay dod check "$TASK5_ID" 2 >/dev/null
-COMPLETED5=$(run_relay complete "$TASK5_ID")
+run_relay task dod check "$TASK5_ID" 1 >/dev/null
+run_relay task dod check "$TASK5_ID" 2 >/dev/null
+COMPLETED5=$(run_relay task complete "$TASK5_ID")
 assert_json_field "$COMPLETED5" '.status' "completed" "complete after all DoD checked"
 
 # ========================================
@@ -242,32 +242,32 @@ run_relay project metadata-field remove --name points >/dev/null
 echo "--- Section 7: Metadata happy path via relay ---"
 
 echo "[7.1] Create task with DoD and assignee=self"
-META_TASK=$(run_relay add --title "Metadata Relay Task" \
+META_TASK=$(run_relay task add --title "Metadata Relay Task" \
   --assignee-user-id self \
   --definition-of-done "Write tests" --definition-of-done "Review code")
 META_TASK_ID=$(echo "$META_TASK" | jq -r '.id')
 assert_json_field "$META_TASK" '.status' "draft" "meta: created as draft"
 
 echo "[7.2] Ready task"
-run_relay ready "$META_TASK_ID" >/dev/null
+run_relay task ready "$META_TASK_ID" >/dev/null
 
 echo "[7.3] Start via next --metadata"
-NEXT_META=$(run_relay next --metadata '{"sprint":"v1","points":5}')
+NEXT_META=$(run_relay task next --metadata '{"sprint":"v1","points":5}')
 assert_json_field "$NEXT_META" '.status' "in_progress" "meta: next starts task"
 assert_json_field "$NEXT_META" '.metadata.sprint' "v1" "meta: metadata.sprint set via next"
 assert_json_field "$NEXT_META" '.metadata.points' "5" "meta: metadata.points set via next"
 
 echo "[7.4] Verify metadata persisted (get)"
-META_GOT=$(run_relay get "$META_TASK_ID")
+META_GOT=$(run_relay task get "$META_TASK_ID")
 assert_json_field "$META_GOT" '.metadata.sprint' "v1" "meta: metadata.sprint persisted"
 assert_json_field "$META_GOT" '.metadata.points' "5" "meta: metadata.points persisted"
 
 echo "[7.5] Check DoD items"
-run_relay dod check "$META_TASK_ID" 1 >/dev/null
-run_relay dod check "$META_TASK_ID" 2 >/dev/null
+run_relay task dod check "$META_TASK_ID" 1 >/dev/null
+run_relay task dod check "$META_TASK_ID" 2 >/dev/null
 
 echo "[7.6] Complete task"
-META_COMPLETED=$(run_relay complete "$META_TASK_ID")
+META_COMPLETED=$(run_relay task complete "$META_TASK_ID")
 assert_json_field "$META_COMPLETED" '.status' "completed" "meta: task completed"
 assert_json_field "$META_COMPLETED" '.metadata.sprint' "v1" "meta: metadata survives complete"
 
@@ -314,16 +314,16 @@ start_servers
 run_lf hooks log --clear >/dev/null 2>&1 || true
 
 # Run transitions through relay
-HOOK_T1=$(run_relay add --title "Hook Task 1")
+HOOK_T1=$(run_relay task add --title "Hook Task 1")
 HOOK_T1_ID=$(echo "$HOOK_T1" | jq -r '.id')
-run_relay ready "$HOOK_T1_ID" >/dev/null
-run_relay start "$HOOK_T1_ID" >/dev/null
-run_relay complete "$HOOK_T1_ID" >/dev/null
+run_relay task ready "$HOOK_T1_ID" >/dev/null
+run_relay task start "$HOOK_T1_ID" >/dev/null
+run_relay task complete "$HOOK_T1_ID" >/dev/null
 
-HOOK_T2=$(run_relay add --title "Hook Task 2")
+HOOK_T2=$(run_relay task add --title "Hook Task 2")
 HOOK_T2_ID=$(echo "$HOOK_T2" | jq -r '.id')
-run_relay ready "$HOOK_T2_ID" >/dev/null
-run_relay cancel "$HOOK_T2_ID" --reason "test cancel" >/dev/null
+run_relay task ready "$HOOK_T2_ID" >/dev/null
+run_relay task cancel "$HOOK_T2_ID" --reason "test cancel" >/dev/null
 
 sleep 1
 

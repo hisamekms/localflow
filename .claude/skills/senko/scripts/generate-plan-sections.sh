@@ -65,7 +65,7 @@ emit_metadata_step() {
     echo "  1. Run \`bash \${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh ${stage}\`"
     echo "  2. If \`prompts\` array is non-empty, ask the user each prompt using \`AskUserQuestion\`"
     echo "  3. Merge answers into \`resolved\`, then shallow-merge into existing task metadata"
-    echo "  4. Save: \`senko edit ${task_id} --metadata '<merged-json>'\`"
+    echo "  4. Save: \`senko task edit ${task_id} --metadata '<merged-json>'\`"
   fi
 }
 
@@ -74,7 +74,7 @@ cat <<EOF
 # Pre-start
 - Save this plan to the task:
   1. Write the full approved plan text to a temporary file (e.g., \`/tmp/senko-plan-${TASK_ID}.md\`)
-  2. Run \`senko edit ${TASK_ID} --plan-file /tmp/senko-plan-${TASK_ID}.md\`
+  2. Run \`senko task edit ${TASK_ID} --plan-file /tmp/senko-plan-${TASK_ID}.md\`
   3. Delete the temporary file
 - This must be done before starting implementation.
 EOF
@@ -88,10 +88,10 @@ cat <<'HEADER'
 
 # Finalization
 - When implementation is done, verify DoD items using the dod-verifier subagent:
-  1. Run `senko get <id>` and check `definition_of_done` for unchecked items
+  1. Run `senko task get <id>` and check `definition_of_done` for unchecked items
   2. Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
   3. Process the subagent's results for each item:
-     - **VERIFIED**: `senko dod check <id> <index>`
+     - **VERIFIED**: `senko task dod check <id> <index>`
      - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
      - **NOT_ACHIEVED**: Go back and implement the missing item, then re-verify
   4. All DoD items must be checked before proceeding
@@ -118,7 +118,7 @@ if [ "$MERGE_VIA" = "direct" ]; then
 elif [ "$MERGE_VIA" = "pr" ]; then
   cat <<PREOF
 - Create PR (all DoD items must be checked before this step)
-- After creating the PR, save the PR URL: \`senko edit ${TASK_ID} --pr-url <pr_url>\`
+- After creating the PR, save the PR URL: \`senko task edit ${TASK_ID} --pr-url <pr_url>\`
 - Begin PR polling loop:
   1. Run \`gh pr view <pr_url> --json state,reviews,comments\`
   2. If there are new review comments or requested changes:
@@ -138,9 +138,9 @@ emit_hooks "complete" "pre_hooks"
 emit_instructions "complete"
 
 if [ "$MERGE_VIA" = "pr" ]; then
-  echo "- **Do NOT run \`senko complete\` in this workflow.** Task completion for PR-based workflows is handled separately via \`/senko complete ${TASK_ID}\`."
+  echo "- **Do NOT run \`senko task complete\` in this workflow.** Task completion for PR-based workflows is handled separately via \`/senko complete ${TASK_ID}\`."
 else
-  echo "- Complete the task: \`senko complete ${TASK_ID}\`"
+  echo "- Complete the task: \`senko task complete ${TASK_ID}\`"
 fi
 
 # --- Post-completion ---
