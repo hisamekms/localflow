@@ -26,3 +26,10 @@ Project root is detected by searching for `.senko/`, `.git/`, or using the curre
 cargo test                    # Unit tests
 bash tests/e2e/run.sh         # E2E tests
 ```
+
+## Dependency Updates
+
+- **Cargo / GitHub Actions**: managed by Dependabot (`.github/dependabot.yml`).
+- **mise tool versions** (`mise.toml`, `mise.host.toml`): managed by Renovate (`renovate.json5`).
+
+Renovate waits at least 7 days after a release before opening a PR. Automerge is disabled on both sides — every bump gets a manual review.

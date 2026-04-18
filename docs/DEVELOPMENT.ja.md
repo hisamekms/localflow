@@ -26,3 +26,10 @@ draft → todo → in_progress → completed
 cargo test                    # ユニットテスト
 bash tests/e2e/run.sh         # E2Eテスト
 ```
+
+## 依存バージョン更新
+
+- **Cargo / GitHub Actions**: Dependabot が管理（`.github/dependabot.yml`）。
+- **mise のツールバージョン**（`mise.toml`, `mise.host.toml`）: Renovate が管理（`renovate.json5`）。
+
+Renovate はリリース後 7 日以上経過したバージョンのみ PR を作成します。どちらも automerge は無効で、すべてのバンプは手動レビューを通します。

@@ -1,0 +1,85 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  // ---------------------------------------------------------------------------
+  // Purpose
+  // ---------------------------------------------------------------------------
+  // This Renovate config is scoped to managing mise-pinned tool versions only.
+  //
+  // Cargo dependencies and GitHub Actions are already handled by Dependabot
+  // (see .github/dependabot.yml). Renovate covers the gap for mise, which
+  // Dependabot does not support.
+  //
+  // Target files at the repo root:
+  //   - mise.toml        (committed; tracked by default mise manager)
+  //   - mise.host.toml   (may or may not exist; picked up via managerFilePatterns)
+  //
+  // Designed to work with the Renovate GitHub App out of the box.
+  // ---------------------------------------------------------------------------
+
+  extends: [
+    // Minimal, battle-tested defaults used by the GitHub App's onboarding PR.
+    // Includes :dependencyDashboard, reasonable PR limits, semver behavior, etc.
+    "config:recommended",
+  ],
+
+  // Scope Renovate tightly to mise only. Other managers are disabled so
+  // Renovate does not overlap with Dependabot's scope.
+  enabledManagers: ["mise"],
+
+  // The built-in mise manager matches `mise.toml` / `.mise.toml` /
+  // `.config/mise/config.toml` by default, but NOT `mise.host.toml`.
+  // Override the file patterns so both files are picked up by the standard
+  // mise manager (no custom manager needed).
+  //
+  // Note: `managerFilePatterns` replaces the default list, so we must list
+  // every pattern we want matched.
+  mise: {
+    managerFilePatterns: [
+      "/(^|/)mise\\.toml$/",
+      "/(^|/)mise\\.host\\.toml$/",
+    ],
+  },
+
+  // Wait 7 days after a release before opening a PR. Filters out versions
+  // that get yanked or patched shortly after release.
+  minimumReleaseAge: "7 days",
+
+  // Keep PR noise low while we're getting comfortable with Renovate.
+  // Tune upward once the steady-state volume is known.
+  prHourlyLimit: 2,
+  prConcurrentLimit: 5,
+
+  // Separate update types so breaking changes are visible.
+  // (Both default to true under config:recommended; kept explicit for clarity.)
+  separateMajorMinor: true,
+  separateMinorPatch: true,
+
+  // Surface pending/rate-limited updates in a tracking issue so nothing
+  // is silently skipped when prConcurrentLimit is hit.
+  dependencyDashboard: true,
+
+  // Safety-first: no automerge. Every bump goes through manual review.
+  automerge: false,
+
+  packageRules: [
+    // Common labels for anything Renovate opens here.
+    {
+      matchManagers: ["mise"],
+      addLabels: ["dependencies", "mise"],
+    },
+    // Group non-breaking updates to reduce PR count.
+    {
+      matchManagers: ["mise"],
+      matchUpdateTypes: ["minor", "patch"],
+      groupName: "mise minor/patch updates",
+      addLabels: ["minor-patch"],
+    },
+    // Major bumps stay as individual PRs so they can be reviewed carefully.
+    {
+      matchManagers: ["mise"],
+      matchUpdateTypes: ["major"],
+      addLabels: ["major"],
+    },
+  ],
+}
