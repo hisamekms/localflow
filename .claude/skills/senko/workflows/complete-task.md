@@ -1,5 +1,7 @@
 # Complete Task
 
+> **Terminal-task redirect**: if the task carries the `contract-terminal` tag, do NOT follow this file. Use `${CLAUDE_SKILL_DIR}/workflows/contract-terminal.md` — terminal completion is integrated with Contract DoD verification (including the create-follow-ups path on failure).
+
 Mark a task as completed. `complete` will fail if any DoD items are unchecked.
 
 ```bash

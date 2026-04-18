@@ -58,6 +58,7 @@ Parse `$ARGUMENTS` with these rules (check in order):
 | `${CLAUDE_SKILL_DIR}/workflows/dependency-graph.md` | Visualize dependency graph |
 | `${CLAUDE_SKILL_DIR}/workflows/execute-task.md` | Execute a task (worktree, plan, implement) |
 | `${CLAUDE_SKILL_DIR}/workflows/complete-task.md` | Complete a task (DoD verification, PR checks) |
+| `${CLAUDE_SKILL_DIR}/workflows/contract-terminal.md` | Execute and complete a `contract-terminal` task (verify Contract DoD; spawn follow-ups on gaps) |
 | `${CLAUDE_SKILL_DIR}/workflows/dod-check.md` | Check/uncheck Definition of Done items |
 | `${CLAUDE_SKILL_DIR}/workflows/cancel-task.md` | Cancel a task |
 | `${CLAUDE_SKILL_DIR}/workflows/manage-dependencies.md` | Add, remove, list dependencies |

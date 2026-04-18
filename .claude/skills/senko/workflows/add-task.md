@@ -34,6 +34,20 @@ Once all questions are resolved, **decide whether to split the task**. Consider 
 
 If splitting, define the sub-tasks with their titles and relationships. Ask the user via `AskUserQuestion` to confirm the proposed split.
 
+#### Phase 1.5: Contract draft (split path only)
+
+> Skip this sub-phase when keeping the task as a single task. Contracts are enforced **only** when the task is split.
+
+Splitting requires a Contract — a shared aggregate that carries the Definition of Done the sub-tasks collectively satisfy, and that a terminal task verifies at the end. Prepare the Contract draft now (do not create it yet; Phase 2 issues the `senko contract add` call with the other writes).
+
+1. **Derive a draft from the original task**:
+   - `contract_title`: the original task title (or a slightly generalized phrasing)
+   - `contract_description`: a summary of the combined goal that all sub-tasks serve
+   - `contract_definition_of_done`: the DoD items the **whole split** must satisfy — things that are cross-cutting and can only be verified across sub-tasks (e.g. end-to-end behavior, integration tests, removed dead code, consistent API surface). Per-sub-task DoD stays on the individual sub-tasks.
+   - `contract_tags`: optional; useful for grouping contracts of the same feature or initiative.
+2. **Confirm with the user via `AskUserQuestion`** — ask whether the derived title, description, and DoD items are acceptable. Let the user accept, amend, or reject any field. Loop until the user is satisfied.
+3. Record the confirmed values in local state for Phase 2.
+
 ### Phase 2: Draft Creation
 
 #### Build add metadata
@@ -61,15 +75,61 @@ senko add --title "<title>" --assignee-user-id self --metadata '<metadata-json>'
 
 **Multiple tasks (split):**
 
-```bash
-senko add --title "<sub-task 1 title>" --assignee-user-id self --metadata '<metadata-json>'
-senko add --title "<sub-task 2 title>" --assignee-user-id self --metadata '<metadata-json>'
-# ...
-```
+The split path has a strict ordering — Contract must exist before the sub-tasks and terminal task can link to it.
+
+1. **Create the Contract first** (using the draft confirmed in Phase 1.5):
+
+   ```bash
+   senko contract add \
+     --title "<contract_title>" \
+     --description "<contract_description>" \
+     --definition-of-done "<dod 1>" \
+     --definition-of-done "<dod 2>"
+     # ... --tag for each contract_tag
+   ```
+
+   Capture the `id` from the JSON output — refer to it as `$CONTRACT_ID` below.
+
+2. **Create each sub-task**:
+
+   ```bash
+   senko add --title "<sub-task 1 title>" --assignee-user-id self --metadata '<metadata-json>'
+   senko add --title "<sub-task 2 title>" --assignee-user-id self --metadata '<metadata-json>'
+   # ...
+   ```
+
+   Capture each `id` — refer to them as `$SUB_ID_1`, `$SUB_ID_2`, …
+
+3. **Auto-create the terminal task** — its sole job is to verify `$CONTRACT_ID` at the end:
+
+   ```bash
+   senko add --title "Verify contract: <contract_title>" --assignee-user-id self
+   ```
+
+   Capture the `id` as `$TERMINAL_ID`.
+
+4. **Link every task (sub-tasks + terminal) to the Contract**:
+
+   ```bash
+   senko edit $SUB_ID_1 --contract $CONTRACT_ID
+   senko edit $SUB_ID_2 --contract $CONTRACT_ID
+   # ...
+   senko edit $TERMINAL_ID --contract $CONTRACT_ID --add-tag contract-terminal \
+     --add-definition-of-done "Verify Contract DoD items"
+   ```
+
+   The `contract-terminal` tag is what lets the skill route the terminal task to the Contract-verification workflow at execute/complete time. Do NOT omit it.
+
+5. **Record a Contract note** summarizing the split (this seeds the shared memory for the sub-tasks):
+
+   ```bash
+   senko contract note add $CONTRACT_ID \
+     --content "Contract created at task split. Sub-tasks: $SUB_ID_1, $SUB_ID_2, ...; terminal: $TERMINAL_ID."
+   ```
 
 Omit `--metadata` entirely if there are no metadata fields to pass.
 
-Capture the `id` from each JSON output for subsequent phases.
+Capture all the IDs for Phase 3.
 
 ### Phase 3: Dependency Setup
 
@@ -83,7 +143,13 @@ senko list --status todo --status in_progress
 
 2. For **split tasks**: set dependencies between the new tasks where one must complete before another can start (sequential relationships). Tasks that can run in parallel should have no dependency between them.
 
-3. For **all new tasks**: check if any depend on existing active tasks.
+3. For **split tasks**: the terminal task (`$TERMINAL_ID`) must depend on **every** sub-task so it only becomes ready once all sub-tasks are completed:
+
+   ```bash
+   senko deps set $TERMINAL_ID --on $SUB_ID_1 $SUB_ID_2  # ...and every other sub-task ID
+   ```
+
+4. For **all new tasks**: check if any depend on existing active tasks.
 
 ```bash
 senko deps add <task_id> --on <dep_id>
@@ -129,7 +195,9 @@ senko edit <id> \
 senko ready <id>
 ```
 
-Display the finalized task details (or task graph if multiple) to the user.
+**Note on the terminal task**: its `--add-definition-of-done "Verify Contract DoD items"` (set in Phase 2 step 4) is usually the only DoD it needs. The user may add more in Phase 4 if the split has side-artifacts that should be verified at the terminal step. Its branch can be set with the normal `branch_template` flow — no special handling.
+
+Display the finalized task details (or task graph if multiple) to the user. For split paths, also print `$CONTRACT_ID` so the user can reference it in subsequent sessions.
 
 ---
 

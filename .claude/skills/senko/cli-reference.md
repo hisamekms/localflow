@@ -48,6 +48,31 @@ senko deps remove <task_id> --on <dep_id>
 senko deps set <task_id> --on <dep_id1> <dep_id2>
 senko deps list <task_id>
 
+# Contract — independent aggregate shared by sub-tasks of a split
+senko contract add --title "Title" [--description "..."] [--definition-of-done "..." ...] [--tag ...] [--metadata '{...}']
+senko contract add --from-json                       # read JSON from stdin
+senko contract add --from-json-file <path>
+senko contract list [--tag <tag>]                    # filtered list
+senko contract get <id>
+senko contract edit <id> --title "New" --add-tag demo --add-definition-of-done "Verify X"
+senko contract edit <id> --description "..." | --clear-description
+senko contract edit <id> --metadata '{"k":"v"}' | --replace-metadata '{...}' | --clear-metadata
+senko contract edit <id> --set-tags t1 t2 | --add-tag t | --remove-tag t
+senko contract edit <id> --set-definition-of-done "a" "b" | --add-definition-of-done "c" | --remove-definition-of-done "a"
+senko contract delete <id>
+
+# Contract DoD (1-based index, same semantics as task DoD)
+senko contract dod check <contract_id> <index>
+senko contract dod uncheck <contract_id> <index>
+
+# Contract notes (append-only, timestamped by server)
+senko contract note add <contract_id> --content "..." [--source-task <task_id>]
+senko contract note list <contract_id>
+
+# Link a task to a contract (reuses the existing `edit` command)
+senko edit <task_id> --contract <contract_id>        # set link
+senko edit <task_id> --clear-contract                # remove link
+
 # Configuration
 senko config                           # show current configuration
 senko config --init                    # generate template config.toml
@@ -83,4 +108,11 @@ senko config --init                    # generate template config.toml
   - `add.default_dod` / `add.default_tags` / `add.default_priority`: defaults for new tasks
   - `plan.required_sections`: required sections in implementation plans
   - When `merge_via = "pr"`, `complete` requires `pr_url` to be set and the PR to be merged (checked via `gh`). Use `--skip-pr-check` to bypass.
+
+## Contract semantics
+
+- **No status field.** A contract is "completed" iff it has at least one DoD item and every DoD item is checked. Empty DoD always returns false. The `senko contract get` JSON response includes a computed `is_completed` boolean for convenience.
+- **Notes are append-only** and server-timestamped. Each note carries `content`, optional `source_task_id`, and `created_at`. There is no update / delete; corrections are expressed by adding a new note.
+- **Task ↔ Contract link is directional.** A task carries an `Option<i64> contract_id`; contracts do not hold a list of task IDs. Use `senko list --tag <contract-terminal or other>` combined with `senko get | jq .contract_id` if you need to enumerate siblings — or query the Contract notes (which the skill populates) to find authoritative source tasks.
+- **`contract-terminal` tag** is a skill-level convention marking a task whose sole job is to verify the Contract's DoD items at the end of a split. See `workflows/contract-terminal.md`.
 
