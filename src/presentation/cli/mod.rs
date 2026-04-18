@@ -108,6 +108,80 @@ pub struct DryRunOperation {
 #[derive(Debug, Subcommand)]
 #[allow(clippy::large_enum_variant)]
 pub enum Command {
+    /// Manage tasks
+    Task {
+        #[command(subcommand)]
+        action: TaskAction,
+    },
+    /// Start a read-only web viewer
+    Web {
+        /// Port to listen on (env: SENKO_PORT, default: 3141)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Bind address, e.g. 0.0.0.0 or 192.168.1.5 (env: SENKO_HOST, default: 127.0.0.1)
+        #[arg(long)]
+        host: Option<String>,
+    },
+    /// Start a JSON REST API server
+    Serve {
+        /// Port to listen on (env: SENKO_PORT, default: 3142)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Bind address, e.g. 0.0.0.0 or 192.168.1.5 (env: SENKO_HOST, default: 127.0.0.1)
+        #[arg(long)]
+        host: Option<String>,
+    },
+    /// Install a skill
+    SkillInstall {
+        /// Output directory for SKILL.md
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+        /// Skip confirmation prompts
+        #[arg(long)]
+        yes: bool,
+        /// Clean install: remove existing install directories before installing
+        #[arg(long)]
+        force: bool,
+    },
+    /// Manage hooks
+    Hooks {
+        #[command(subcommand)]
+        command: HooksCommand,
+    },
+    /// Check hook configuration for issues
+    Doctor,
+    /// Show or initialize workflow configuration
+    #[command(name = "config")]
+    Config {
+        /// Generate a template config.toml
+        #[arg(long)]
+        init: bool,
+    },
+    /// Manage projects
+    Project {
+        #[command(subcommand)]
+        action: ProjectAction,
+    },
+    /// Manage users
+    User {
+        #[command(subcommand)]
+        action: UserAction,
+    },
+    /// Authentication commands
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommand,
+    },
+    /// Manage contracts
+    Contract {
+        #[command(subcommand)]
+        action: ContractAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
+pub enum TaskAction {
     /// Add a new task
     Add {
         #[arg(long)]
@@ -297,81 +371,12 @@ pub enum Command {
     /// Manage Definition of Done items
     Dod {
         #[command(subcommand)]
-        command: DodCommand,
+        command: TaskDodCommand,
     },
     /// Manage task dependencies
     Deps {
         #[command(subcommand)]
-        command: DepsCommand,
-    },
-    /// Start a read-only web viewer
-    Web {
-        /// Port to listen on (env: SENKO_PORT, default: 3141)
-        #[arg(long)]
-        port: Option<u16>,
-        /// Bind address, e.g. 0.0.0.0 or 192.168.1.5 (env: SENKO_HOST, default: 127.0.0.1)
-        #[arg(long)]
-        host: Option<String>,
-    },
-    /// Start a JSON REST API server
-    Serve {
-        /// Port to listen on (env: SENKO_PORT, default: 3142)
-        #[arg(long)]
-        port: Option<u16>,
-        /// Bind address, e.g. 0.0.0.0 or 192.168.1.5 (env: SENKO_HOST, default: 127.0.0.1)
-        #[arg(long)]
-        host: Option<String>,
-    },
-    /// Install a skill
-    SkillInstall {
-        /// Output directory for SKILL.md
-        #[arg(long)]
-        output_dir: Option<PathBuf>,
-        /// Skip confirmation prompts
-        #[arg(long)]
-        yes: bool,
-        /// Clean install: remove existing install directories before installing
-        #[arg(long)]
-        force: bool,
-    },
-    /// Manage hooks
-    Hooks {
-        #[command(subcommand)]
-        command: HooksCommand,
-    },
-    /// Check hook configuration for issues
-    Doctor,
-    /// Show or initialize workflow configuration
-    #[command(name = "config")]
-    Config {
-        /// Generate a template config.toml
-        #[arg(long)]
-        init: bool,
-    },
-    /// Manage projects
-    Project {
-        #[command(subcommand)]
-        action: ProjectAction,
-    },
-    /// Manage users
-    User {
-        #[command(subcommand)]
-        action: UserAction,
-    },
-    /// Manage project members
-    Members {
-        #[command(subcommand)]
-        action: MemberAction,
-    },
-    /// Authentication commands
-    Auth {
-        #[command(subcommand)]
-        command: AuthCommand,
-    },
-    /// Manage contracts
-    Contract {
-        #[command(subcommand)]
-        action: ContractAction,
+        command: TaskDepsCommand,
     },
 }
 
@@ -551,7 +556,7 @@ pub enum HooksCommand {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum DepsCommand {
+pub enum TaskDepsCommand {
     /// Add a dependency
     Add {
         /// Task ID
@@ -584,7 +589,7 @@ pub enum DepsCommand {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum DodCommand {
+pub enum TaskDodCommand {
     /// Mark a DoD item as checked
     Check {
         /// Task ID
@@ -622,6 +627,11 @@ pub enum ProjectAction {
     MetadataField {
         #[command(subcommand)]
         action: MetadataFieldAction,
+    },
+    /// Manage project members
+    Members {
+        #[command(subcommand)]
+        action: MemberAction,
     },
 }
 
@@ -905,118 +915,82 @@ pub fn print_dry_run(output: &OutputFormat, ops: &DryRunOperation) -> Result<()>
 
 pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Add {
-            ref title,
-            ref background,
-            ref description,
-            ref priority,
-            ref definition_of_done,
-            ref in_scope,
-            ref out_of_scope,
-            ref tag,
-            ref depends_on,
-            ref branch,
-            ref metadata,
-            from_json,
-            ref from_json_file,
-            ref assignee_user_id,
-        } => {
-            handlers::cmd_add(
-                &cli,
-                title.clone(),
-                background.clone(),
-                description.clone(),
-                priority.clone(),
-                definition_of_done.clone(),
-                in_scope.clone(),
-                out_of_scope.clone(),
-                tag.clone(),
-                depends_on.clone(),
-                branch.clone(),
-                metadata.clone(),
+        Command::Task { ref action } => match action {
+            TaskAction::Add {
+                title,
+                background,
+                description,
+                priority,
+                definition_of_done,
+                in_scope,
+                out_of_scope,
+                tag,
+                depends_on,
+                branch,
+                metadata,
                 from_json,
-                from_json_file.clone(),
-                assignee_user_id.clone(),
-            )
-            .await
-        }
-        Command::List {
-            ref status,
-            ref tag,
-            ref depends_on,
-            ready,
-            include_unassigned,
-            ref metadata,
-        } => {
-            handlers::cmd_list(
-                &cli,
-                status.clone(),
-                tag.clone(),
-                *depends_on,
+                from_json_file,
+                assignee_user_id,
+            } => {
+                handlers::cmd_add(
+                    &cli,
+                    title.clone(),
+                    background.clone(),
+                    description.clone(),
+                    priority.clone(),
+                    definition_of_done.clone(),
+                    in_scope.clone(),
+                    out_of_scope.clone(),
+                    tag.clone(),
+                    depends_on.clone(),
+                    branch.clone(),
+                    metadata.clone(),
+                    *from_json,
+                    from_json_file.clone(),
+                    assignee_user_id.clone(),
+                )
+                .await
+            }
+            TaskAction::List {
+                status,
+                tag,
+                depends_on,
                 ready,
                 include_unassigned,
-                metadata.clone(),
-            )
-            .await
-        }
-        Command::Get { task_id } => handlers::cmd_get(&cli, task_id).await,
-        Command::Next {
-            ref session_id,
-            ref metadata,
-            include_unassigned,
-        } => {
-            handlers::cmd_next(
-                &cli,
-                session_id.clone(),
-                metadata.clone(),
+                metadata,
+            } => {
+                handlers::cmd_list(
+                    &cli,
+                    status.clone(),
+                    tag.clone(),
+                    *depends_on,
+                    *ready,
+                    *include_unassigned,
+                    metadata.clone(),
+                )
+                .await
+            }
+            TaskAction::Get { task_id } => handlers::cmd_get(&cli, *task_id).await,
+            TaskAction::Next {
+                session_id,
+                metadata,
                 include_unassigned,
-            )
-            .await
-        }
-        Command::Ready { id } => handlers::cmd_ready(&cli, id).await,
-        Command::Start {
-            id,
-            ref session_id,
-            ref metadata,
-        } => handlers::cmd_start(&cli, id, session_id.clone(), metadata.clone()).await,
-        Command::Edit {
-            id,
-            ref title,
-            ref background,
-            clear_background,
-            ref description,
-            clear_description,
-            ref plan,
-            ref plan_file,
-            clear_plan,
-            ref priority,
-            ref branch,
-            clear_branch,
-            ref pr_url,
-            clear_pr_url,
-            ref contract,
-            clear_contract,
-            ref metadata,
-            ref replace_metadata,
-            clear_metadata,
-            ref assignee_user_id,
-            clear_assignee_user_id,
-            ref set_tags,
-            ref set_definition_of_done,
-            ref set_in_scope,
-            ref set_out_of_scope,
-            ref add_tag,
-            ref add_definition_of_done,
-            ref add_in_scope,
-            ref add_out_of_scope,
-            ref remove_tag,
-            ref remove_definition_of_done,
-            ref remove_in_scope,
-            ref remove_out_of_scope,
-        } => {
-            let priority_domain = priority.map(|p| p.into());
-            handlers::cmd_edit(
-                &cli,
+            } => {
+                handlers::cmd_next(
+                    &cli,
+                    session_id.clone(),
+                    metadata.clone(),
+                    *include_unassigned,
+                )
+                .await
+            }
+            TaskAction::Ready { id } => handlers::cmd_ready(&cli, *id).await,
+            TaskAction::Start {
+                id,
+                session_id,
+                metadata,
+            } => handlers::cmd_start(&cli, *id, session_id.clone(), metadata.clone()).await,
+            TaskAction::Edit {
                 id,
                 title,
                 background,
@@ -1026,7 +1000,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 plan,
                 plan_file,
                 clear_plan,
-                &priority_domain,
+                priority,
                 branch,
                 clear_branch,
                 pr_url,
@@ -1050,15 +1024,55 @@ pub async fn run(cli: Cli) -> Result<()> {
                 remove_definition_of_done,
                 remove_in_scope,
                 remove_out_of_scope,
-            )
-            .await
-        }
-        Command::Complete { id, skip_pr_check } => {
-            handlers::cmd_complete(&cli, id, skip_pr_check).await
-        }
-        Command::Cancel { id, ref reason } => handlers::cmd_cancel(&cli, id, reason.clone()).await,
-        Command::Dod { ref command } => handlers::cmd_dod(&cli, command).await,
-        Command::Deps { ref command } => handlers::cmd_deps(&cli, command).await,
+            } => {
+                let priority_domain = priority.map(|p| p.into());
+                handlers::cmd_edit(
+                    &cli,
+                    *id,
+                    title,
+                    background,
+                    *clear_background,
+                    description,
+                    *clear_description,
+                    plan,
+                    plan_file,
+                    *clear_plan,
+                    &priority_domain,
+                    branch,
+                    *clear_branch,
+                    pr_url,
+                    *clear_pr_url,
+                    contract,
+                    *clear_contract,
+                    metadata,
+                    replace_metadata,
+                    *clear_metadata,
+                    assignee_user_id,
+                    *clear_assignee_user_id,
+                    set_tags,
+                    set_definition_of_done,
+                    set_in_scope,
+                    set_out_of_scope,
+                    add_tag,
+                    add_definition_of_done,
+                    add_in_scope,
+                    add_out_of_scope,
+                    remove_tag,
+                    remove_definition_of_done,
+                    remove_in_scope,
+                    remove_out_of_scope,
+                )
+                .await
+            }
+            TaskAction::Complete { id, skip_pr_check } => {
+                handlers::cmd_complete(&cli, *id, *skip_pr_check).await
+            }
+            TaskAction::Cancel { id, reason } => {
+                handlers::cmd_cancel(&cli, *id, reason.clone()).await
+            }
+            TaskAction::Dod { command } => handlers::cmd_dod(&cli, command).await,
+            TaskAction::Deps { command } => handlers::cmd_deps(&cli, command).await,
+        },
         Command::Web { port, host } => {
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let xdg = crate::infra::xdg::XdgDirs::from_env();
@@ -1159,7 +1173,6 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Config { init } => handlers::cmd_config(&cli, init),
         Command::Project { ref action } => handlers::cmd_project(&cli, action).await,
         Command::User { ref action } => handlers::cmd_user(&cli, action).await,
-        Command::Members { ref action } => handlers::cmd_members(&cli, action).await,
         Command::Auth { ref command } => match command {
             AuthCommand::Login { device_name } => {
                 handlers::cmd_auth_login(&cli, device_name.clone()).await
@@ -1182,15 +1195,22 @@ mod tests {
 
     #[test]
     fn parse_add_subcommand() {
-        let cli = Cli::parse_from(["senko", "add"]);
-        assert!(matches!(cli.command, Command::Add { .. }));
+        let cli = Cli::parse_from(["senko", "task", "add"]);
+        assert!(matches!(
+            cli.command,
+            Command::Task {
+                action: TaskAction::Add { .. }
+            }
+        ));
     }
 
     #[test]
     fn parse_add_with_title() {
-        let cli = Cli::parse_from(["senko", "add", "--title", "my task"]);
+        let cli = Cli::parse_from(["senko", "task", "add", "--title", "my task"]);
         match cli.command {
-            Command::Add { title, .. } => assert_eq!(title, Some("my task".to_string())),
+            Command::Task {
+                action: TaskAction::Add { title, .. },
+            } => assert_eq!(title, Some("my task".to_string())),
             _ => panic!("expected Add"),
         }
     }
@@ -1199,6 +1219,7 @@ mod tests {
     fn parse_add_with_all_flags() {
         let cli = Cli::parse_from([
             "senko",
+            "task",
             "add",
             "--title",
             "task",
@@ -1226,21 +1247,24 @@ mod tests {
             "2",
         ]);
         match cli.command {
-            Command::Add {
-                title,
-                background,
-                description,
-                priority,
-                definition_of_done,
-                in_scope,
-                out_of_scope,
-                tag,
-                depends_on,
-                branch,
-                metadata: _,
-                from_json,
-                from_json_file,
-                assignee_user_id,
+            Command::Task {
+                action:
+                    TaskAction::Add {
+                        title,
+                        background,
+                        description,
+                        priority,
+                        definition_of_done,
+                        in_scope,
+                        out_of_scope,
+                        tag,
+                        depends_on,
+                        branch,
+                        metadata: _,
+                        from_json,
+                        from_json_file,
+                        assignee_user_id,
+                    },
             } => {
                 assert_eq!(title, Some("task".to_string()));
                 assert_eq!(background, Some("bg".to_string()));
@@ -1262,10 +1286,12 @@ mod tests {
 
     #[test]
     fn parse_add_with_from_json() {
-        let cli = Cli::parse_from(["senko", "add", "--from-json"]);
+        let cli = Cli::parse_from(["senko", "task", "add", "--from-json"]);
         match cli.command {
-            Command::Add {
-                from_json, title, ..
+            Command::Task {
+                action: TaskAction::Add {
+                    from_json, title, ..
+                },
             } => {
                 assert!(from_json);
                 assert!(title.is_none());
@@ -1276,13 +1302,16 @@ mod tests {
 
     #[test]
     fn parse_add_with_from_json_file() {
-        let cli = Cli::parse_from(["senko", "add", "--from-json-file", "/tmp/task.json"]);
+        let cli = Cli::parse_from(["senko", "task", "add", "--from-json-file", "/tmp/task.json"]);
         match cli.command {
-            Command::Add {
-                from_json_file,
-                from_json,
-                title,
-                ..
+            Command::Task {
+                action:
+                    TaskAction::Add {
+                        from_json_file,
+                        from_json,
+                        title,
+                        ..
+                    },
             } => {
                 assert_eq!(from_json_file, Some(PathBuf::from("/tmp/task.json")));
                 assert!(!from_json);
@@ -1294,14 +1323,20 @@ mod tests {
 
     #[test]
     fn parse_list_subcommand() {
-        let cli = Cli::parse_from(["senko", "list"]);
-        assert!(matches!(cli.command, Command::List { .. }));
+        let cli = Cli::parse_from(["senko", "task", "list"]);
+        assert!(matches!(
+            cli.command,
+            Command::Task {
+                action: TaskAction::List { .. }
+            }
+        ));
     }
 
     #[test]
     fn parse_list_with_filters() {
         let cli = Cli::parse_from([
             "senko",
+            "task",
             "list",
             "--status",
             "todo",
@@ -1316,13 +1351,16 @@ mod tests {
             "--ready",
         ]);
         match cli.command {
-            Command::List {
-                status,
-                tag,
-                depends_on,
-                ready,
-                include_unassigned,
-                metadata,
+            Command::Task {
+                action:
+                    TaskAction::List {
+                        status,
+                        tag,
+                        depends_on,
+                        ready,
+                        include_unassigned,
+                        metadata,
+                    },
             } => {
                 assert_eq!(status, vec!["todo", "in_progress"]);
                 assert_eq!(tag, vec!["rust", "web"]);
@@ -1337,24 +1375,33 @@ mod tests {
 
     #[test]
     fn parse_get_subcommand() {
-        let cli = Cli::parse_from(["senko", "get", "42"]);
+        let cli = Cli::parse_from(["senko", "task", "get", "42"]);
         match cli.command {
-            Command::Get { task_id } => assert_eq!(task_id, 42),
+            Command::Task {
+                action: TaskAction::Get { task_id },
+            } => assert_eq!(task_id, 42),
             _ => panic!("expected Get"),
         }
     }
 
     #[test]
     fn parse_next_subcommand() {
-        let cli = Cli::parse_from(["senko", "next"]);
-        assert!(matches!(cli.command, Command::Next { .. }));
+        let cli = Cli::parse_from(["senko", "task", "next"]);
+        assert!(matches!(
+            cli.command,
+            Command::Task {
+                action: TaskAction::Next { .. }
+            }
+        ));
     }
 
     #[test]
     fn parse_next_with_session_id() {
-        let cli = Cli::parse_from(["senko", "next", "--session-id", "abc-123"]);
+        let cli = Cli::parse_from(["senko", "task", "next", "--session-id", "abc-123"]);
         match cli.command {
-            Command::Next { session_id, .. } => {
+            Command::Task {
+                action: TaskAction::Next { session_id, .. },
+            } => {
                 assert_eq!(session_id, Some("abc-123".to_string()));
             }
             _ => panic!("expected Next"),
@@ -1363,14 +1410,20 @@ mod tests {
 
     #[test]
     fn parse_edit_subcommand() {
-        let cli = Cli::parse_from(["senko", "edit", "1"]);
-        assert!(matches!(cli.command, Command::Edit { id: 1, .. }));
+        let cli = Cli::parse_from(["senko", "task", "edit", "1"]);
+        assert!(matches!(
+            cli.command,
+            Command::Task {
+                action: TaskAction::Edit { id: 1, .. }
+            }
+        ));
     }
 
     #[test]
     fn parse_edit_with_scalar_args() {
         let cli = Cli::parse_from([
             "senko",
+            "task",
             "edit",
             "5",
             "--title",
@@ -1379,11 +1432,14 @@ mod tests {
             "p0",
         ]);
         match cli.command {
-            Command::Edit {
-                id,
-                title,
-                priority,
-                ..
+            Command::Task {
+                action:
+                    TaskAction::Edit {
+                        id,
+                        title,
+                        priority,
+                        ..
+                    },
             } => {
                 assert_eq!(id, 5);
                 assert_eq!(title.as_deref(), Some("new title"));
@@ -1395,18 +1451,22 @@ mod tests {
 
     #[test]
     fn parse_ready_command() {
-        let cli = Cli::parse_from(["senko", "ready", "3"]);
+        let cli = Cli::parse_from(["senko", "task", "ready", "3"]);
         match cli.command {
-            Command::Ready { id } => assert_eq!(id, 3),
+            Command::Task {
+                action: TaskAction::Ready { id },
+            } => assert_eq!(id, 3),
             _ => panic!("expected Ready"),
         }
     }
 
     #[test]
     fn parse_start_command() {
-        let cli = Cli::parse_from(["senko", "start", "5", "--session-id", "abc"]);
+        let cli = Cli::parse_from(["senko", "task", "start", "5", "--session-id", "abc"]);
         match cli.command {
-            Command::Start { id, session_id, .. } => {
+            Command::Task {
+                action: TaskAction::Start { id, session_id, .. },
+            } => {
                 assert_eq!(id, 5);
                 assert_eq!(session_id.as_deref(), Some("abc"));
             }
@@ -1416,9 +1476,18 @@ mod tests {
 
     #[test]
     fn parse_start_with_metadata() {
-        let cli = Cli::parse_from(["senko", "start", "5", "--metadata", r#"{"key":"val"}"#]);
+        let cli = Cli::parse_from([
+            "senko",
+            "task",
+            "start",
+            "5",
+            "--metadata",
+            r#"{"key":"val"}"#,
+        ]);
         match cli.command {
-            Command::Start { id, metadata, .. } => {
+            Command::Task {
+                action: TaskAction::Start { id, metadata, .. },
+            } => {
                 assert_eq!(id, 5);
                 assert_eq!(metadata.as_deref(), Some(r#"{"key":"val"}"#));
             }
@@ -1428,9 +1497,11 @@ mod tests {
 
     #[test]
     fn parse_next_with_metadata() {
-        let cli = Cli::parse_from(["senko", "next", "--metadata", r#"{"key":"val"}"#]);
+        let cli = Cli::parse_from(["senko", "task", "next", "--metadata", r#"{"key":"val"}"#]);
         match cli.command {
-            Command::Next { metadata, .. } => {
+            Command::Task {
+                action: TaskAction::Next { metadata, .. },
+            } => {
                 assert_eq!(metadata.as_deref(), Some(r#"{"key":"val"}"#));
             }
             _ => panic!("expected Next"),
@@ -1441,6 +1512,7 @@ mod tests {
     fn parse_edit_with_array_args() {
         let cli = Cli::parse_from([
             "senko",
+            "task",
             "edit",
             "3",
             "--add-tag",
@@ -1454,12 +1526,15 @@ mod tests {
             "b",
         ]);
         match cli.command {
-            Command::Edit {
-                id,
-                add_tag,
-                remove_tag,
-                set_in_scope,
-                ..
+            Command::Task {
+                action:
+                    TaskAction::Edit {
+                        id,
+                        add_tag,
+                        remove_tag,
+                        set_in_scope,
+                        ..
+                    },
             } => {
                 assert_eq!(id, 3);
                 assert_eq!(add_tag, vec!["rust", "cli"]);
@@ -1472,10 +1547,12 @@ mod tests {
 
     #[test]
     fn parse_edit_with_plan_file() {
-        let cli = Cli::parse_from(["senko", "edit", "1", "--plan-file", "/tmp/plan.md"]);
+        let cli = Cli::parse_from(["senko", "task", "edit", "1", "--plan-file", "/tmp/plan.md"]);
         match cli.command {
-            Command::Edit {
-                plan, plan_file, ..
+            Command::Task {
+                action: TaskAction::Edit {
+                    plan, plan_file, ..
+                },
             } => {
                 assert!(plan.is_none());
                 assert_eq!(plan_file, Some(PathBuf::from("/tmp/plan.md")));
@@ -1488,6 +1565,7 @@ mod tests {
     fn parse_edit_plan_file_conflicts_with_plan() {
         let result = Cli::try_parse_from([
             "senko",
+            "task",
             "edit",
             "1",
             "--plan",
@@ -1500,10 +1578,13 @@ mod tests {
 
     #[test]
     fn parse_edit_clear_background() {
-        let cli = Cli::parse_from(["senko", "edit", "1", "--clear-background"]);
+        let cli = Cli::parse_from(["senko", "task", "edit", "1", "--clear-background"]);
         match cli.command {
-            Command::Edit {
-                clear_background, ..
+            Command::Task {
+                action:
+                    TaskAction::Edit {
+                        clear_background, ..
+                    },
             } => {
                 assert!(clear_background);
             }
@@ -1513,21 +1594,40 @@ mod tests {
 
     #[test]
     fn parse_complete_subcommand() {
-        let cli = Cli::parse_from(["senko", "complete", "1"]);
-        assert!(matches!(cli.command, Command::Complete { id: 1, .. }));
+        let cli = Cli::parse_from(["senko", "task", "complete", "1"]);
+        assert!(matches!(
+            cli.command,
+            Command::Task {
+                action: TaskAction::Complete { id: 1, .. }
+            }
+        ));
     }
 
     #[test]
     fn parse_cancel_subcommand() {
-        let cli = Cli::parse_from(["senko", "cancel", "2"]);
-        assert!(matches!(cli.command, Command::Cancel { id: 2, .. }));
+        let cli = Cli::parse_from(["senko", "task", "cancel", "2"]);
+        assert!(matches!(
+            cli.command,
+            Command::Task {
+                action: TaskAction::Cancel { id: 2, .. }
+            }
+        ));
     }
 
     #[test]
     fn parse_cancel_with_reason() {
-        let cli = Cli::parse_from(["senko", "cancel", "3", "--reason", "no longer needed"]);
+        let cli = Cli::parse_from([
+            "senko",
+            "task",
+            "cancel",
+            "3",
+            "--reason",
+            "no longer needed",
+        ]);
         match cli.command {
-            Command::Cancel { id, reason } => {
+            Command::Task {
+                action: TaskAction::Cancel { id, reason },
+            } => {
                 assert_eq!(id, 3);
                 assert_eq!(reason.as_deref(), Some("no longer needed"));
             }
@@ -1537,9 +1637,11 @@ mod tests {
 
     #[test]
     fn parse_cancel_without_reason() {
-        let cli = Cli::parse_from(["senko", "cancel", "4"]);
+        let cli = Cli::parse_from(["senko", "task", "cancel", "4"]);
         match cli.command {
-            Command::Cancel { id, reason } => {
+            Command::Task {
+                action: TaskAction::Cancel { id, reason },
+            } => {
                 assert_eq!(id, 4);
                 assert!(reason.is_none());
             }
@@ -1549,10 +1651,13 @@ mod tests {
 
     #[test]
     fn parse_deps_add() {
-        let cli = Cli::parse_from(["senko", "deps", "add", "1", "--on", "2"]);
+        let cli = Cli::parse_from(["senko", "task", "deps", "add", "1", "--on", "2"]);
         match cli.command {
-            Command::Deps {
-                command: DepsCommand::Add { task_id, on },
+            Command::Task {
+                action:
+                    TaskAction::Deps {
+                        command: TaskDepsCommand::Add { task_id, on },
+                    },
             } => {
                 assert_eq!(task_id, 1);
                 assert_eq!(on, 2);
@@ -1563,10 +1668,13 @@ mod tests {
 
     #[test]
     fn parse_deps_remove() {
-        let cli = Cli::parse_from(["senko", "deps", "remove", "3", "--on", "4"]);
+        let cli = Cli::parse_from(["senko", "task", "deps", "remove", "3", "--on", "4"]);
         match cli.command {
-            Command::Deps {
-                command: DepsCommand::Remove { task_id, on },
+            Command::Task {
+                action:
+                    TaskAction::Deps {
+                        command: TaskDepsCommand::Remove { task_id, on },
+                    },
             } => {
                 assert_eq!(task_id, 3);
                 assert_eq!(on, 4);
@@ -1577,10 +1685,13 @@ mod tests {
 
     #[test]
     fn parse_deps_set() {
-        let cli = Cli::parse_from(["senko", "deps", "set", "1", "--on", "2", "3", "4"]);
+        let cli = Cli::parse_from(["senko", "task", "deps", "set", "1", "--on", "2", "3", "4"]);
         match cli.command {
-            Command::Deps {
-                command: DepsCommand::Set { task_id, on },
+            Command::Task {
+                action:
+                    TaskAction::Deps {
+                        command: TaskDepsCommand::Set { task_id, on },
+                    },
             } => {
                 assert_eq!(task_id, 1);
                 assert_eq!(on, vec![2, 3, 4]);
@@ -1591,14 +1702,51 @@ mod tests {
 
     #[test]
     fn parse_deps_list() {
-        let cli = Cli::parse_from(["senko", "deps", "list", "5"]);
+        let cli = Cli::parse_from(["senko", "task", "deps", "list", "5"]);
         match cli.command {
-            Command::Deps {
-                command: DepsCommand::List { task_id },
+            Command::Task {
+                action:
+                    TaskAction::Deps {
+                        command: TaskDepsCommand::List { task_id },
+                    },
             } => {
                 assert_eq!(task_id, 5);
             }
             _ => panic!("expected Deps List"),
+        }
+    }
+
+    #[test]
+    fn parse_dod_check() {
+        let cli = Cli::parse_from(["senko", "task", "dod", "check", "7", "2"]);
+        match cli.command {
+            Command::Task {
+                action:
+                    TaskAction::Dod {
+                        command: TaskDodCommand::Check { task_id, index },
+                    },
+            } => {
+                assert_eq!(task_id, 7);
+                assert_eq!(index, 2);
+            }
+            _ => panic!("expected Dod Check"),
+        }
+    }
+
+    #[test]
+    fn parse_dod_uncheck() {
+        let cli = Cli::parse_from(["senko", "task", "dod", "uncheck", "7", "2"]);
+        match cli.command {
+            Command::Task {
+                action:
+                    TaskAction::Dod {
+                        command: TaskDodCommand::Uncheck { task_id, index },
+                    },
+            } => {
+                assert_eq!(task_id, 7);
+                assert_eq!(index, 2);
+            }
+            _ => panic!("expected Dod Uncheck"),
         }
     }
 
@@ -1678,25 +1826,25 @@ mod tests {
 
     #[test]
     fn parse_output_json() {
-        let cli = Cli::parse_from(["senko", "--output", "json", "add"]);
+        let cli = Cli::parse_from(["senko", "--output", "json", "task", "add"]);
         assert!(matches!(cli.output, OutputFormat::Json));
     }
 
     #[test]
     fn parse_output_json_default() {
-        let cli = Cli::parse_from(["senko", "add"]);
+        let cli = Cli::parse_from(["senko", "task", "add"]);
         assert!(matches!(cli.output, OutputFormat::Json));
     }
 
     #[test]
     fn parse_project_root() {
-        let cli = Cli::parse_from(["senko", "--project-root", "/tmp/test", "add"]);
+        let cli = Cli::parse_from(["senko", "--project-root", "/tmp/test", "task", "add"]);
         assert_eq!(cli.project_root, Some(PathBuf::from("/tmp/test")));
     }
 
     #[test]
     fn parse_no_project_root() {
-        let cli = Cli::parse_from(["senko", "add"]);
+        let cli = Cli::parse_from(["senko", "task", "add"]);
         assert!(cli.project_root.is_none());
     }
 
@@ -1811,6 +1959,7 @@ mod tests {
     fn parse_add_with_assignee_user_id() {
         let cli = Cli::parse_from([
             "senko",
+            "task",
             "add",
             "--title",
             "test",
@@ -1818,8 +1967,10 @@ mod tests {
             "self",
         ]);
         match cli.command {
-            Command::Add {
-                assignee_user_id, ..
+            Command::Task {
+                action: TaskAction::Add {
+                    assignee_user_id, ..
+                },
             } => {
                 assert_eq!(assignee_user_id, Some("self".to_string()));
             }
@@ -1829,13 +1980,16 @@ mod tests {
 
     #[test]
     fn parse_edit_with_assignee_user_id() {
-        let cli = Cli::parse_from(["senko", "edit", "1", "--assignee-user-id", "42"]);
+        let cli = Cli::parse_from(["senko", "task", "edit", "1", "--assignee-user-id", "42"]);
         match cli.command {
-            Command::Edit {
-                id,
-                assignee_user_id,
-                clear_assignee_user_id,
-                ..
+            Command::Task {
+                action:
+                    TaskAction::Edit {
+                        id,
+                        assignee_user_id,
+                        clear_assignee_user_id,
+                        ..
+                    },
             } => {
                 assert_eq!(id, 1);
                 assert_eq!(assignee_user_id, Some("42".to_string()));
@@ -1847,13 +2001,16 @@ mod tests {
 
     #[test]
     fn parse_edit_clear_assignee() {
-        let cli = Cli::parse_from(["senko", "edit", "1", "--clear-assignee-user-id"]);
+        let cli = Cli::parse_from(["senko", "task", "edit", "1", "--clear-assignee-user-id"]);
         match cli.command {
-            Command::Edit {
-                id,
-                assignee_user_id,
-                clear_assignee_user_id,
-                ..
+            Command::Task {
+                action:
+                    TaskAction::Edit {
+                        id,
+                        assignee_user_id,
+                        clear_assignee_user_id,
+                        ..
+                    },
             } => {
                 assert_eq!(id, 1);
                 assert!(assignee_user_id.is_none());
@@ -1865,10 +2022,13 @@ mod tests {
 
     #[test]
     fn parse_next_with_include_unassigned() {
-        let cli = Cli::parse_from(["senko", "next", "--include-unassigned"]);
+        let cli = Cli::parse_from(["senko", "task", "next", "--include-unassigned"]);
         match cli.command {
-            Command::Next {
-                include_unassigned, ..
+            Command::Task {
+                action:
+                    TaskAction::Next {
+                        include_unassigned, ..
+                    },
             } => {
                 assert!(include_unassigned);
             }
@@ -1878,17 +2038,115 @@ mod tests {
 
     #[test]
     fn parse_list_with_include_unassigned() {
-        let cli = Cli::parse_from(["senko", "list", "--ready", "--include-unassigned"]);
+        let cli = Cli::parse_from(["senko", "task", "list", "--ready", "--include-unassigned"]);
         match cli.command {
-            Command::List {
-                ready,
-                include_unassigned,
-                ..
+            Command::Task {
+                action:
+                    TaskAction::List {
+                        ready,
+                        include_unassigned,
+                        ..
+                    },
             } => {
                 assert!(ready);
                 assert!(include_unassigned);
             }
             _ => panic!("expected List"),
         }
+    }
+
+    #[test]
+    fn parse_project_members_list() {
+        let cli = Cli::parse_from(["senko", "project", "members", "list"]);
+        assert!(matches!(
+            cli.command,
+            Command::Project {
+                action: ProjectAction::Members {
+                    action: MemberAction::List
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_project_members_add() {
+        let cli = Cli::parse_from([
+            "senko",
+            "project",
+            "members",
+            "add",
+            "--user-id",
+            "3",
+            "--role",
+            "member",
+        ]);
+        match cli.command {
+            Command::Project {
+                action:
+                    ProjectAction::Members {
+                        action: MemberAction::Add { user_id, role },
+                    },
+            } => {
+                assert_eq!(user_id, 3);
+                assert!(matches!(role, Some(CliRole::Member)));
+            }
+            _ => panic!("expected Project Members Add"),
+        }
+    }
+
+    #[test]
+    fn parse_project_members_remove() {
+        let cli = Cli::parse_from(["senko", "project", "members", "remove", "--user-id", "4"]);
+        match cli.command {
+            Command::Project {
+                action:
+                    ProjectAction::Members {
+                        action: MemberAction::Remove { user_id },
+                    },
+            } => {
+                assert_eq!(user_id, 4);
+            }
+            _ => panic!("expected Project Members Remove"),
+        }
+    }
+
+    #[test]
+    fn parse_project_members_set_role() {
+        let cli = Cli::parse_from([
+            "senko",
+            "project",
+            "members",
+            "set-role",
+            "--user-id",
+            "5",
+            "--role",
+            "viewer",
+        ]);
+        match cli.command {
+            Command::Project {
+                action:
+                    ProjectAction::Members {
+                        action: MemberAction::SetRole { user_id, role },
+                    },
+            } => {
+                assert_eq!(user_id, 5);
+                assert!(matches!(role, CliRole::Viewer));
+            }
+            _ => panic!("expected Project Members SetRole"),
+        }
+    }
+
+    #[test]
+    fn parse_no_top_level_add() {
+        // After restructuring, `senko add` must not be accepted as an alias.
+        let result = Cli::try_parse_from(["senko", "add"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_no_top_level_members() {
+        // After restructuring, `senko members` must not be accepted as an alias.
+        let result = Cli::try_parse_from(["senko", "members", "list"]);
+        assert!(result.is_err());
     }
 }

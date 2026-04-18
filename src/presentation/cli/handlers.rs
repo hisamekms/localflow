@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::{
-    CONFIG_TEMPLATE, Cli, ContractAction, ContractDodCommand, ContractNoteCommand, DepsCommand,
-    DodCommand, DryRunOperation, HooksCommand, MemberAction, MetadataFieldAction, OutputFormat,
-    ProjectAction, UserAction, print_dry_run,
+    CONFIG_TEMPLATE, Cli, ContractAction, ContractDodCommand, ContractNoteCommand, DryRunOperation,
+    HooksCommand, MemberAction, MetadataFieldAction, OutputFormat, ProjectAction, TaskDepsCommand,
+    TaskDodCommand, UserAction, print_dry_run,
 };
 use crate::application::{ContractOperations, UserOperations};
 use crate::application::{HookTrigger, ProjectOperations};
@@ -1433,14 +1433,14 @@ pub async fn cmd_edit(
     Ok(())
 }
 
-pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
+pub async fn cmd_dod(cli: &Cli, command: &TaskDodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     match command {
-        DodCommand::Check { task_id, index } => {
+        TaskDodCommand::Check { task_id, index } => {
             let (task_id, index) = (*task_id, *index);
             if cli.dry_run {
                 let operations = vec![format!("Check DoD item #{index} of task #{task_id}")];
@@ -1461,7 +1461,7 @@ pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
                 }
             }
         }
-        DodCommand::Uncheck { task_id, index } => {
+        TaskDodCommand::Uncheck { task_id, index } => {
             let (task_id, index) = (*task_id, *index);
             if cli.dry_run {
                 let operations = vec![format!("Uncheck DoD item #{index} of task #{task_id}")];
@@ -1493,14 +1493,14 @@ fn print_dod_items(items: &[crate::domain::task::DodItem]) {
     }
 }
 
-pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
+pub async fn cmd_deps(cli: &Cli, command: &TaskDepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     match command {
-        DepsCommand::Add { task_id, on } => {
+        TaskDepsCommand::Add { task_id, on } => {
             let (task_id, on) = (*task_id, *on);
             if cli.dry_run {
                 let operations = vec![format!(
@@ -1523,7 +1523,7 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 }
             }
         }
-        DepsCommand::Remove { task_id, on } => {
+        TaskDepsCommand::Remove { task_id, on } => {
             let (task_id, on) = (*task_id, *on);
             if cli.dry_run {
                 let operations = vec![format!(
@@ -1547,7 +1547,7 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 ),
             }
         }
-        DepsCommand::Set { task_id, on } => {
+        TaskDepsCommand::Set { task_id, on } => {
             let task_id = *task_id;
             if cli.dry_run {
                 let dep_strs: Vec<String> = on.iter().map(|d| format!("#{d}")).collect();
@@ -1585,7 +1585,7 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 }
             }
         }
-        DepsCommand::List { task_id } => {
+        TaskDepsCommand::List { task_id } => {
             // Read-only: ignore --dry-run
             let deps = task_ops.list_dependencies(project_id, *task_id).await?;
             match cli.output {
@@ -1743,6 +1743,9 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                     }
                 }
             }
+        }
+        ProjectAction::Members { action: m_action } => {
+            cmd_members(cli, m_action).await?;
         }
     }
     Ok(())
@@ -2813,7 +2816,7 @@ fn build_project_ops_pair(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Command, OutputFormat};
+    use super::super::{Command, OutputFormat, TaskAction};
     use super::*;
     use crate::domain::TaskRepository;
 
@@ -2830,21 +2833,23 @@ mod tests {
             postgres_url: None,
             project: None,
             user: None,
-            command: Command::Add {
-                title: None,
-                background: None,
-                description: None,
-                priority: None,
-                definition_of_done: vec![],
-                in_scope: vec![],
-                out_of_scope: vec![],
-                tag: vec![],
-                depends_on: vec![],
-                from_json: false,
-                branch: None,
-                metadata: None,
-                from_json_file: None,
-                assignee_user_id: None,
+            command: Command::Task {
+                action: TaskAction::Add {
+                    title: None,
+                    background: None,
+                    description: None,
+                    priority: None,
+                    definition_of_done: vec![],
+                    in_scope: vec![],
+                    out_of_scope: vec![],
+                    tag: vec![],
+                    depends_on: vec![],
+                    from_json: false,
+                    branch: None,
+                    metadata: None,
+                    from_json_file: None,
+                    assignee_user_id: None,
+                },
             },
         };
         cmd_add(
@@ -2900,21 +2905,23 @@ mod tests {
             postgres_url: None,
             project: None,
             user: None,
-            command: Command::Add {
-                title: None,
-                background: None,
-                description: None,
-                priority: None,
-                definition_of_done: vec![],
-                in_scope: vec![],
-                out_of_scope: vec![],
-                tag: vec![],
-                depends_on: vec![],
-                from_json: false,
-                branch: None,
-                metadata: None,
-                from_json_file: None,
-                assignee_user_id: None,
+            command: Command::Task {
+                action: TaskAction::Add {
+                    title: None,
+                    background: None,
+                    description: None,
+                    priority: None,
+                    definition_of_done: vec![],
+                    in_scope: vec![],
+                    out_of_scope: vec![],
+                    tag: vec![],
+                    depends_on: vec![],
+                    from_json: false,
+                    branch: None,
+                    metadata: None,
+                    from_json_file: None,
+                    assignee_user_id: None,
+                },
             },
         };
         cmd_add(
@@ -2962,21 +2969,23 @@ mod tests {
             postgres_url: None,
             project: None,
             user: None,
-            command: Command::Add {
-                title: None,
-                background: None,
-                description: None,
-                priority: None,
-                definition_of_done: vec![],
-                in_scope: vec![],
-                out_of_scope: vec![],
-                tag: vec![],
-                depends_on: vec![],
-                from_json: false,
-                branch: None,
-                metadata: None,
-                from_json_file: None,
-                assignee_user_id: None,
+            command: Command::Task {
+                action: TaskAction::Add {
+                    title: None,
+                    background: None,
+                    description: None,
+                    priority: None,
+                    definition_of_done: vec![],
+                    in_scope: vec![],
+                    out_of_scope: vec![],
+                    tag: vec![],
+                    depends_on: vec![],
+                    from_json: false,
+                    branch: None,
+                    metadata: None,
+                    from_json_file: None,
+                    assignee_user_id: None,
+                },
             },
         };
         let result = cmd_add(
@@ -3019,21 +3028,23 @@ mod tests {
             postgres_url: None,
             project: None,
             user: None,
-            command: Command::Add {
-                title: None,
-                background: None,
-                description: None,
-                priority: None,
-                definition_of_done: vec![],
-                in_scope: vec![],
-                out_of_scope: vec![],
-                tag: vec![],
-                depends_on: vec![],
-                from_json: false,
-                branch: None,
-                metadata: None,
-                from_json_file: None,
-                assignee_user_id: None,
+            command: Command::Task {
+                action: TaskAction::Add {
+                    title: None,
+                    background: None,
+                    description: None,
+                    priority: None,
+                    definition_of_done: vec![],
+                    in_scope: vec![],
+                    out_of_scope: vec![],
+                    tag: vec![],
+                    depends_on: vec![],
+                    from_json: false,
+                    branch: None,
+                    metadata: None,
+                    from_json_file: None,
+                    assignee_user_id: None,
+                },
             },
         };
         cmd_add(
@@ -3079,21 +3090,23 @@ mod tests {
             postgres_url: None,
             project: None,
             user: None,
-            command: Command::Add {
-                title: None,
-                background: None,
-                description: None,
-                priority: None,
-                definition_of_done: vec![],
-                in_scope: vec![],
-                out_of_scope: vec![],
-                tag: vec![],
-                depends_on: vec![],
-                from_json: false,
-                branch: None,
-                metadata: None,
-                from_json_file: None,
-                assignee_user_id: None,
+            command: Command::Task {
+                action: TaskAction::Add {
+                    title: None,
+                    background: None,
+                    description: None,
+                    priority: None,
+                    definition_of_done: vec![],
+                    in_scope: vec![],
+                    out_of_scope: vec![],
+                    tag: vec![],
+                    depends_on: vec![],
+                    from_json: false,
+                    branch: None,
+                    metadata: None,
+                    from_json_file: None,
+                    assignee_user_id: None,
+                },
             },
         };
         cmd_add(
