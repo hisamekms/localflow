@@ -655,19 +655,19 @@ async fn start_server(
             get(list_contracts).post(create_contract),
         )
         .route(
-            "/api/v1/contracts/{id}",
+            "/api/v1/projects/{project_id}/contracts/{id}",
             get(get_contract).put(edit_contract).delete(delete_contract),
         )
         .route(
-            "/api/v1/contracts/{id}/dod/{index}/check",
+            "/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/check",
             post(check_contract_dod),
         )
         .route(
-            "/api/v1/contracts/{id}/dod/{index}/uncheck",
+            "/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/uncheck",
             post(uncheck_contract_dod),
         )
         .route(
-            "/api/v1/contracts/{id}/notes",
+            "/api/v1/projects/{project_id}/contracts/{id}/notes",
             get(list_contract_notes).post(add_contract_note),
         )
         // Metadata fields
@@ -1351,15 +1351,6 @@ struct AddContractNoteBody {
     source_task_id: Option<i64>,
 }
 
-async fn contract_project_id(state: &AppState, id: i64) -> Result<i64, ApiError> {
-    let contract = state
-        .contract_service
-        .get_contract(id)
-        .await
-        .map_err(classify_error)?;
-    Ok(contract.project_id())
-}
-
 // POST /api/v1/projects/{project_id}/contracts
 async fn create_contract(
     State(state): State<AppState>,
@@ -1400,30 +1391,28 @@ async fn list_contracts(
     ))
 }
 
-// GET /api/v1/contracts/{id}
+// GET /api/v1/projects/{project_id}/contracts/{id}
 async fn get_contract(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<Json<ContractResponse>, ApiError> {
-    let project_id = contract_project_id(&state, id).await?;
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let contract = state
         .contract_service
-        .get_contract(id)
+        .get_contract(project_id, id)
         .await
         .map_err(classify_error)?;
     Ok(Json(ContractResponse::from(contract)))
 }
 
-// PUT /api/v1/contracts/{id}
+// PUT /api/v1/projects/{project_id}/contracts/{id}
 async fn edit_contract(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
     Json(body): Json<EditContractBody>,
 ) -> Result<Json<ContractResponse>, ApiError> {
-    let project_id = contract_project_id(&state, id).await?;
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
 
     let scalar = UpdateContractParams {
@@ -1451,88 +1440,83 @@ async fn edit_contract(
     };
     let contract = state
         .contract_service
-        .edit_contract(id, &scalar, &array)
+        .edit_contract(project_id, id, &scalar, &array)
         .await
         .map_err(classify_error)?;
     Ok(Json(ContractResponse::from(contract)))
 }
 
-// DELETE /api/v1/contracts/{id}
+// DELETE /api/v1/projects/{project_id}/contracts/{id}
 async fn delete_contract(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, ApiError> {
-    let project_id = contract_project_id(&state, id).await?;
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     state
         .contract_service
-        .delete_contract(id)
+        .delete_contract(project_id, id)
         .await
         .map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-// POST /api/v1/contracts/{id}/dod/{index}/check
+// POST /api/v1/projects/{project_id}/contracts/{id}/dod/{index}/check
 async fn check_contract_dod(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((id, index)): Path<(i64, usize)>,
+    Path((project_id, id, index)): Path<(i64, i64, usize)>,
 ) -> Result<Json<ContractResponse>, ApiError> {
-    let project_id = contract_project_id(&state, id).await?;
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let contract = state
         .contract_service
-        .check_dod(id, index)
+        .check_dod(project_id, id, index)
         .await
         .map_err(classify_error)?;
     Ok(Json(ContractResponse::from(contract)))
 }
 
-// POST /api/v1/contracts/{id}/dod/{index}/uncheck
+// POST /api/v1/projects/{project_id}/contracts/{id}/dod/{index}/uncheck
 async fn uncheck_contract_dod(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((id, index)): Path<(i64, usize)>,
+    Path((project_id, id, index)): Path<(i64, i64, usize)>,
 ) -> Result<Json<ContractResponse>, ApiError> {
-    let project_id = contract_project_id(&state, id).await?;
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let contract = state
         .contract_service
-        .uncheck_dod(id, index)
+        .uncheck_dod(project_id, id, index)
         .await
         .map_err(classify_error)?;
     Ok(Json(ContractResponse::from(contract)))
 }
 
-// POST /api/v1/contracts/{id}/notes
+// POST /api/v1/projects/{project_id}/contracts/{id}/notes
 async fn add_contract_note(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
     Json(body): Json<AddContractNoteBody>,
 ) -> Result<Json<ContractNoteResponse>, ApiError> {
-    let project_id = contract_project_id(&state, id).await?;
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let note = state
         .contract_service
-        .add_note(id, body.content, body.source_task_id)
+        .add_note(project_id, id, body.content, body.source_task_id)
         .await
         .map_err(classify_error)?;
     Ok(Json(ContractNoteResponse::from(&note)))
 }
 
-// GET /api/v1/contracts/{id}/notes
+// GET /api/v1/projects/{project_id}/contracts/{id}/notes
 async fn list_contract_notes(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<Json<Vec<ContractNoteResponse>>, ApiError> {
-    let project_id = contract_project_id(&state, id).await?;
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let notes = state
         .contract_service
-        .list_notes(id)
+        .list_notes(project_id, id)
         .await
         .map_err(classify_error)?;
     Ok(Json(notes.iter().map(ContractNoteResponse::from).collect()))

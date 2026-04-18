@@ -34,7 +34,7 @@ impl ContractOperations for LocalContractOperations {
         self.backend.create_contract(project_id, params).await
     }
 
-    async fn get_contract(&self, id: i64) -> Result<Contract> {
+    async fn get_contract(&self, _project_id: i64, id: i64) -> Result<Contract> {
         self.backend.get_contract(id).await
     }
 
@@ -44,6 +44,7 @@ impl ContractOperations for LocalContractOperations {
 
     async fn edit_contract(
         &self,
+        _project_id: i64,
         id: i64,
         params: &UpdateContractParams,
         array_params: &UpdateContractArrayParams,
@@ -53,20 +54,31 @@ impl ContractOperations for LocalContractOperations {
         self.backend.update_contract(id, params, array_params).await
     }
 
-    async fn delete_contract(&self, id: i64) -> Result<()> {
+    async fn delete_contract(&self, _project_id: i64, id: i64) -> Result<()> {
         self.backend.delete_contract(id).await
     }
 
-    async fn check_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
+    async fn check_dod(
+        &self,
+        _project_id: i64,
+        contract_id: i64,
+        index: usize,
+    ) -> Result<Contract> {
         self.backend.check_dod(contract_id, index).await
     }
 
-    async fn uncheck_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
+    async fn uncheck_dod(
+        &self,
+        _project_id: i64,
+        contract_id: i64,
+        index: usize,
+    ) -> Result<Contract> {
         self.backend.uncheck_dod(contract_id, index).await
     }
 
     async fn add_note(
         &self,
+        _project_id: i64,
         contract_id: i64,
         content: String,
         source_task_id: Option<i64>,
@@ -76,7 +88,7 @@ impl ContractOperations for LocalContractOperations {
         self.backend.add_note(contract_id, &note).await
     }
 
-    async fn list_notes(&self, contract_id: i64) -> Result<Vec<ContractNote>> {
+    async fn list_notes(&self, _project_id: i64, contract_id: i64) -> Result<Vec<ContractNote>> {
         let contract = self.backend.get_contract(contract_id).await?;
         Ok(contract.notes().to_vec())
     }
@@ -124,7 +136,7 @@ mod tests {
             .unwrap();
         assert_eq!(created.title(), "contract-title");
 
-        let fetched = ops.get_contract(created.id()).await.unwrap();
+        let fetched = ops.get_contract(project_id, created.id()).await.unwrap();
         assert_eq!(fetched.id(), created.id());
         assert_eq!(fetched.title(), "contract-title");
         assert_eq!(fetched.tags(), &["tag-a".to_string()]);
@@ -167,7 +179,7 @@ mod tests {
         };
 
         let edited = ops
-            .edit_contract(c.id(), &update, &array_update)
+            .edit_contract(project_id, c.id(), &update, &array_update)
             .await
             .unwrap();
         assert_eq!(edited.title(), "new-title");
@@ -184,11 +196,11 @@ mod tests {
             .await
             .unwrap();
 
-        let after_check = ops.check_dod(c.id(), 1).await.unwrap();
+        let after_check = ops.check_dod(project_id, c.id(), 1).await.unwrap();
         assert!(after_check.definition_of_done()[0].checked());
         assert!(!after_check.definition_of_done()[1].checked());
 
-        let after_uncheck = ops.uncheck_dod(c.id(), 1).await.unwrap();
+        let after_uncheck = ops.uncheck_dod(project_id, c.id(), 1).await.unwrap();
         assert!(!after_uncheck.definition_of_done()[0].checked());
     }
 
@@ -226,17 +238,22 @@ mod tests {
             .unwrap();
 
         let n1 = ops
-            .add_note(c.id(), "first note".to_string(), Some(task.id()))
+            .add_note(
+                project_id,
+                c.id(),
+                "first note".to_string(),
+                Some(task.id()),
+            )
             .await
             .unwrap();
         assert_eq!(n1.content(), "first note");
         assert_eq!(n1.source_task_id(), Some(task.id()));
 
-        ops.add_note(c.id(), "second".to_string(), None)
+        ops.add_note(project_id, c.id(), "second".to_string(), None)
             .await
             .unwrap();
 
-        let notes = ops.list_notes(c.id()).await.unwrap();
+        let notes = ops.list_notes(project_id, c.id()).await.unwrap();
         assert_eq!(notes.len(), 2);
         assert_eq!(notes[0].content(), "first note");
         assert_eq!(notes[0].source_task_id(), Some(task.id()));
@@ -253,8 +270,8 @@ mod tests {
             .await
             .unwrap();
 
-        ops.delete_contract(c.id()).await.unwrap();
-        assert!(ops.get_contract(c.id()).await.is_err());
+        ops.delete_contract(project_id, c.id()).await.unwrap();
+        assert!(ops.get_contract(project_id, c.id()).await.is_err());
     }
 
     #[tokio::test]

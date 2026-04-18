@@ -2409,6 +2409,8 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let contract_ops = build_contract_ops(&config, &root)?;
+    let (_task_ops_unused, project_ops) = build_project_ops_pair(&config, &root)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     match action {
         ContractAction::Add {
@@ -2463,8 +2465,6 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                 );
             }
 
-            let (_task_ops_unused, project_ops) = build_project_ops_pair(&config, &root)?;
-            let project_id = resolve_project_id(&*project_ops, &config).await?;
             let contract = contract_ops.create_contract(project_id, &params).await?;
             let response = ContractResponse::from(contract.clone());
             match cli.output {
@@ -2476,8 +2476,6 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
             }
         }
         ContractAction::List { tag } => {
-            let (_task_ops_unused, project_ops) = build_project_ops_pair(&config, &root)?;
-            let project_id = resolve_project_id(&*project_ops, &config).await?;
             let contracts = contract_ops.list_contracts(project_id).await?;
             let filtered: Vec<_> = if tag.is_empty() {
                 contracts
@@ -2511,7 +2509,7 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
             }
         }
         ContractAction::Get { id } => {
-            let contract = contract_ops.get_contract(*id).await?;
+            let contract = contract_ops.get_contract(project_id, *id).await?;
             match cli.output {
                 OutputFormat::Json => {
                     let response = ContractResponse::from(contract);
@@ -2650,7 +2648,9 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                 remove_definition_of_done: remove_definition_of_done.clone(),
             };
 
-            let contract = contract_ops.edit_contract(id, &scalar, &array).await?;
+            let contract = contract_ops
+                .edit_contract(project_id, id, &scalar, &array)
+                .await?;
             match cli.output {
                 OutputFormat::Json => {
                     let response = ContractResponse::from(contract);
@@ -2673,7 +2673,7 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                     },
                 );
             }
-            contract_ops.delete_contract(id).await?;
+            contract_ops.delete_contract(project_id, id).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!(
@@ -2699,7 +2699,7 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                         },
                     );
                 }
-                let contract = contract_ops.check_dod(cid, idx).await?;
+                let contract = contract_ops.check_dod(project_id, cid, idx).await?;
                 match cli.output {
                     OutputFormat::Json => {
                         let response = ContractResponse::from(contract);
@@ -2722,7 +2722,7 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                         },
                     );
                 }
-                let contract = contract_ops.uncheck_dod(cid, idx).await?;
+                let contract = contract_ops.uncheck_dod(project_id, cid, idx).await?;
                 match cli.output {
                     OutputFormat::Json => {
                         let response = ContractResponse::from(contract);
@@ -2755,7 +2755,7 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                     );
                 }
                 let note = contract_ops
-                    .add_note(cid, content.clone(), *source_task)
+                    .add_note(project_id, cid, content.clone(), *source_task)
                     .await?;
                 let response = ContractNoteResponse::from(&note);
                 match cli.output {
@@ -2771,7 +2771,7 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                 }
             }
             ContractNoteCommand::List { contract_id } => {
-                let notes = contract_ops.list_notes(*contract_id).await?;
+                let notes = contract_ops.list_notes(project_id, *contract_id).await?;
                 match cli.output {
                     OutputFormat::Json => {
                         let responses: Vec<ContractNoteResponse> =

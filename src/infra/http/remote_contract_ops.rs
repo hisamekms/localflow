@@ -23,10 +23,6 @@ impl RemoteContractOperations {
         }
     }
 
-    fn url(&self, path: &str) -> String {
-        self.http.url(path)
-    }
-
     fn project_url(&self, project_id: i64, path: &str) -> String {
         self.http.project_url(project_id, path)
     }
@@ -127,8 +123,8 @@ impl ContractOperations for RemoteContractOperations {
         read_json_or_error(resp).await
     }
 
-    async fn get_contract(&self, id: i64) -> Result<Contract> {
-        let url = self.url(&format!("/api/v1/contracts/{id}"));
+    async fn get_contract(&self, project_id: i64, id: i64) -> Result<Contract> {
+        let url = self.project_url(project_id, &format!("/contracts/{id}"));
         let resp = self.auth(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
@@ -141,11 +137,12 @@ impl ContractOperations for RemoteContractOperations {
 
     async fn edit_contract(
         &self,
+        project_id: i64,
         id: i64,
         params: &UpdateContractParams,
         array_params: &UpdateContractArrayParams,
     ) -> Result<Contract> {
-        let url = self.url(&format!("/api/v1/contracts/{id}"));
+        let url = self.project_url(project_id, &format!("/contracts/{id}"));
         let body = update_body(params, array_params);
         let resp = self
             .auth(self.client().put(&url).json(&body))
@@ -154,35 +151,48 @@ impl ContractOperations for RemoteContractOperations {
         read_json_or_error(resp).await
     }
 
-    async fn delete_contract(&self, id: i64) -> Result<()> {
-        let url = self.url(&format!("/api/v1/contracts/{id}"));
+    async fn delete_contract(&self, project_id: i64, id: i64) -> Result<()> {
+        let url = self.project_url(project_id, &format!("/contracts/{id}"));
         let resp = self.auth(self.client().delete(&url)).send().await?;
         check_success(resp).await
     }
 
-    async fn check_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
-        let url = self.url(&format!(
-            "/api/v1/contracts/{contract_id}/dod/{index}/check"
-        ));
+    async fn check_dod(
+        &self,
+        project_id: i64,
+        contract_id: i64,
+        index: usize,
+    ) -> Result<Contract> {
+        let url = self.project_url(
+            project_id,
+            &format!("/contracts/{contract_id}/dod/{index}/check"),
+        );
         let resp = self.auth(self.client().post(&url)).send().await?;
         read_json_or_error(resp).await
     }
 
-    async fn uncheck_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
-        let url = self.url(&format!(
-            "/api/v1/contracts/{contract_id}/dod/{index}/uncheck"
-        ));
+    async fn uncheck_dod(
+        &self,
+        project_id: i64,
+        contract_id: i64,
+        index: usize,
+    ) -> Result<Contract> {
+        let url = self.project_url(
+            project_id,
+            &format!("/contracts/{contract_id}/dod/{index}/uncheck"),
+        );
         let resp = self.auth(self.client().post(&url)).send().await?;
         read_json_or_error(resp).await
     }
 
     async fn add_note(
         &self,
+        project_id: i64,
         contract_id: i64,
         content: String,
         source_task_id: Option<i64>,
     ) -> Result<ContractNote> {
-        let url = self.url(&format!("/api/v1/contracts/{contract_id}/notes"));
+        let url = self.project_url(project_id, &format!("/contracts/{contract_id}/notes"));
         let body = json!({
             "content": content,
             "source_task_id": source_task_id,
@@ -194,8 +204,8 @@ impl ContractOperations for RemoteContractOperations {
         read_json_or_error(resp).await
     }
 
-    async fn list_notes(&self, contract_id: i64) -> Result<Vec<ContractNote>> {
-        let url = self.url(&format!("/api/v1/contracts/{contract_id}/notes"));
+    async fn list_notes(&self, project_id: i64, contract_id: i64) -> Result<Vec<ContractNote>> {
+        let url = self.project_url(project_id, &format!("/contracts/{contract_id}/notes"));
         let resp = self.auth(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
