@@ -151,6 +151,10 @@ impl UserOperations for UserService {
     async fn revoke_all_sessions(&self, user_id: i64) -> Result<()> {
         self.backend.delete_all_api_keys_for_user(user_id).await
     }
+
+    async fn fetch_me(&self) -> Result<serde_json::Value> {
+        anyhow::bail!("fetch_me is only supported in proxy mode")
+    }
 }
 
 /// Check whether an API key is expired based on token config.

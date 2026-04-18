@@ -54,4 +54,10 @@ pub trait UserOperations: Send + Sync {
     ) -> Result<Vec<ApiKey>>;
     async fn revoke_session(&self, key_id: i64, user_id: i64) -> Result<()>;
     async fn revoke_all_sessions(&self, user_id: i64) -> Result<()>;
+
+    // --- Proxy passthrough ---
+
+    /// Fetch `/auth/me` from the upstream server. Only implemented for remote/proxy adapters;
+    /// local implementations return an error.
+    async fn fetch_me(&self) -> Result<serde_json::Value>;
 }

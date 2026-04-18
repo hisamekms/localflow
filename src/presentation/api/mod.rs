@@ -1904,9 +1904,21 @@ async fn delete_api_key(
 // GET /auth/me — current user + session info
 async fn get_me(
     State(state): State<AppState>,
-    auth: AuthUser,
+    auth: OptionalAuthUser,
     headers: axum::http::HeaderMap,
-) -> Result<Json<MeResponse>, ApiError> {
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // Proxy/relay mode: forward to upstream /auth/me so that the client's Bearer token
+    // (carried via PASSTHROUGH_TOKEN) resolves the caller's identity on the backend.
+    if state.proxy_mode {
+        let value = state
+            .user_service
+            .fetch_me()
+            .await
+            .map_err(classify_error)?;
+        return Ok(Json(value));
+    }
+
+    let auth = auth.0.ok_or(AuthError::MissingToken)?;
     let session = match state.auth_mode.as_deref() {
         Some(AuthMode::TrustedHeaders(_)) => None,
         _ => {
@@ -1932,10 +1944,13 @@ async fn get_me(
         }
     };
 
-    Ok(Json(MeResponse {
+    let me = MeResponse {
         user: UserResponse::from(auth.user),
         session,
-    }))
+    };
+    serde_json::to_value(me)
+        .map(Json)
+        .map_err(|e| ApiError::Internal(e.to_string()))
 }
 
 #[derive(Deserialize)]

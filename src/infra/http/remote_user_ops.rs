@@ -234,4 +234,12 @@ impl UserOperations for RemoteUserOperations {
         }
         Ok(())
     }
+
+    async fn fetch_me(&self) -> Result<serde_json::Value> {
+        let resp = self
+            .auth(self.client().get(self.url("/auth/me")))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
 }
