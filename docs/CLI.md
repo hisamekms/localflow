@@ -31,13 +31,18 @@ New tasks start in `draft` status. Default priority is `p2`.
 ## `task list` – List tasks
 
 ```bash
-senko task list                    # All tasks
-senko task list --status todo      # Filter by status
-senko task list --ready            # Todo tasks with all deps met
-senko task list --tag backend      # Filter by tag
+senko task list                               # All tasks (default limit 50)
+senko task list --status todo                 # Filter by status
+senko task list --ready                       # Todo tasks with all deps met
+senko task list --tag backend                 # Filter by tag
+senko task list --contract 42                 # Filter by contract ID
+senko task list --id-min 100 --id-max 199     # ID range (either bound is optional)
+senko task list --limit 20 --offset 40        # Pagination (limit 1..=200, default 50)
 ```
 
 Status values use snake_case in CLI flags: `todo`, `in_progress`, `completed`, `canceled`, `draft`.
+
+Pagination: `--limit` defaults to 50 when omitted and must be in `1..=200` when explicit. `--offset` defaults to 0. Results are ordered by task `id` ascending so pagination is stable across requests.
 
 ## `task get <id>` – Task details
 

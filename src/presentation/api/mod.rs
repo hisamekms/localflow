@@ -353,6 +353,16 @@ struct ListTasksQuery {
     include_unassigned: Option<bool>,
     #[serde(default)]
     metadata: Vec<String>,
+    #[serde(default)]
+    contract: Option<i64>,
+    #[serde(default)]
+    id_min: Option<i64>,
+    #[serde(default)]
+    id_max: Option<i64>,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    offset: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -859,6 +869,15 @@ async fn list_tasks(
             serde_json::Value::String(value.to_string()),
         );
     }
+    if let Some(n) = query.limit
+        && !(1..=200).contains(&n)
+    {
+        return Err(ApiError::BadRequest(
+            "limit must be between 1 and 200".into(),
+        ));
+    }
+    let effective_limit = query.limit.or(Some(50));
+
     let filter = ListTasksFilter {
         statuses,
         tags: query.tag,
@@ -867,6 +886,11 @@ async fn list_tasks(
         assignee_user_id: query.assignee_user_id,
         include_unassigned: query.include_unassigned.unwrap_or(false),
         metadata: metadata_map,
+        contract_id: query.contract,
+        id_min: query.id_min,
+        id_max: query.id_max,
+        limit: effective_limit,
+        offset: query.offset,
     };
     let tasks = state
         .task_service

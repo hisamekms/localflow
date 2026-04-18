@@ -239,6 +239,21 @@ pub enum TaskAction {
         /// Filter by metadata key=value pair; repeatable
         #[arg(long)]
         metadata: Vec<String>,
+        /// Filter by contract ID
+        #[arg(long)]
+        contract: Option<i64>,
+        /// Minimum task ID (inclusive)
+        #[arg(long)]
+        id_min: Option<i64>,
+        /// Maximum task ID (inclusive)
+        #[arg(long)]
+        id_max: Option<i64>,
+        /// Maximum number of results (default 50, range 1..=200)
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Skip N results (default 0)
+        #[arg(long)]
+        offset: Option<u32>,
     },
     /// Get task details
     Get {
@@ -958,6 +973,11 @@ pub async fn run(cli: Cli) -> Result<()> {
                 ready,
                 include_unassigned,
                 metadata,
+                contract,
+                id_min,
+                id_max,
+                limit,
+                offset,
             } => {
                 handlers::cmd_list(
                     &cli,
@@ -967,6 +987,11 @@ pub async fn run(cli: Cli) -> Result<()> {
                     *ready,
                     *include_unassigned,
                     metadata.clone(),
+                    *contract,
+                    *id_min,
+                    *id_max,
+                    *limit,
+                    *offset,
                 )
                 .await
             }
@@ -1360,6 +1385,7 @@ mod tests {
                         ready,
                         include_unassigned,
                         metadata,
+                        ..
                     },
             } => {
                 assert_eq!(status, vec!["todo", "in_progress"]);

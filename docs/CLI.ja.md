@@ -31,13 +31,18 @@ senko task add --title "バグ修正" \
 ## `task list` – タスク一覧
 
 ```bash
-senko task list                    # 全タスク
-senko task list --status todo      # ステータスで絞り込み
-senko task list --ready            # 依存解決済みのtodoタスク
-senko task list --tag backend      # タグで絞り込み
+senko task list                               # 全タスク (デフォルト limit 50)
+senko task list --status todo                 # ステータスで絞り込み
+senko task list --ready                       # 依存解決済みのtodoタスク
+senko task list --tag backend                 # タグで絞り込み
+senko task list --contract 42                 # contract ID で絞り込み
+senko task list --id-min 100 --id-max 199     # ID 範囲 (片方のみも可)
+senko task list --limit 20 --offset 40        # ページネーション (limit 1..=200、デフォルト 50)
 ```
 
 CLIフラグのステータス値はスネークケース: `todo`, `in_progress`, `completed`, `canceled`, `draft`
+
+ページネーション: `--limit` は省略時 50、指定時は `1..=200` の範囲で、範囲外はエラーになります。`--offset` のデフォルトは 0 です。結果は `id` 昇順で返るため、ページングが安定します。
 
 ## `task get <id>` – タスク詳細
 

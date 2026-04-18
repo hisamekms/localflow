@@ -35,6 +35,7 @@ PG_SUPPORTED_TESTS=(
   "test_api_keys.sh"
   "test_metadata_fields_api.sh"
   "test_user_api.sh"
+  "test_list_filter.sh"
 )
 
 is_pg_supported() {

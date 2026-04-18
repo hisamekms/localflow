@@ -1301,6 +1301,24 @@ impl TaskQueryPort for PostgresBackend {
             param_idx += 1;
         }
 
+        if let Some(contract_id) = filter.contract_id {
+            conditions.push(format!("t.contract_id = ${param_idx}"));
+            binds.push(BindVal::Int(contract_id));
+            param_idx += 1;
+        }
+
+        if let Some(id_min) = filter.id_min {
+            conditions.push(format!("t.id >= ${param_idx}"));
+            binds.push(BindVal::Int(id_min));
+            param_idx += 1;
+        }
+
+        if let Some(id_max) = filter.id_max {
+            conditions.push(format!("t.id <= ${param_idx}"));
+            binds.push(BindVal::Int(id_max));
+            param_idx += 1;
+        }
+
         // SQL-optimized implementation of `crate::domain::task::filter_ready`.
         if filter.ready {
             conditions.push("t.status = 'todo'".to_string());
@@ -1333,10 +1351,7 @@ impl TaskQueryPort for PostgresBackend {
             .context("failed to serialize metadata filter")?;
             conditions.push(format!("t.metadata::jsonb @> ${param_idx}::jsonb"));
             binds.push(BindVal::Str(json_str));
-            #[allow(unused_assignments)]
-            {
-                param_idx += 1;
-            }
+            param_idx += 1;
         }
 
         let where_clause = if conditions.is_empty() {
@@ -1345,7 +1360,20 @@ impl TaskQueryPort for PostgresBackend {
             format!(" WHERE {}", conditions.join(" AND "))
         };
 
-        let sql = format!("SELECT t.id FROM tasks t{where_clause} ORDER BY t.id");
+        let mut sql = format!("SELECT t.id FROM tasks t{where_clause} ORDER BY t.id");
+        if let Some(l) = filter.limit {
+            sql.push_str(&format!(" LIMIT ${param_idx}"));
+            binds.push(BindVal::Int(l as i64));
+            param_idx += 1;
+        }
+        if let Some(o) = filter.offset {
+            sql.push_str(&format!(" OFFSET ${param_idx}"));
+            binds.push(BindVal::Int(o as i64));
+            #[allow(unused_assignments)]
+            {
+                param_idx += 1;
+            }
+        }
 
         let mut query = sqlx::query(&sql);
         for bind in &binds {

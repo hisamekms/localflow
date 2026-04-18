@@ -474,6 +474,21 @@ impl TaskOperations for RemoteTaskOperations {
                 utf8_percent_encode(&v, NON_ALPHANUMERIC),
             ));
         }
+        if let Some(c) = filter.contract_id {
+            params.push(format!("contract={c}"));
+        }
+        if let Some(n) = filter.id_min {
+            params.push(format!("id_min={n}"));
+        }
+        if let Some(n) = filter.id_max {
+            params.push(format!("id_max={n}"));
+        }
+        if let Some(n) = filter.limit {
+            params.push(format!("limit={n}"));
+        }
+        if let Some(n) = filter.offset {
+            params.push(format!("offset={n}"));
+        }
 
         if !params.is_empty() {
             url = format!("{url}?{}", params.join("&"));

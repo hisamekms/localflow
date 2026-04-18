@@ -281,6 +281,7 @@ pub async fn cmd_add(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn cmd_list(
     cli: &Cli,
     status: Vec<String>,
@@ -289,6 +290,11 @@ pub async fn cmd_list(
     ready: bool,
     include_unassigned: bool,
     metadata: Vec<String>,
+    contract: Option<i64>,
+    id_min: Option<i64>,
+    id_max: Option<i64>,
+    limit: Option<u32>,
+    offset: Option<u32>,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
@@ -318,6 +324,13 @@ pub async fn cmd_list(
         );
     }
 
+    if let Some(n) = limit
+        && !(1..=200).contains(&n)
+    {
+        anyhow::bail!("--limit must be between 1 and 200");
+    }
+    let effective_limit = limit.or(Some(50));
+
     let filter = ListTasksFilter {
         statuses,
         tags: tag,
@@ -326,6 +339,11 @@ pub async fn cmd_list(
         assignee_user_id,
         include_unassigned,
         metadata: metadata_map,
+        contract_id: contract,
+        id_min,
+        id_max,
+        limit: effective_limit,
+        offset,
     };
 
     let tasks = task_ops.list_tasks(project_id, &filter).await?;

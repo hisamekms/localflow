@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# e2e test: list subcommand filter options (--status, --tag, --depends-on, --ready)
+# e2e test: list subcommand filter options (--status, --tag, --depends-on, --ready, --contract, --id-min/--id-max, --limit/--offset)
 
 set -euo pipefail
 
@@ -74,5 +74,80 @@ READY_HAS_B="$(echo "$LIST_READY" | jq --arg id "$B_ID" '[.[] | select(.id == ($
 
 assert_eq "1" "$READY_HAS_A" "ready includes Alpha (no deps, todo)"
 assert_eq "0" "$READY_HAS_B" "ready excludes Beta (unmet dep on Alpha)"
+
+# --- Case 5: --contract <id> ---
+echo "[5] --contract filter"
+CONTRACT_ID="$(run_lf --output json contract add --title "ContractX" --definition-of-done "x" | jq -r '.id')"
+D_ID="$(run_lf --output json task add --title "Delta" | jq -r '.id')"
+run_lf task edit "$D_ID" --contract "$CONTRACT_ID" >/dev/null
+
+LIST_CONTRACT="$(run_lf --output json task list --contract "$CONTRACT_ID")"
+CONTRACT_COUNT="$(echo "$LIST_CONTRACT" | jq 'length')"
+CONTRACT_HAS_D="$(echo "$LIST_CONTRACT" | jq --arg id "$D_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+
+assert_eq "1" "$CONTRACT_COUNT" "--contract returns only linked task"
+assert_eq "1" "$CONTRACT_HAS_D" "--contract includes Delta"
+
+# --- Case 6: --id-min / --id-max ---
+echo "[6] --id-min / --id-max filters"
+
+# Bound by the full set of IDs created above (A, B, C, D)
+LIST_ALL_IDS="$(run_lf --output json task list | jq -r '[.[].id] | sort | @csv')"
+MIN_ID="$(run_lf --output json task list | jq '[.[].id] | min')"
+MAX_ID="$(run_lf --output json task list | jq '[.[].id] | max')"
+
+LIST_ID_MIN="$(run_lf --output json task list --id-min "$B_ID")"
+ID_MIN_COUNT="$(echo "$LIST_ID_MIN" | jq 'length')"
+ID_MIN_HAS_A="$(echo "$LIST_ID_MIN" | jq --arg id "$A_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+ID_MIN_HAS_B="$(echo "$LIST_ID_MIN" | jq --arg id "$B_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+assert_eq "0" "$ID_MIN_HAS_A" "--id-min excludes ids below threshold"
+assert_eq "1" "$ID_MIN_HAS_B" "--id-min includes boundary id"
+
+LIST_ID_MAX="$(run_lf --output json task list --id-max "$B_ID")"
+ID_MAX_HAS_A="$(echo "$LIST_ID_MAX" | jq --arg id "$A_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+ID_MAX_HAS_B="$(echo "$LIST_ID_MAX" | jq --arg id "$B_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+ID_MAX_HAS_C="$(echo "$LIST_ID_MAX" | jq --arg id "$C_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+assert_eq "1" "$ID_MAX_HAS_A" "--id-max includes ids below threshold"
+assert_eq "1" "$ID_MAX_HAS_B" "--id-max includes boundary id"
+assert_eq "0" "$ID_MAX_HAS_C" "--id-max excludes ids above threshold"
+
+LIST_RANGE="$(run_lf --output json task list --id-min "$B_ID" --id-max "$B_ID")"
+RANGE_COUNT="$(echo "$LIST_RANGE" | jq 'length')"
+assert_eq "1" "$RANGE_COUNT" "--id-min == --id-max returns exactly 1 task"
+
+# --- Case 7: --limit / --offset ---
+echo "[7] --limit / --offset pagination"
+
+LIST_LIMIT2="$(run_lf --output json task list --limit 2)"
+LIMIT_COUNT="$(echo "$LIST_LIMIT2" | jq 'length')"
+assert_eq "2" "$LIMIT_COUNT" "--limit 2 returns exactly 2 tasks"
+
+LIST_ALL="$(run_lf --output json task list --limit 200)"
+TOTAL="$(echo "$LIST_ALL" | jq 'length')"
+LIST_OFFSET="$(run_lf --output json task list --limit 200 --offset 2)"
+OFFSET_COUNT="$(echo "$LIST_OFFSET" | jq 'length')"
+EXPECTED_OFFSET=$((TOTAL - 2))
+assert_eq "$EXPECTED_OFFSET" "$OFFSET_COUNT" "--offset 2 skips first 2 tasks"
+
+# Default limit = 50 (we have only ~4 tasks, so all returned)
+LIST_DEFAULT="$(run_lf --output json task list)"
+DEFAULT_COUNT="$(echo "$LIST_DEFAULT" | jq 'length')"
+assert_eq "$TOTAL" "$DEFAULT_COUNT" "default limit (50) returns all tasks when total < 50"
+
+# --- Case 8: --limit validation ---
+echo "[8] --limit validation"
+if run_lf task list --limit 0 >/dev/null 2>&1; then
+  echo "FAIL: --limit 0 should have errored"
+  exit 1
+else
+  echo "PASS: --limit 0 rejected"
+fi
+
+if run_lf task list --limit 201 >/dev/null 2>&1; then
+  echo "FAIL: --limit 201 should have errored"
+  exit 1
+else
+  echo "PASS: --limit 201 rejected"
+fi
 
 test_summary

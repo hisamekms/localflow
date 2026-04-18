@@ -1557,6 +1557,21 @@ fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> R
         param_values.push(Box::new(dep_id));
     }
 
+    if let Some(contract_id) = filter.contract_id {
+        conditions.push("t.contract_id = ?".to_string());
+        param_values.push(Box::new(contract_id));
+    }
+
+    if let Some(id_min) = filter.id_min {
+        conditions.push("t.id >= ?".to_string());
+        param_values.push(Box::new(id_min));
+    }
+
+    if let Some(id_max) = filter.id_max {
+        conditions.push("t.id <= ?".to_string());
+        param_values.push(Box::new(id_max));
+    }
+
     // SQL-optimized implementation of `crate::domain::task::filter_ready`.
     // Equivalence with domain logic is verified by integration tests.
     if filter.ready {
@@ -1613,7 +1628,24 @@ fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> R
         format!(" WHERE {}", conditions.join(" AND "))
     };
 
-    let sql = format!("SELECT t.id FROM tasks t{} ORDER BY t.id", where_clause);
+    let mut sql = format!("SELECT t.id FROM tasks t{} ORDER BY t.id", where_clause);
+    match (filter.limit, filter.offset) {
+        (Some(l), Some(o)) => {
+            sql.push_str(" LIMIT ? OFFSET ?");
+            param_values.push(Box::new(l as i64));
+            param_values.push(Box::new(o as i64));
+        }
+        (Some(l), None) => {
+            sql.push_str(" LIMIT ?");
+            param_values.push(Box::new(l as i64));
+        }
+        (None, Some(o)) => {
+            // SQLite requires LIMIT when using OFFSET; -1 means "no limit".
+            sql.push_str(" LIMIT -1 OFFSET ?");
+            param_values.push(Box::new(o as i64));
+        }
+        (None, None) => {}
+    }
     let param_refs: Vec<&dyn rusqlite::types::ToSql> =
         param_values.iter().map(|v| v.as_ref()).collect();
 
@@ -3201,6 +3233,146 @@ mod tests {
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].title(), "ready");
+    }
+
+    #[test]
+    fn list_tasks_filter_by_contract_id() {
+        let (_tmp, conn) = setup();
+        let contract = create_contract(
+            &conn,
+            1,
+            &CreateContractParams {
+                title: "c".to_string(),
+                description: None,
+                definition_of_done: vec![],
+                tags: vec![],
+                metadata: None,
+            },
+        )
+        .unwrap();
+
+        let mut with_contract = default_create_params("linked");
+        with_contract.contract_id = Some(contract.id());
+        create_task(&conn, 1, &with_contract).unwrap();
+        create_task(&conn, 1, &default_create_params("unlinked")).unwrap();
+
+        let matched = list_tasks(
+            &conn,
+            1,
+            &ListTasksFilter {
+                contract_id: Some(contract.id()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].title(), "linked");
+
+        let nomatch = list_tasks(
+            &conn,
+            1,
+            &ListTasksFilter {
+                contract_id: Some(contract.id() + 9999),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(nomatch.is_empty());
+    }
+
+    #[test]
+    fn list_tasks_filter_by_id_range() {
+        let (_tmp, conn) = setup();
+        let a = create_task(&conn, 1, &default_create_params("a")).unwrap();
+        let b = create_task(&conn, 1, &default_create_params("b")).unwrap();
+        let c = create_task(&conn, 1, &default_create_params("c")).unwrap();
+
+        let ge_b = list_tasks(
+            &conn,
+            1,
+            &ListTasksFilter {
+                id_min: Some(b.id()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(ge_b.len(), 2);
+
+        let le_b = list_tasks(
+            &conn,
+            1,
+            &ListTasksFilter {
+                id_max: Some(b.id()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(le_b.len(), 2);
+
+        let just_b = list_tasks(
+            &conn,
+            1,
+            &ListTasksFilter {
+                id_min: Some(b.id()),
+                id_max: Some(b.id()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(just_b.len(), 1);
+        assert_eq!(just_b[0].id(), b.id());
+
+        // Sanity: a < b < c
+        assert!(a.id() < b.id() && b.id() < c.id());
+    }
+
+    #[test]
+    fn list_tasks_pagination_limit_offset() {
+        let (_tmp, conn) = setup();
+        for i in 0..5 {
+            create_task(&conn, 1, &default_create_params(&format!("t{i}"))).unwrap();
+        }
+
+        let all = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
+        assert_eq!(all.len(), 5);
+
+        let limited = list_tasks(
+            &conn,
+            1,
+            &ListTasksFilter {
+                limit: Some(2),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(limited.len(), 2);
+        assert_eq!(limited[0].id(), all[0].id());
+
+        let offset_only = list_tasks(
+            &conn,
+            1,
+            &ListTasksFilter {
+                offset: Some(2),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(offset_only.len(), 3);
+        assert_eq!(offset_only[0].id(), all[2].id());
+
+        let both = list_tasks(
+            &conn,
+            1,
+            &ListTasksFilter {
+                limit: Some(2),
+                offset: Some(2),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(both.len(), 2);
+        assert_eq!(both[0].id(), all[2].id());
+        assert_eq!(both[1].id(), all[3].id());
     }
 
     #[test]

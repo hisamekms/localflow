@@ -1110,6 +1110,11 @@ pub struct ListTasksFilter {
     pub assignee_user_id: Option<i64>,
     pub include_unassigned: bool,
     pub metadata: HashMap<String, serde_json::Value>,
+    pub contract_id: Option<i64>,
+    pub id_min: Option<i64>,
+    pub id_max: Option<i64>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
 }
 
 #[derive(Clone)]
