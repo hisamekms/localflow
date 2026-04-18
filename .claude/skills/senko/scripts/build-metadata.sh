@@ -5,7 +5,8 @@ set -euo pipefail
 # Resolves env/value/command sources, reports prompt sources for the caller to handle.
 #
 # Usage: build-metadata.sh <stage>
-#   stage: start, complete, add, plan, branch, implement, merge, pr, branch_cleanup
+#   stage: task_add, task_ready, task_start, task_complete, task_cancel, task_select,
+#          branch_set, branch_cleanup, branch_merge, pr_create, pr_update, plan, implement
 #
 # Output (JSON):
 #   { "resolved": { "key": "value", ... }, "prompts": [ { "key": "...", "prompt": "..." } ] }

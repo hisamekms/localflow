@@ -2,10 +2,10 @@
 
 ## Step 1: Build metadata
 
-Run the metadata builder script to read `[workflow.start].metadata_fields` from config:
+Run the metadata builder script to read `[workflow.task_start].metadata_fields` from config:
 
 ```bash
-bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh start
+bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh task_start
 ```
 
 Parse the JSON output (`{"resolved": {...}, "prompts": [...]}`):

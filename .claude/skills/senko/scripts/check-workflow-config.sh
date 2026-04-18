@@ -44,44 +44,55 @@ case "$AUTO_MERGE" in
   *) error "invalid auto_merge: $AUTO_MERGE (expected: true, false)" ;;
 esac
 
-# Validate workflow stage hooks (instructions, pre_hooks, post_hooks)
-STAGES="add start branch plan implement merge pr complete branch_cleanup"
+# Validate workflow stage hooks. Under the new schema each stage has a
+# `hooks` map where each entry is a HookDef object with optional fields
+# `command`, `prompt`, `when`, `mode`, `on_failure`, `enabled`.
+# Stages known to be consumed by the skill (user-defined stages are allowed
+# but unchecked here).
+STAGES="task_add task_ready task_start task_complete task_cancel task_select plan implement branch_set branch_cleanup branch_merge pr_create pr_update"
 
 validate_hook() {
-  local stage="$1" phase="$2" index="$3"
+  local stage="$1" name="$2"
   local hook
-  hook=$(echo "$CONFIG_JSON" | jq -c --arg s "$stage" --arg p "$phase" ".workflow[\$s][\$p][$index]")
+  hook=$(echo "$CONFIG_JSON" | jq -c --arg s "$stage" --arg n "$name" '.workflow[$s].hooks[$n]')
   local hook_type
   hook_type=$(echo "$hook" | jq -r 'type')
-  if [ "$hook_type" = "string" ]; then
-    if [ -z "$(echo "$hook" | jq -r '.')" ]; then
-      error "workflow.${stage}.${phase}[${index}]: empty string hook"
-    fi
-  elif [ "$hook_type" = "object" ]; then
-    local cmd prompt
-    cmd=$(echo "$hook" | jq -r '.command // empty')
-    prompt=$(echo "$hook" | jq -r '.prompt // empty')
-    if [ -z "$cmd" ] && [ -z "$prompt" ]; then
-      error "workflow.${stage}.${phase}[${index}]: hook object requires 'command' or 'prompt' field"
-    fi
-    local on_failure
-    on_failure=$(echo "$hook" | jq -r '.on_failure // "abort"')
-    case "$on_failure" in
-      abort|warn|ignore) ;;
-      *) error "workflow.${stage}.${phase}[${index}]: invalid on_failure '${on_failure}' (expected: abort, warn, ignore)" ;;
-    esac
-  else
-    error "workflow.${stage}.${phase}[${index}]: invalid hook type '${hook_type}' (expected: string or object)"
+  if [ "$hook_type" != "object" ]; then
+    error "workflow.${stage}.hooks.${name}: invalid hook type '${hook_type}' (expected: object)"
+    return
   fi
+  local cmd prompt
+  cmd=$(echo "$hook" | jq -r '.command // empty')
+  prompt=$(echo "$hook" | jq -r '.prompt // empty')
+  if [ -z "$cmd" ] && [ -z "$prompt" ]; then
+    error "workflow.${stage}.hooks.${name}: hook requires 'command' or 'prompt' field"
+  fi
+  local when
+  when=$(echo "$hook" | jq -r '.when // "post"')
+  case "$when" in
+    pre|post) ;;
+    *) error "workflow.${stage}.hooks.${name}: invalid when '${when}' (expected: pre, post)" ;;
+  esac
+  local mode
+  mode=$(echo "$hook" | jq -r '.mode // "async"')
+  case "$mode" in
+    sync|async) ;;
+    *) error "workflow.${stage}.hooks.${name}: invalid mode '${mode}' (expected: sync, async)" ;;
+  esac
+  local on_failure
+  on_failure=$(echo "$hook" | jq -r '.on_failure // "abort"')
+  case "$on_failure" in
+    abort|warn|ignore) ;;
+    *) error "workflow.${stage}.hooks.${name}: invalid on_failure '${on_failure}' (expected: abort, warn, ignore)" ;;
+  esac
 }
 
 for stage in $STAGES; do
-  for phase in pre_hooks post_hooks; do
-    local_count=$(echo "$CONFIG_JSON" | jq --arg s "$stage" --arg p "$phase" '.workflow[$s][$p] // [] | length')
-    for i in $(seq 0 $((local_count - 1))); do
-      validate_hook "$stage" "$phase" "$i"
-    done
-  done
+  names=$(echo "$CONFIG_JSON" | jq -r --arg s "$stage" '.workflow[$s].hooks // {} | keys[]')
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    validate_hook "$stage" "$name"
+  done <<<"$names"
 done
 
 # Validate referenced merge scripts exist

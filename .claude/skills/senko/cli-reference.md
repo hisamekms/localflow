@@ -110,12 +110,23 @@ senko config --init                    # generate template config.toml
     - `{{context.<key>}}` — resolved from session context at branch-setting time. If the value is unavailable, the user is asked via `AskUserQuestion`.
     - `{{<name>:<opt1>|<opt2>|...}}` — enum variable. The skill infers the value from the task content. If unclear, the user is asked to choose. Example: `{{prefix:feat|fix|chore}}`
     - Examples: `task/{{id}}-{{slug}}`, `{{prefix:feat|fix|chore}}/{{id}}-{{slug}}`
-  - Stage configs (`add`, `start`, `branch`, `plan`, `implement`, `merge`, `pr`, `complete`, `branch_cleanup`): each stage supports `instructions` (list of text), `pre_hooks` (list of hooks), `post_hooks` (list of hooks). Hooks can be a simple string (shell command) or `{command, prompt, on_failure}`.
-  - `metadata_fields`: available on all stages (`add`, `start`, `branch`, `plan`, `implement`, `merge`, `pr`, `complete`, `branch_cleanup`). Each field has `key`, `source` (`env`, `value`, `prompt`, `command`), optional `default`, and `required` flag. `prompt` source fields are collected via `AskUserQuestion`. Values are shallow-merged into existing metadata.
+  - Stage configs under `[workflow.<stage>]`. Built-in stage names the skill consumes: `task_add`, `task_ready`, `task_start`, `task_complete`, `task_cancel`, `task_select`, `branch_set`, `branch_cleanup`, `branch_merge`, `pr_create`, `pr_update`, `plan`, `implement`. User-defined stage names are also accepted (preserved in `senko config` output).
+  - Each stage supports `instructions` (list of text), `metadata_fields` (field list), and `hooks` (map). Workflow stage hooks are emitted as plan instructions by the skill; see the **Hooks** section below for the HookDef shape.
+  - `metadata_fields`: each field has `key`, `source` (`env`, `value`, `prompt`, `command`), optional `default`, and `required` flag. `prompt` source fields are collected via `AskUserQuestion`. Values are shallow-merged into existing metadata.
   - **Metadata update semantics**: `--metadata` performs a shallow merge (top-level keys only: add/overwrite existing, null deletes key, unmentioned keys preserved). `--replace-metadata` replaces entirely. `--clear-metadata` removes all metadata.
-  - `add.default_dod` / `add.default_tags` / `add.default_priority`: defaults for new tasks
+  - `task_add.default_dod` / `task_add.default_tags` / `task_add.default_priority`: defaults for new tasks
   - `plan.required_sections`: required sections in implementation plans
   - When `merge_via = "pr"`, `task complete` requires `pr_url` to be set and the PR to be merged (checked via `gh`). Use `--skip-pr-check` to bypass.
+
+- **Hooks** — defined under four runtime roots, each with named HookDef entries:
+  - `[cli.<action>.hooks.<name>]` — fired by the CLI on state transitions.
+  - `[server.relay.<action>.hooks.<name>]` — fired by `senko serve-proxy`.
+  - `[server.remote.<action>.hooks.<name>]` — fired by `senko serve`.
+  - `[workflow.<stage>.hooks.<name>]` — emitted as plan instructions by the skill at the matching stage.
+  - CLI/server `<action>` is one of: `task_add`, `task_ready`, `task_start`, `task_complete`, `task_cancel`, `task_select`.
+  - HookDef fields: `command` (shell), `when` (`pre` / `post`, default `post`), `mode` (`sync` / `async`, default `async`), `on_failure` (`abort` / `warn` / `ignore`, default `abort`), `enabled` (default `true`), `env_vars` (list of `{name, required, default, description}`), `on_result` (`any` / `selected` / `none`, `task_select` only), `prompt` (workflow stages only — renders an agent instruction).
+  - Only `mode = "sync"` + `when = "pre"` + `on_failure = "abort"` can abort a state transition. Hooks defined under a non-matching runtime section are ignored with a startup warning.
+  - The global `[hooks].enabled` switch and `SENKO_HOOKS_ENABLED` / `SENKO_HOOK_ON_TASK_*` env vars have been removed; configure hooks only in `config.toml`.
 
 ## Contract semantics
 

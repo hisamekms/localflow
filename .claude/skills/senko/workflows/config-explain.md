@@ -27,22 +27,31 @@ For each section, explain every item's **current value**, whether it's the **def
 | `merge_strategy` | `rebase` | `rebase`, `squash` | Git merge strategy when merging task branches back to main. |
 | `branch_template` | `null` | string | Template for branch names. Variables: `{{id}}`, `{{slug}}`, `{{context.<key>}}` (from session context), `{{<name>:<opt1>\|<opt2>\|...}}` (enum, inferred from task). Example: `{{prefix:feat\|fix\|chore}}/{{id}}-{{slug}}`. |
 
-**workflow stages** (`workflow.add`, `workflow.start`, `workflow.branch`, `workflow.plan`, `workflow.implement`, `workflow.merge`, `workflow.pr`, `workflow.complete`, `workflow.branch_cleanup`)
+**workflow stages** — built-in names consumed by the skill:
+
+```
+task_add         task_ready       task_start       task_complete
+task_cancel      task_select      branch_set       branch_cleanup
+branch_merge     pr_create        pr_update        plan
+implement
+```
+
+User-defined stage names are also accepted — unknown stages are preserved in the `senko config` output so external scripts can consume them. The skill only fires on the built-in names above.
 
 Each stage supports:
 | Key | Default | Description |
 |---|---|---|
 | `instructions` | `[]` | Text instructions for the agent at this stage. |
-| `pre_hooks` | `[]` | Hooks to run before the stage. Each hook is a string (shell command) or `{command, prompt, on_failure}`. |
-| `post_hooks` | `[]` | Hooks to run after the stage. Same format as `pre_hooks`. |
+| `hooks` | `{}` | Named HookDef entries under `[workflow.<stage>.hooks.<name>]`. See the **hooks** section below for the full HookDef shape. |
+| `metadata_fields` | `[]` | Metadata fields collected at this stage. Values are shallow-merged into the task's metadata. |
 
-Stage-specific keys:
+Stage-specific keys (unknown keys are preserved as pass-through extras):
 | Stage | Extra Keys | Description |
 |---|---|---|
-| `workflow.add` | `default_dod`, `default_tags`, `default_priority` | Defaults applied when creating new tasks. |
-| `workflow.start` | `metadata_fields` | Metadata fields collected when starting a task. |
+| `workflow.task_add` | `default_dod`, `default_tags`, `default_priority` | Defaults applied when creating new tasks. |
 | `workflow.plan` | `required_sections` | Required sections in the implementation plan. |
-| `workflow.complete` | `metadata_fields` | Metadata fields collected when completing a task. |
+
+> **Note**: The old `pre_hooks` / `post_hooks` arrays have been removed. Use the `hooks` map with `when = "pre"` or `when = "post"` on each HookDef instead.
 
 **backend.sqlite**
 | Key | Default | Options | Description |
@@ -122,20 +131,39 @@ Stage-specific keys:
 | `port` | `null` (auto) | port number | Port for `senko web`. |
 
 **hooks**
+
+Hooks live under three runtime roots (fired only on the matching process) plus workflow stages:
+
+- `[cli.<action>.hooks.<name>]` — fired by the CLI process on task state transitions.
+- `[server.relay.<action>.hooks.<name>]` — fired by the relay proxy server (`senko serve-proxy`).
+- `[server.remote.<action>.hooks.<name>]` — fired by the direct server (`senko serve`).
+- `[workflow.<stage>.hooks.<name>]` — guidance hooks emitted into the plan by the skill at a workflow stage; agents execute them as plan instructions.
+
+CLI / server actions (fixed):
+
+| Action | Fires When |
+|---|---|
+| `task_add` | A new task is created (draft). |
+| `task_ready` | A task moves to `todo`. |
+| `task_start` | A task moves to `in_progress`. |
+| `task_complete` | A task is completed. |
+| `task_cancel` | A task is canceled. |
+| `task_select` | `senko task next` runs (use `on_result = "selected"` or `"none"` to scope). |
+
+Each HookDef supports:
+
 | Key | Default | Options | Description |
 |---|---|---|---|
-| `enabled` | `true` | `true`, `false` | Whether hooks fire on this process (CLI). API server always fires hooks regardless. |
+| `command` | required (unless `prompt` is set for workflow stages) | shell string | Command to execute. Stdin receives the hook envelope JSON. |
+| `when` | `post` | `pre`, `post` | Fire before or after the state transition / stage. |
+| `mode` | `async` | `sync`, `async` | `sync` waits for completion; `async` detaches. Only `sync` + `pre` + `on_failure = "abort"` can abort the state transition. |
+| `on_failure` | `abort` | `abort`, `warn`, `ignore` | `abort` only takes effect in `sync` + `pre`; otherwise acts as `warn`. |
+| `enabled` | `true` | `true`, `false` | Disabled hooks are skipped entirely. |
+| `env_vars` | `[]` | `[ { name, required (default true), default, description } ]` | Env vars passed to the child. Missing required-no-default vars cause skip + warn. |
+| `on_result` | `any` | `any`, `selected`, `none` | `task_select` only — filter by result branch. |
+| `prompt` | _(none)_ | string | Workflow-stage hooks can use `prompt` to render an agent instruction instead of (or in addition to) `command`. |
 
-| Event | Description |
-|---|---|
-| `on_task_added` | Triggered when a new task is created. |
-| `on_task_ready` | Triggered when a task moves to `todo` status. |
-| `on_task_started` | Triggered when a task moves to `in_progress`. |
-| `on_task_completed` | Triggered when a task is completed. |
-| `on_task_canceled` | Triggered when a task is canceled. |
-| `on_no_eligible_task` | Triggered when `senko task next` finds no eligible tasks. |
-
-Each hook entry has: `command` (shell command), `enabled` (bool, default true), `requires_env` (list of required env vars).
+> The global `[hooks].enabled` switch and `SENKO_HOOKS_ENABLED` / `SENKO_HOOK_ON_TASK_*` env vars have been removed. Hooks are defined only in `config.toml`. Runtime sections that don't match the current process (e.g., `[server.relay.*]` hooks on a CLI invocation) are ignored with a startup warning.
 
 ### Step 3: Explain Config Layering
 
@@ -160,13 +188,6 @@ Higher-priority sources override lower ones. The `senko config` output shows the
 | `SENKO_CLI_REMOTE_TOKEN` | `cli.remote.token` | |
 | `SENKO_SERVER_RELAY_URL` | `server.relay.url` | |
 | `SENKO_SERVER_RELAY_TOKEN` | `server.relay.token` | |
-| `SENKO_HOOKS_ENABLED` | `hooks.enabled` | |
-| `SENKO_HOOK_ON_TASK_ADDED` | `hooks.on_task_added` | Shell command |
-| `SENKO_HOOK_ON_TASK_READY` | `hooks.on_task_ready` | Shell command |
-| `SENKO_HOOK_ON_TASK_STARTED` | `hooks.on_task_started` | Shell command |
-| `SENKO_HOOK_ON_TASK_COMPLETED` | `hooks.on_task_completed` | Shell command |
-| `SENKO_HOOK_ON_TASK_CANCELED` | `hooks.on_task_canceled` | Shell command |
-| `SENKO_HOOK_ON_NO_ELIGIBLE_TASK` | `hooks.on_no_eligible_task` | Shell command |
 | `SENKO_AUTH_API_KEY_MASTER_KEY` | `server.auth.api_key.master_key` | |
 | `SENKO_AUTH_API_KEY_MASTER_KEY_ARN` | `server.auth.api_key.master_key_arn` | |
 | `SENKO_OIDC_ISSUER_URL` | `server.auth.oidc.issuer_url` | |
@@ -196,5 +217,5 @@ Higher-priority sources override lower ones. The `senko config` output shows the
 
 Format the explanation clearly, highlighting:
 - Values that differ from defaults
-- Any potentially important settings (e.g., `merge_via`, `hooks.enabled`)
+- Any potentially important settings (e.g., `merge_via`, configured hooks under `[cli.*]` / `[server.*]` / `[workflow.*]`)
 - Hooks that are currently configured

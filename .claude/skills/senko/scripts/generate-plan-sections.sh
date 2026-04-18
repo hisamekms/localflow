@@ -24,33 +24,33 @@ emit_instructions() {
   done
 }
 
-# Emit hooks (pre_hooks or post_hooks) for a workflow stage.
-# Usage: emit_hooks <stage> <pre_hooks|post_hooks>
-# HookDef is either a simple string or {"command": ..., "prompt": ..., "on_failure": ...}
+# Emit hooks for a workflow stage matching the given `when` phase.
+# Usage: emit_hooks <stage> <pre|post>
+# Hooks live under `.workflow[stage].hooks` as a map of HookDef objects, each
+# with optional fields: command, prompt, when ("pre" | "post"; default "post"),
+# on_failure, enabled (default true). Disabled or phase-mismatched hooks are skipped.
 emit_hooks() {
   local stage="$1"
   local phase="$2"
-  local count
-  count=$(echo "$CONFIG_JSON" | jq --arg s "$stage" --arg p "$phase" '.workflow[$s][$p] // [] | length')
-  for i in $(seq 0 $((count - 1))); do
-    local hook
-    hook=$(echo "$CONFIG_JSON" | jq -c --arg s "$stage" --arg p "$phase" ".workflow[\$s][\$p][$i]")
-    local hook_type
-    hook_type=$(echo "$hook" | jq -r 'type')
-    if [ "$hook_type" = "string" ]; then
-      echo "- Run: \`${hook//\"/}\`"
-    else
-      local cmd prompt
-      cmd=$(echo "$hook" | jq -r '.command // empty')
-      prompt=$(echo "$hook" | jq -r '.prompt // empty')
-      if [ -n "$cmd" ]; then
-        echo "- Run: \`${cmd}\`"
-      fi
-      if [ -n "$prompt" ]; then
-        echo "- ${prompt}"
-      fi
+  local names
+  names=$(echo "$CONFIG_JSON" | jq -r --arg s "$stage" '.workflow[$s].hooks // {} | keys[]')
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    local hook enabled when cmd prompt
+    hook=$(echo "$CONFIG_JSON" | jq -c --arg s "$stage" --arg n "$name" '.workflow[$s].hooks[$n]')
+    enabled=$(echo "$hook" | jq -r '.enabled != false')
+    when=$(echo "$hook" | jq -r '.when // "post"')
+    [ "$enabled" = "false" ] && continue
+    [ "$when" != "$phase" ] && continue
+    cmd=$(echo "$hook" | jq -r '.command // empty')
+    prompt=$(echo "$hook" | jq -r '.prompt // empty')
+    if [ -n "$cmd" ]; then
+      echo "- Run: \`${cmd}\`"
     fi
-  done
+    if [ -n "$prompt" ]; then
+      echo "- ${prompt}"
+    fi
+  done <<<"$names"
 }
 
 # Emit metadata collection step for a workflow stage if metadata_fields is configured.
@@ -81,7 +81,7 @@ EOF
 
 emit_metadata_step "implement" "$TASK_ID"
 emit_instructions "implement"
-emit_hooks "implement" "pre_hooks"
+emit_hooks "implement" "pre"
 
 # --- Finalization ---
 cat <<'HEADER'
@@ -97,9 +97,9 @@ cat <<'HEADER'
   4. All DoD items must be checked before proceeding
 HEADER
 
-emit_metadata_step "merge" "$TASK_ID"
-emit_hooks "merge" "pre_hooks"
-emit_instructions "merge"
+emit_metadata_step "branch_merge" "$TASK_ID"
+emit_hooks "branch_merge" "pre"
+emit_instructions "branch_merge"
 
 # --- Merge/PR step ---
 if [ "$MERGE_VIA" = "direct" ]; then
@@ -130,12 +130,12 @@ elif [ "$MERGE_VIA" = "pr" ]; then
 PREOF
 fi
 
-emit_hooks "merge" "post_hooks"
+emit_hooks "branch_merge" "post"
 
 # --- Complete step ---
-emit_metadata_step "complete" "$TASK_ID"
-emit_hooks "complete" "pre_hooks"
-emit_instructions "complete"
+emit_metadata_step "task_complete" "$TASK_ID"
+emit_hooks "task_complete" "pre"
+emit_instructions "task_complete"
 
 if [ "$MERGE_VIA" = "pr" ]; then
   echo "- **Do NOT run \`senko task complete\` in this workflow.** Task completion for PR-based workflows is handled separately via \`/senko complete ${TASK_ID}\`."
@@ -148,11 +148,11 @@ echo ""
 echo "# Post-completion"
 
 emit_metadata_step "branch_cleanup" "$TASK_ID"
-emit_hooks "branch_cleanup" "pre_hooks"
+emit_hooks "branch_cleanup" "pre"
 emit_instructions "branch_cleanup"
 
 if [ "$BRANCH_MODE" = "worktree" ]; then
   echo "- Delete the worktree (using \`/wth\` skill)"
 fi
 
-emit_hooks "branch_cleanup" "post_hooks"
+emit_hooks "branch_cleanup" "post"

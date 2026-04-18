@@ -29,7 +29,7 @@ senko task get <id>
 If the task is still `todo`, transition it (metadata handling follows `execute-task.md`'s Build-metadata step):
 
 ```bash
-bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh start
+bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh task_start
 senko task start <id> --metadata '<final-metadata-json>'   # omit --metadata if empty
 ```
 

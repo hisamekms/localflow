@@ -52,10 +52,10 @@ Splitting requires a Contract — a shared aggregate that carries the Definition
 
 #### Build add metadata
 
-Run the metadata builder script to read `[workflow.add].metadata_fields` from config:
+Run the metadata builder script to read `[workflow.task_add].metadata_fields` from config:
 
 ```bash
-bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh add
+bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh task_add
 ```
 
 Parse the JSON output (`{"resolved": {...}, "prompts": [...]}`):

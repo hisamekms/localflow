@@ -32,10 +32,10 @@ senko task get <id>
 
 ### Build completion metadata
 
-Run the metadata builder script to read `[workflow.complete].metadata_fields` from config:
+Run the metadata builder script to read `[workflow.task_complete].metadata_fields` from config:
 
 ```bash
-bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh complete
+bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh task_complete
 ```
 
 Parse the JSON output (`{"resolved": {...}, "prompts": [...]}`):
