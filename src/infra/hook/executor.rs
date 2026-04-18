@@ -6,15 +6,13 @@ use crate::application::HookTrigger;
 use crate::application::port::HookDataSource;
 use crate::application::port::HookExecutor;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
-use crate::infra::config::Config;
+use crate::infra::config::{Config, HookWhen};
 
-use super::{BackendInfo, RuntimeMode, fire_hooks, fire_no_eligible_task_hooks};
+use super::{BackendInfo, FireOutcome, RuntimeMode, fire};
 
 /// Shell-based hook executor that spawns hook commands as child processes.
-/// Respects the `should_fire` flag to control whether hooks actually execute.
 pub struct ShellHookExecutor {
     config: Config,
-    should_fire: bool,
     runtime_mode: RuntimeMode,
     backend_info: BackendInfo,
     backend: Arc<dyn HookDataSource>,
@@ -23,14 +21,12 @@ pub struct ShellHookExecutor {
 impl ShellHookExecutor {
     pub fn new(
         config: Config,
-        should_fire: bool,
         runtime_mode: RuntimeMode,
         backend_info: BackendInfo,
         backend: Arc<dyn HookDataSource>,
     ) -> Self {
         Self {
             config,
-            should_fire,
             runtime_mode,
             backend_info,
             backend,
@@ -43,41 +39,22 @@ impl HookExecutor for ShellHookExecutor {
     async fn fire(
         &self,
         trigger: &HookTrigger,
+        when: HookWhen,
         task: Option<&Task>,
         from_status: Option<TaskStatus>,
         unblocked: Option<Vec<UnblockedTask>>,
-    ) {
-        if !self.should_fire {
-            return;
-        }
-        let Some(event_name) = trigger.event_name() else {
-            return;
-        };
-        match trigger {
-            HookTrigger::Task(_) => {
-                let task = task.expect("task required for Task hook trigger");
-                fire_hooks(
-                    &self.config,
-                    event_name,
-                    task,
-                    self.backend.as_ref(),
-                    from_status,
-                    unblocked,
-                    &self.runtime_mode,
-                    &self.backend_info,
-                )
-                .await;
-            }
-            HookTrigger::NoEligibleTask { project_id } => {
-                fire_no_eligible_task_hooks(
-                    &self.config,
-                    self.backend.as_ref(),
-                    *project_id,
-                    &self.runtime_mode,
-                    &self.backend_info,
-                )
-                .await;
-            }
-        }
+    ) -> FireOutcome {
+        fire(
+            &self.config,
+            trigger,
+            when,
+            task,
+            self.backend.as_ref(),
+            from_status,
+            unblocked,
+            &self.runtime_mode,
+            &self.backend_info,
+        )
+        .await
     }
 }

@@ -15,7 +15,10 @@ use crate::domain::task::{
 use crate::domain::validator::{has_cycle_async, validate_metadata, validate_metadata_on_complete};
 
 use super::HookTrigger;
+use super::hook_trigger::SelectResult;
 use super::port::{CompleteResult, HookExecutor, PrVerifier, PreviewResult, TaskOperations};
+use crate::infra::config::HookWhen;
+use crate::infra::hook::FireOutcome;
 
 pub struct LocalTaskOperations {
     backend: Arc<dyn TaskBackend>,
@@ -88,27 +91,61 @@ impl TaskOperations for LocalTaskOperations {
         if let Some(ref metadata) = params.metadata {
             validate_metadata(metadata)?;
         }
+
+        // Pre hook: a preview task object is not available; pass None.
+        let trigger = HookTrigger::Task(TaskEvent::Created);
+        if self
+            .hooks
+            .fire(&trigger, HookWhen::Pre, None, None, None)
+            .await
+            == FireOutcome::Abort
+        {
+            return Err(DomainError::HookAborted {
+                event: "task_add".into(),
+            }
+            .into());
+        }
+
         let task = self.backend.create_task(project_id, params).await?;
 
-        self.hooks
-            .fire(
-                &HookTrigger::Task(TaskEvent::Created),
-                Some(&task),
-                None,
-                None,
-            )
+        let _ = self
+            .hooks
+            .fire(&trigger, HookWhen::Post, Some(&task), None, None)
             .await;
 
         Ok(task)
     }
 
     async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
-        let prev_status = self.backend.get_task(project_id, id).await?.status();
+        let prev = self.backend.get_task(project_id, id).await?;
+        let prev_status = prev.status();
+
+        let trigger = HookTrigger::Task(TaskEvent::Readied);
+        if self
+            .hooks
+            .fire(
+                &trigger,
+                HookWhen::Pre,
+                Some(&prev),
+                Some(prev_status),
+                None,
+            )
+            .await
+            == FireOutcome::Abort
+        {
+            return Err(DomainError::HookAborted {
+                event: "task_ready".into(),
+            }
+            .into());
+        }
+
         let task = self.backend.ready_task(project_id, id).await?;
 
-        self.hooks
+        let _ = self
+            .hooks
             .fire(
-                &HookTrigger::Task(TaskEvent::Readied),
+                &trigger,
+                HookWhen::Post,
                 Some(&task),
                 Some(prev_status),
                 None,
@@ -139,15 +176,38 @@ impl TaskOperations for LocalTaskOperations {
             }
             _ => {}
         }
-        let prev_status = self.backend.get_task(project_id, id).await?.status();
+        let prev = self.backend.get_task(project_id, id).await?;
+        let prev_status = prev.status();
+
+        let trigger = HookTrigger::Task(TaskEvent::Started);
+        if self
+            .hooks
+            .fire(
+                &trigger,
+                HookWhen::Pre,
+                Some(&prev),
+                Some(prev_status),
+                None,
+            )
+            .await
+            == FireOutcome::Abort
+        {
+            return Err(DomainError::HookAborted {
+                event: "task_start".into(),
+            }
+            .into());
+        }
+
         let task = self
             .backend
             .start_task(project_id, id, session_id, user_id, metadata)
             .await?;
 
-        self.hooks
+        let _ = self
+            .hooks
             .fire(
-                &HookTrigger::Task(TaskEvent::Started),
+                &trigger,
+                HookWhen::Post,
                 Some(&task),
                 Some(prev_status),
                 None,
@@ -185,9 +245,14 @@ impl TaskOperations for LocalTaskOperations {
         {
             Some(t) => t,
             None => {
-                self.hooks
+                let _ = self
+                    .hooks
                     .fire(
-                        &HookTrigger::NoEligibleTask { project_id },
+                        &HookTrigger::TaskSelect {
+                            project_id,
+                            result: SelectResult::None,
+                        },
+                        HookWhen::Post,
                         None,
                         None,
                         None,
@@ -199,10 +264,43 @@ impl TaskOperations for LocalTaskOperations {
 
         let prev_status = task.status();
 
+        // task_select post-hook fires on success before the start transition.
+        let _ = self
+            .hooks
+            .fire(
+                &HookTrigger::TaskSelect {
+                    project_id,
+                    result: SelectResult::Selected,
+                },
+                HookWhen::Post,
+                Some(&task),
+                None,
+                None,
+            )
+            .await;
+
         // Remote server returns already-started tasks; skip start() in that case
         let task = if task.status() == TaskStatus::InProgress {
             task
         } else {
+            let start_trigger = HookTrigger::Task(TaskEvent::Started);
+            if self
+                .hooks
+                .fire(
+                    &start_trigger,
+                    HookWhen::Pre,
+                    Some(&task),
+                    Some(prev_status),
+                    None,
+                )
+                .await
+                == FireOutcome::Abort
+            {
+                return Err(DomainError::HookAborted {
+                    event: "task_start".into(),
+                }
+                .into());
+            }
             self.backend
                 .start_task(
                     project_id,
@@ -214,9 +312,11 @@ impl TaskOperations for LocalTaskOperations {
                 .await?
         };
 
-        self.hooks
+        let _ = self
+            .hooks
             .fire(
                 &HookTrigger::Task(TaskEvent::Started),
+                HookWhen::Post,
                 Some(&task),
                 Some(prev_status),
                 None,
@@ -265,6 +365,26 @@ impl TaskOperations for LocalTaskOperations {
             .collect();
 
         let prev_status = task.status();
+
+        let complete_trigger = HookTrigger::Task(TaskEvent::Completed);
+        if self
+            .hooks
+            .fire(
+                &complete_trigger,
+                HookWhen::Pre,
+                Some(&task),
+                Some(prev_status),
+                None,
+            )
+            .await
+            == FireOutcome::Abort
+        {
+            return Err(DomainError::HookAborted {
+                event: "task_complete".into(),
+            }
+            .into());
+        }
+
         // TaskTransitionPort::complete_task handles both local (domain complete + save)
         // and RemoteTaskOperations (POST /complete with server-side PR verification).
         let task = self
@@ -285,9 +405,11 @@ impl TaskOperations for LocalTaskOperations {
             Some(unblocked.clone())
         };
 
-        self.hooks
+        let _ = self
+            .hooks
             .fire(
-                &HookTrigger::Task(TaskEvent::Completed),
+                &complete_trigger,
+                HookWhen::Post,
                 Some(&task),
                 Some(prev_status),
                 unblocked_opt,
@@ -305,12 +427,35 @@ impl TaskOperations for LocalTaskOperations {
                 crate::domain::validator::MAX_LONG_TEXT_LEN,
             )?;
         }
-        let prev_status = self.backend.get_task(project_id, id).await?.status();
+        let prev = self.backend.get_task(project_id, id).await?;
+        let prev_status = prev.status();
+
+        let trigger = HookTrigger::Task(TaskEvent::Canceled);
+        if self
+            .hooks
+            .fire(
+                &trigger,
+                HookWhen::Pre,
+                Some(&prev),
+                Some(prev_status),
+                None,
+            )
+            .await
+            == FireOutcome::Abort
+        {
+            return Err(DomainError::HookAborted {
+                event: "task_cancel".into(),
+            }
+            .into());
+        }
+
         let task = self.backend.cancel_task(project_id, id, reason).await?;
 
-        self.hooks
+        let _ = self
+            .hooks
             .fire(
-                &HookTrigger::Task(TaskEvent::Canceled),
+                &trigger,
+                HookWhen::Post,
                 Some(&task),
                 Some(prev_status),
                 None,

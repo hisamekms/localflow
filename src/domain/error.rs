@@ -28,6 +28,9 @@ pub enum DomainError {
     #[error("no eligible task found")]
     NoEligibleTask,
 
+    #[error("aborted by pre-hook for event {event}")]
+    HookAborted { event: String },
+
     // BadRequest (400)
     #[error("invalid task status: {value}")]
     InvalidTaskStatus { value: String },

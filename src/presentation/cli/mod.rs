@@ -743,177 +743,162 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 #   4. Project config (.senko/config.toml)
 #   5. User config (~/.config/senko/config.toml)
 
-# enabled = true  # set to false to disable all hook execution (default: true)
-#
-# Named hooks: [hooks.<event>.<name>]
-# Each hook has a `command` and optional `enabled` (default: true).
-# Set `enabled = false` to disable a hook inherited from user config.
-#
-# [hooks.on_task_added.my-hook]
-# command = "echo 'task added'"
-#
-# [hooks.on_task_ready.my-hook]
-# command = "echo 'task ready'"
-#
-# [hooks.on_task_completed.my-hook]
-# command = "echo 'task completed'"
-
-[workflow]
-# merge_via = "direct"        # or "pr"
-# auto_merge = true
-# branch_mode = "worktree"    # or "branch"
-# merge_strategy = "rebase"   # or "squash"
-# branch_template = "senko/{id}-{slug}"
-
-# --- Workflow event sections ---
-# Each section supports: instructions, pre_hooks, post_hooks
-# Hooks can be a simple string or { command = "...", on_failure = "abort"|"warn"|"ignore" }
-
-# [workflow.add]
-# default_dod = ["Write unit tests", "Update documentation"]
-# default_tags = ["backend"]
-# default_priority = "p2"
-# instructions = ["Include acceptance criteria in the description"]
-# pre_hooks = ["echo 'adding task'"]
-# post_hooks = ["echo 'task added'"]
-#
-# [[workflow.add.metadata_fields]]
-# key = "team"
-# source = "value"
-# value = "backend"
-
-# [workflow.start]
-# instructions = ["Check for blockers before starting"]
-# pre_hooks = ["cargo check"]
-# post_hooks = [{ command = "notify-team", on_failure = "warn" }]
-#
-# Metadata fields: available on all stages.
-# source types: "env", "value", "prompt", "command"
-# "prompt" fields are collected via AskUserQuestion in Claude Code.
-#
-# [[workflow.start.metadata_fields]]
-# key = "assigned_by"
-# source = "env"
-# env_var = "USER"
-# default = "unknown"
-#
-# [[workflow.start.metadata_fields]]
-# key = "team"
-# source = "value"
-# value = "backend"
-#
-# [[workflow.start.metadata_fields]]
-# key = "estimate"
-# source = "prompt"
-# prompt = "Estimated time for this task?"
-#
-# [[workflow.start.metadata_fields]]
-# key = "git_branch"
-# source = "command"
-# command = "git rev-parse --abbrev-ref HEAD"
-
-# [workflow.branch]
-# instructions = ["Use feature/ prefix for new features"]
-# pre_hooks = ["git fetch origin"]
-# post_hooks = []
-#
-# [[workflow.branch.metadata_fields]]
-# key = "branch_name"
-# source = "command"
-# command = "git rev-parse --abbrev-ref HEAD"
-
-# [workflow.plan]
-# required_sections = ["Overview", "Acceptance Criteria"]
-# instructions = ["Include time estimates in the plan"]
-# pre_hooks = []
-# post_hooks = []
-#
-# [[workflow.plan.metadata_fields]]
-# key = "plan_estimate"
-# source = "prompt"
-# prompt = "Estimated time for this task?"
-
-# [workflow.implement]
-# instructions = ["Follow project coding standards"]
-# pre_hooks = [{ command = "cargo fmt --check", on_failure = "abort" }]
-# post_hooks = ["cargo test --all"]
-#
-# [[workflow.implement.metadata_fields]]
-# key = "complexity"
-# source = "prompt"
-# prompt = "Complexity rating (low/medium/high)?"
-
-# [workflow.merge]
-# instructions = ["Ensure CI is green before merging"]
-# pre_hooks = ["cargo test --all"]
-# post_hooks = []
-
-# [workflow.pr]
-# instructions = ["Include screenshots for UI changes"]
-# pre_hooks = [{ prompt = "Review the PR description", on_failure = "warn" }]
-# post_hooks = []
-
-# [workflow.complete]
-# instructions = ["Update changelog"]
-# pre_hooks = []
-# post_hooks = ["echo 'task completed'"]
-#
-# [[workflow.complete.metadata_fields]]
-# key = "completed_at"
-# source = "command"
-# command = "date -u +%Y-%m-%dT%H:%M:%SZ"
-
-# [workflow.branch_cleanup]
-# instructions = ["Verify branch is fully merged"]
-# pre_hooks = []
-# post_hooks = []
-
-[backend.sqlite]
-# db_path = "/custom/path/to/data.db"  # override SQLite database path (default: $XDG_DATA_HOME/senko/projects/<hash>/data.db)
-
-[log]
-# dir = "/custom/path/to/logs"  # override log output directory (default: $XDG_STATE_HOME/senko)
-
 [project]
 # name = "default"  # project name to operate on (overrides with --project flag or SENKO_PROJECT env)
 
 [user]
 # name = "default"  # user name to operate as (overrides with --user flag or SENKO_USER env)
 
-[server]
-# host = "127.0.0.1"  # bind address for `senko serve` (default: 127.0.0.1)
-# port = 3142         # port for `senko serve` (default: 3142)
-#
-# [server.auth.api_key]
-# master_key = "secret"                         # master API key (env: SENKO_AUTH_API_KEY_MASTER_KEY)
-# master_key_arn = "arn:aws:..."                 # master API key from AWS Secrets Manager (env: SENKO_AUTH_API_KEY_MASTER_KEY_ARN)
-#
-# [server.auth.oidc]
-# issuer_url = "https://accounts.example.com"  # OIDC issuer URL (env: SENKO_OIDC_ISSUER_URL)
-# client_id = "senko-cli"                      # OIDC client ID for PKCE (env: SENKO_OIDC_CLIENT_ID)
-# scopes = ["openid", "profile"]               # OIDC scopes (default: ["openid", "profile"])
-#
-# callback_ports = ["8400"]              # local ports for OIDC callback (default: none, auto-assign)
-#
-# [server.auth.oidc.session]
-# ttl = "24h"                            # session time-to-live (env: SENKO_AUTH_OIDC_SESSION_TTL)
-# inactive_ttl = "7d"                    # session inactive timeout (env: SENKO_AUTH_OIDC_SESSION_INACTIVE_TTL)
-# max_per_user = 10                      # max sessions per user (env: SENKO_AUTH_OIDC_SESSION_MAX_PER_USER)
+[backend.sqlite]
+# db_path = "/custom/path/to/data.db"  # override SQLite database path
 
-# [server.relay]
-# url = "http://upstream:3142"           # upstream server URL for relay mode (env: SENKO_SERVER_RELAY_URL)
-# token = "relay-api-token"              # API token for relay authentication (env: SENKO_SERVER_RELAY_TOKEN)
+# --- CLI runtime ---
+# Hooks defined here fire when the binary runs as a local CLI
+# (i.e. not `senko serve` / `senko serve --proxy`).
+#
+# Hook shape (common to every runtime):
+#   command        = "..."                            # shell command, receives envelope via stdin
+#   when           = "pre" | "post"                   # default: post
+#   mode           = "sync" | "async"                 # default: async
+#   on_failure     = "abort" | "warn" | "ignore"      # default: abort (abort only applies to sync+pre)
+#   enabled        = true | false                     # default: true
+#   on_result      = "selected" | "none" | "any"      # task_select only; default: any
+#   env_vars       = [ { name = "...", required = true, default = "...", description = "..." } ]
 
 [cli]
-# browser = true                         # auto-open browser for OIDC login (default: true)
+# browser = true
 
 [cli.remote]
-# url = "http://127.0.0.1:3142"   # remote server URL for CLI client mode (env: SENKO_CLI_REMOTE_URL)
-# token = "your-api-token"        # API token for authentication with remote server (env: SENKO_CLI_REMOTE_TOKEN)
+# url = "http://127.0.0.1:3142"
+# token = "your-api-token"
+
+# Task action hooks: task_add / task_ready / task_start / task_complete / task_cancel / task_select
+#
+# [cli.task_add.hooks.example]
+# command = "echo task-added"
+#
+# [cli.task_complete.hooks.notify]
+# command = "curl -X POST $WEBHOOK_URL"
+# mode = "async"
+# [[cli.task_complete.hooks.notify.env_vars]]
+# name = "WEBHOOK_URL"
+# required = true
+#
+# [cli.task_select.hooks.prompt_for_add]
+# command = "echo 'no eligible task — consider adding one'"
+# on_result = "none"
+
+# --- Server: Relay mode (serve --proxy) ---
+[server]
+# host = "127.0.0.1"
+# port = 3142
+
+[server.auth.api_key]
+# master_key = "secret"
+
+[server.auth.oidc]
+# issuer_url = "https://accounts.example.com"
+# client_id = "senko-cli"
+# scopes = ["openid", "profile"]
+# callback_ports = ["8400"]
+
+[server.auth.oidc.session]
+# ttl = "24h"
+# inactive_ttl = "7d"
+# max_per_user = 10
+
+[server.relay]
+# url = "http://upstream:3142"
+# token = "relay-api-token"
+
+# [server.relay.task_complete.hooks.audit]
+# command = "logger -t senko 'task complete'"
+
+# --- Server: Remote/Direct mode (serve) ---
+[server.remote]
+
+# [server.remote.task_ready.hooks.metrics]
+# command = "emit-metric task_ready"
+# mode = "async"
+
+# --- Workflow stages ---
+# Built-in stages consumed by the Claude Code skill:
+#   task_add / task_ready / task_start / task_complete / task_cancel / task_select
+#   branch_set / branch_cleanup / branch_merge / pr_create / pr_update
+#   plan / implement
+# User-defined stages are allowed — unknown stage names are passed through
+# to scripts that query `senko config` output.
+
+[workflow]
+# merge_via = "direct"        # or "pr"
+# auto_merge = true
+# branch_mode = "worktree"    # or "branch"
+# merge_strategy = "rebase"   # or "squash"
+# branch_template = "senko/{{id}}-{{slug}}"
+
+# [workflow.task_add]
+# default_dod = ["Write unit tests", "Update documentation"]
+# default_tags = ["backend"]
+# default_priority = "p2"
+# instructions = ["Include acceptance criteria in the description"]
+#
+# [workflow.task_add.hooks.example]
+# command = "echo 'adding task'"
+# when = "pre"
+# mode = "sync"
+#
+# [[workflow.task_add.metadata_fields]]
+# key = "team"
+# source = "value"
+# value = "backend"
+
+# [workflow.task_start]
+# instructions = ["Check for blockers before starting"]
+#
+# [workflow.task_start.hooks.pre_check]
+# command = "cargo check"
+# when = "pre"
+# mode = "sync"
+# on_failure = "abort"
+
+# [workflow.branch_set]
+# instructions = ["Use feature/ prefix for new features"]
+
+# [workflow.branch_merge]
+# instructions = ["Ensure CI is green before merging"]
+#
+# [workflow.branch_merge.hooks.mise_check]
+# command = "mise check"
+# when = "pre"
+# mode = "sync"
+# on_failure = "abort"
+
+# [workflow.pr_create]
+# instructions = ["Include screenshots for UI changes"]
+
+# [workflow.plan]
+# required_sections = ["Overview", "Acceptance Criteria"]
+# instructions = ["Include time estimates in the plan"]
+
+# [workflow.implement]
+# instructions = ["Follow project coding standards"]
+
+# [workflow.task_complete]
+# instructions = ["Update changelog"]
+#
+# [workflow.task_complete.hooks.notify]
+# command = "echo 'task completed'"
+# mode = "async"
+
+# [workflow.branch_cleanup]
+# instructions = ["Verify branch is fully merged"]
+
+[log]
+# dir = "/custom/path/to/logs"
 
 [web]
-# host = "127.0.0.1"  # bind address for `senko web` (default: 127.0.0.1, env: SENKO_HOST)
-# port = 8080         # port for `senko web` (default: auto)
+# host = "127.0.0.1"
+# port = 8080
 "#;
 
 pub fn print_dry_run(output: &OutputFormat, ops: &DryRunOperation) -> Result<()> {

@@ -16,7 +16,9 @@ use crate::infra::auth::{ApiKeyProvider, JwtAuthProvider, TrustedHeadersAuthProv
 use crate::infra::config::{Config, LogConfig, LogFormat, RawConfig};
 use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::hook::test_executor::ShellHookTestExecutor;
-use crate::infra::hook::{BackendInfo, RuntimeMode};
+use crate::infra::hook::{
+    BackendInfo, RuntimeMode, validate_config_hooks, warn_about_mismatched_runtime_sections,
+};
 use crate::infra::http::remote_contract_ops::RemoteContractOperations;
 use crate::infra::http::remote_hook_data::RemoteHookDataSource;
 use crate::infra::http::remote_metadata_field_ops::RemoteMetadataFieldOperations;
@@ -61,10 +63,6 @@ pub fn create_backend(project_root: &Path, config: &Config) -> Result<Arc<dyn Ta
     Ok(Arc::new(sqlite))
 }
 
-pub fn should_fire_client_hooks(config: &Config) -> bool {
-    config.hooks.enabled
-}
-
 /// Resolve the backend info from config for hook envelope metadata.
 /// Mirrors the priority logic of `create_backend`.
 pub fn resolve_backend_info(config: &Config, project_root: &Path) -> BackendInfo {
@@ -106,26 +104,27 @@ pub fn create_hook_executor(
     backend_info: BackendInfo,
     hook_data: Arc<dyn HookDataSource>,
 ) -> Arc<dyn HookExecutor> {
-    let should_fire = should_fire_client_hooks(&config);
+    validate_config_hooks(&config);
+    warn_about_mismatched_runtime_sections(&config, &runtime_mode);
     Arc::new(ShellHookExecutor::new(
         config,
-        should_fire,
         runtime_mode,
         backend_info,
         hook_data,
     ))
 }
 
-pub fn create_api_hook_executor(
+pub fn create_server_hook_executor(
     config: Config,
+    runtime_mode: RuntimeMode,
     backend_info: BackendInfo,
     hook_data: Arc<dyn HookDataSource>,
 ) -> Arc<dyn HookExecutor> {
-    // API server always fires hooks
+    validate_config_hooks(&config);
+    warn_about_mismatched_runtime_sections(&config, &runtime_mode);
     Arc::new(ShellHookExecutor::new(
         config,
-        true,
-        RuntimeMode::Api,
+        runtime_mode,
         backend_info,
         hook_data,
     ))
@@ -509,28 +508,43 @@ fn load_config_file(path: &Path, must_exist: bool) -> Result<RawConfig> {
         .with_context(|| format!("failed to parse config file: {}", path.display()))
 }
 
-/// Check if the config uses the old array-based hook format and return a helpful error.
+/// Check if the config still uses the legacy `[hooks]` format.
+/// Emits a warning on any `[hooks]` presence (since the top-level section is
+/// no longer honored) and returns an error only when the legacy string / array
+/// shape is used, which would previously have caused a silent parse error.
 fn detect_legacy_hook_format(content: &str, path: &Path) -> Result<()> {
     let raw: toml::Value = match toml::from_str(content) {
         Ok(v) => v,
         Err(_) => return Ok(()), // let the real parser produce the error
     };
-    if let Some(hooks) = raw.get("hooks").and_then(|v| v.as_table()) {
-        for (key, val) in hooks {
-            if val.is_str() || val.is_array() {
-                bail!(
-                    "Legacy hook format detected in {}.\n\
-                     The array-based hook format is no longer supported.\n\
-                     Please migrate to named hooks:\n\n\
-                     Old format:\n  [hooks]\n  {} = \"command\"\n\n\
-                     New format:\n  [hooks.{}.my-hook]\n  command = \"command\"\n",
-                    path.display(),
-                    key,
-                    key,
-                );
-            }
+    let Some(hooks_table) = raw.get("hooks").and_then(|v| v.as_table()) else {
+        return Ok(());
+    };
+
+    // Legacy scalar/array format (e.g., `[hooks]` on_task_added = "cmd"`).
+    for (key, val) in hooks_table {
+        if val.is_str() || val.is_array() {
+            bail!(
+                "Legacy hook format detected in {}.\n\
+                 The array-based hook format is no longer supported.\n\
+                 Migrate to the runtime-scoped schema:\n\n\
+                 Old format:\n  [hooks]\n  {} = \"command\"\n\n\
+                 New format:\n  [cli.{}.hooks.my-hook]\n  command = \"command\"\n",
+                path.display(),
+                key,
+                key,
+            );
         }
     }
+
+    // Nested legacy schema ([hooks.on_task_*.name]). Parseable, but silently
+    // ignored under the new schema — warn the user to migrate.
+    tracing::warn!(
+        path = %path.display(),
+        "`[hooks]` section found in config is no longer honored; migrate hook definitions to \
+         [cli.<action>.hooks.<name>] / [server.relay.<action>.hooks.<name>] / \
+         [server.remote.<action>.hooks.<name>] / [workflow.<stage>.hooks.<name>]"
+    );
     Ok(())
 }
 

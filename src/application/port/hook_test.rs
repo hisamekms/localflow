@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
+use crate::application::hook_trigger::SelectResult;
 use crate::domain::task::Task;
 
 /// Port trait for hook test operations (CLI `hooks test` command).
@@ -15,8 +16,12 @@ pub trait HookTestPort: Send + Sync {
         task: &Task,
     ) -> Result<String>;
 
-    /// Build a JSON envelope for a `no_eligible_task` event (pretty-printed).
-    async fn build_no_eligible_task_envelope(&self, project_id: i64) -> Result<String>;
+    /// Build a JSON envelope for a `task_select` event (pretty-printed).
+    async fn build_task_select_envelope(
+        &self,
+        project_id: i64,
+        result: SelectResult,
+    ) -> Result<String>;
 
     /// Get configured hook commands for the given event name.
     /// Returns `None` for unrecognized event names.

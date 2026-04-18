@@ -8,8 +8,11 @@
 [project]
 name = "senko"
 
-[workflow.merge]
-pre_hooks = ["mise check"]
+[workflow.branch_merge.hooks.mise_check]
+command = "mise check"
+when = "pre"
+mode = "sync"
+on_failure = "abort"
 
 # [workflow]
 # merge_via = "direct"
@@ -17,10 +20,7 @@ pre_hooks = ["mise check"]
 # branch_mode = "worktree"
 # merge_strategy = "rebase"
 
-# [backend]
-# api_url = "http://127.0.0.1:3142"
-
-# [storage]
+# [backend.sqlite]
 # db_path = "/custom/path/to/data.db"
 
 # [log]
@@ -32,7 +32,7 @@ pre_hooks = ["mise check"]
 # host = "127.0.0.1"
 # port = 3141
 
-# [hooks]
-# [hooks.on_task_completed.notify]
+# Example CLI hook:
+# [cli.task_complete.hooks.notify]
 # command = "echo 'task completed'"
-# enabled = true
+# mode = "async"

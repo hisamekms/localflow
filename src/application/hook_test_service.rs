@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use crate::domain::task::{Priority, Task, TaskStatus};
 
+use super::hook_trigger::SelectResult;
 use super::port::{HookDataSource, HookTestPort};
 
 /// Result of a single hook command execution.
@@ -47,9 +48,16 @@ impl HookTestService {
         dry_run: bool,
     ) -> Result<HookTestOutput> {
         // Build the envelope JSON
-        let envelope_json = if event_name == "no_eligible_task" {
+        let envelope_json = if event_name == "task_select" {
+            // Task select envelope defaults to the `selected` branch for test
+            // output unless the user constructs one explicitly; the structure
+            // is the same either way.
+            let result = match task_id {
+                Some(_) => SelectResult::Selected,
+                None => SelectResult::None,
+            };
             self.hook_test
-                .build_no_eligible_task_envelope(project_id)
+                .build_task_select_envelope(project_id, result)
                 .await?
         } else {
             let task = self.resolve_task(project_id, task_id).await?;

@@ -4,25 +4,47 @@ pub mod test_executor;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
-use serde::Serialize;
-
 use chrono::Utc;
+use serde::Serialize;
 use uuid::Uuid;
 
+use crate::application::HookTrigger;
+use crate::application::hook_trigger::SelectResult;
 use crate::application::port::HookDataSource;
 use crate::domain::task::{self, Task, TaskStatus, UnblockedTask};
-#[cfg(test)]
-use crate::infra::config::RawConfig;
-use crate::infra::config::{Config, HookEntry, HookOutput};
+use crate::infra::config::{
+    ActionConfig, Config, HookDef, HookMode, HookOutput, HookWhen, OnFailure, OnResult,
+    TaskActionHooks,
+};
 use crate::infra::xdg::XdgDirs;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeMode {
     Cli,
-    Api,
+    ServerRelay,
+    ServerRemote,
+}
+
+impl RuntimeMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RuntimeMode::Cli => "cli",
+            RuntimeMode::ServerRelay => "server.relay",
+            RuntimeMode::ServerRemote => "server.remote",
+        }
+    }
+
+    fn section_label(&self) -> &'static str {
+        match self {
+            RuntimeMode::Cli => "cli",
+            RuntimeMode::ServerRelay => "server.relay",
+            RuntimeMode::ServerRemote => "server.remote",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,12 +91,22 @@ pub struct HookEvent {
 }
 
 #[derive(Debug, Serialize)]
-pub struct NoEligibleTaskEvent {
+pub struct TaskSelectEvent {
     pub event_id: String,
     pub event: String,
     pub timestamp: String,
+    pub result: String,
     pub stats: HashMap<String, i64>,
     pub ready_count: i64,
+}
+
+/// Outcome of firing a batch of hooks. Pre+Sync+Abort failures return `Abort`
+/// so the caller (task_service) can skip the state transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum FireOutcome {
+    Continue,
+    Abort,
 }
 
 /// Maximum bytes of stdout/stderr to retain in log entries.
@@ -109,15 +141,6 @@ struct HookLogEntry {
     stdout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stderr: Option<String>,
-}
-
-impl RuntimeMode {
-    fn as_str(&self) -> &str {
-        match self {
-            RuntimeMode::Cli => "cli",
-            RuntimeMode::Api => "api",
-        }
-    }
 }
 
 impl HookLogEntry {
@@ -220,6 +243,23 @@ pub async fn build_event(
     }
 }
 
+pub async fn build_task_select_event(
+    result: SelectResult,
+    backend: &dyn HookDataSource,
+    project_id: i64,
+) -> TaskSelectEvent {
+    let stats = backend.task_stats(project_id).await.unwrap_or_default();
+    let ready_count = backend.ready_count(project_id).await.unwrap_or(0);
+    TaskSelectEvent {
+        event_id: Uuid::new_v4().to_string(),
+        event: "task_select".into(),
+        timestamp: Utc::now().to_rfc3339(),
+        result: result.as_str().to_string(),
+        stats,
+        ready_count,
+    }
+}
+
 /// Return the hook log file path, optionally using a custom log directory.
 /// Priority: `log_dir` override > `$XDG_STATE_HOME/senko` > `~/.local/state/senko`
 pub fn log_file_path_with_dir(log_dir: Option<&str>, xdg: &XdgDirs) -> Option<PathBuf> {
@@ -245,13 +285,11 @@ fn log_to_file(path: &Path, entry: &HookLogEntry) {
         .create(true)
         .append(true)
         .open(path)
+        && let Ok(json) = serde_json::to_string(entry)
     {
-        // Build the full JSONL line so the O_APPEND write is atomic.
-        if let Ok(json) = serde_json::to_string(entry) {
-            let mut line = json;
-            line.push('\n');
-            let _ = f.write_all(line.as_bytes());
-        }
+        let mut line = json;
+        line.push('\n');
+        let _ = f.write_all(line.as_bytes());
     }
 }
 
@@ -286,23 +324,31 @@ fn write_hook_log(target: &HookLogTarget, entry: &HookLogEntry) {
     }
 }
 
-fn execute_hook(
+/// Run a hook command with the given env map and JSON stdin.
+/// When `sync` is true, wait for the child and return the exit status.
+/// When false, spawn a background thread that logs the outcome and return `None`.
+#[allow(clippy::too_many_arguments)]
+fn run_hook_command(
     command: &str,
     event_name: &str,
     event_id: &str,
     hook_name: &str,
     task_id: Option<i64>,
     json: &str,
+    env_vars: &HashMap<String, String>,
+    sync: bool,
     log_target: Option<&HookLogTarget>,
-) {
-    let mut child = match std::process::Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .stdin(std::process::Stdio::piped())
+) -> Option<std::process::ExitStatus> {
+    let mut cmd = std::process::Command::new("sh");
+    cmd.arg("-c").arg(command);
+    for (k, v) in env_vars {
+        cmd.env(k, v);
+    }
+    cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
             let msg = format!("hook spawn error ({}): {}: {:#}", event_name, command, e);
@@ -317,9 +363,10 @@ fn execute_hook(
                     .with_message(&msg);
                 write_hook_log(t, &entry);
             }
-            return;
+            return None;
         }
     };
+
     if let Some(mut stdin) = child.stdin.take()
         && let Err(e) = stdin.write_all(json.as_bytes())
     {
@@ -335,88 +382,128 @@ fn execute_hook(
                 .with_message(&msg);
             write_hook_log(t, &entry);
         }
-        return;
+        return None;
     }
 
-    // Spawn a thread to wait for exit and log the result.
-    // The CLI returns immediately; the thread outlives the main function
-    // but Rust waits for non-daemon threads before process exit.
-    let cmd = command.to_owned();
-    let evt = event_name.to_owned();
-    let eid = event_id.to_owned();
-    let hname = hook_name.to_owned();
-    let tid = task_id;
-    let log = log_target.cloned();
-    std::thread::spawn(move || {
+    if sync {
         match child.wait_with_output() {
-            Ok(output) if output.status.success() => {
-                // Success: discard stdout/stderr
-                if let Some(ref t) = log {
-                    let entry = HookLogEntry::new("INFO", "hook_ok")
-                        .with_event_id(&eid)
-                        .with_event(&evt)
-                        .with_hook(&hname)
-                        .with_command(&cmd)
-                        .with_task_id(tid)
-                        .with_exit_code(output.status.code());
-                    write_hook_log(t, &entry);
-                }
-            }
             Ok(output) => {
-                let msg = format!(
-                    "hook failed ({}): {} (exit: {})",
-                    evt,
-                    cmd,
-                    output
-                        .status
-                        .code()
-                        .map_or("signal".to_string(), |c| c.to_string())
+                log_hook_outcome(
+                    log_target, event_name, event_id, hook_name, command, task_id, &output,
                 );
-                eprintln!("{msg}");
-                if let Some(ref t) = log {
-                    let mut entry = HookLogEntry::new("WARN", "hook_failed")
-                        .with_event_id(&eid)
-                        .with_event(&evt)
-                        .with_hook(&hname)
-                        .with_command(&cmd)
-                        .with_task_id(tid)
-                        .with_exit_code(output.status.code());
-                    if !output.stdout.is_empty() {
-                        entry.stdout = Some(truncate_output(&output.stdout));
-                    }
-                    if !output.stderr.is_empty() {
-                        entry.stderr = Some(truncate_output(&output.stderr));
-                    }
-                    write_hook_log(t, &entry);
-                }
+                Some(output.status)
             }
             Err(e) => {
-                let msg = format!("hook wait error ({}): {}: {:#}", evt, cmd, e);
+                let msg = format!("hook wait error ({}): {}: {:#}", event_name, command, e);
+                eprintln!("{msg}");
+                if let Some(t) = log_target {
+                    let entry = HookLogEntry::new("ERROR", "hook_error")
+                        .with_event_id(event_id)
+                        .with_event(event_name)
+                        .with_hook(hook_name)
+                        .with_command(command)
+                        .with_task_id(task_id)
+                        .with_message(&msg);
+                    write_hook_log(t, &entry);
+                }
+                None
+            }
+        }
+    } else {
+        let cmd_s = command.to_owned();
+        let evt = event_name.to_owned();
+        let eid = event_id.to_owned();
+        let hname = hook_name.to_owned();
+        let tid = task_id;
+        let log = log_target.cloned();
+        std::thread::spawn(move || match child.wait_with_output() {
+            Ok(output) => {
+                log_hook_outcome(log.as_ref(), &evt, &eid, &hname, &cmd_s, tid, &output);
+            }
+            Err(e) => {
+                let msg = format!("hook wait error ({}): {}: {:#}", evt, cmd_s, e);
                 eprintln!("{msg}");
                 if let Some(ref t) = log {
                     let entry = HookLogEntry::new("ERROR", "hook_error")
                         .with_event_id(&eid)
                         .with_event(&evt)
                         .with_hook(&hname)
-                        .with_command(&cmd)
+                        .with_command(&cmd_s)
                         .with_task_id(tid)
                         .with_message(&msg);
                     write_hook_log(t, &entry);
                 }
             }
-        }
-    });
+        });
+        None
+    }
 }
 
-/// Check which required environment variables are missing for a hook entry.
-/// Returns a list of missing variable names. Empty list means all required vars are set.
-fn check_required_env(entry: &HookEntry) -> Vec<&str> {
-    entry
-        .requires_env
-        .iter()
-        .filter(|var| std::env::var(var).is_err())
-        .map(|s| s.as_str())
-        .collect()
+fn log_hook_outcome(
+    log_target: Option<&HookLogTarget>,
+    event_name: &str,
+    event_id: &str,
+    hook_name: &str,
+    command: &str,
+    task_id: Option<i64>,
+    output: &std::process::Output,
+) {
+    if output.status.success() {
+        if let Some(t) = log_target {
+            let entry = HookLogEntry::new("INFO", "hook_ok")
+                .with_event_id(event_id)
+                .with_event(event_name)
+                .with_hook(hook_name)
+                .with_command(command)
+                .with_task_id(task_id)
+                .with_exit_code(output.status.code());
+            write_hook_log(t, &entry);
+        }
+    } else {
+        let msg = format!(
+            "hook failed ({}): {} (exit: {})",
+            event_name,
+            command,
+            output
+                .status
+                .code()
+                .map_or("signal".to_string(), |c| c.to_string())
+        );
+        eprintln!("{msg}");
+        if let Some(t) = log_target {
+            let mut entry = HookLogEntry::new("WARN", "hook_failed")
+                .with_event_id(event_id)
+                .with_event(event_name)
+                .with_hook(hook_name)
+                .with_command(command)
+                .with_task_id(task_id)
+                .with_exit_code(output.status.code());
+            if !output.stdout.is_empty() {
+                entry.stdout = Some(truncate_output(&output.stdout));
+            }
+            if !output.stderr.is_empty() {
+                entry.stderr = Some(truncate_output(&output.stderr));
+            }
+            write_hook_log(t, &entry);
+        }
+    }
+}
+
+/// Resolve the environment map for a hook invocation based on its `env_vars` spec.
+/// Returns `Err(missing_var_name)` if a required variable is unset and has no default.
+fn resolve_env_vars(hook: &HookDef) -> Result<HashMap<String, String>, String> {
+    let mut map = HashMap::new();
+    for spec in &hook.env_vars {
+        let current = std::env::var(&spec.name).ok();
+        if let Some(v) = current {
+            map.insert(spec.name.clone(), v);
+        } else if let Some(ref def) = spec.default {
+            map.insert(spec.name.clone(), def.clone());
+        } else if spec.required {
+            return Err(spec.name.clone());
+        }
+    }
+    Ok(map)
 }
 
 use crate::domain::{DEFAULT_PROJECT_ID, DEFAULT_USER_ID};
@@ -476,226 +563,323 @@ pub async fn resolve_envelope_context(
     (project, user)
 }
 
-/// Fire hooks for the given event, spawning each hook command as a
-/// fire-and-forget child process. Returns immediately.
-/// Results are logged to `$XDG_STATE_HOME/senko/hooks.log`.
+/// Pick the `TaskActionHooks` section belonging to the currently-running runtime.
+fn hooks_for_runtime<'a>(config: &'a Config, runtime: &RuntimeMode) -> &'a TaskActionHooks {
+    match runtime {
+        RuntimeMode::Cli => &config.cli.hooks,
+        RuntimeMode::ServerRelay => &config.server.relay.hooks,
+        RuntimeMode::ServerRemote => &config.server.remote.hooks,
+    }
+}
+
+/// Filter a single hook by `when` and `on_result`.
+/// `trigger_result` is `Some(result)` only for `HookTrigger::TaskSelect`; other
+/// triggers are treated as matching `OnResult::Any`.
+fn hook_applies(hook: &HookDef, when: HookWhen, trigger_result: Option<SelectResult>) -> bool {
+    if !hook.enabled {
+        return false;
+    }
+    if hook.when != when {
+        return false;
+    }
+    if let Some(expected) = hook.on_result {
+        match (expected, trigger_result) {
+            (OnResult::Any, _) => {}
+            (OnResult::Selected, Some(SelectResult::Selected)) => {}
+            (OnResult::None, Some(SelectResult::None)) => {}
+            (_, _) => return false,
+        }
+    }
+    true
+}
+
+/// Resolve the action key from the trigger (used to pick CLI/server action hooks).
+fn action_for_trigger(trigger: &HookTrigger) -> Option<&'static str> {
+    trigger.event_name()
+}
+
+/// Fire all hooks matching the given trigger + timing for the current runtime.
 #[allow(clippy::too_many_arguments)]
-pub async fn fire_hooks(
+pub async fn fire(
     config: &Config,
-    event_name: &str,
-    task: &Task,
+    trigger: &HookTrigger,
+    when: HookWhen,
+    task: Option<&Task>,
     backend: &dyn HookDataSource,
     from_status: Option<TaskStatus>,
     unblocked: Option<Vec<UnblockedTask>>,
     runtime_mode: &RuntimeMode,
     backend_info: &BackendInfo,
-) {
-    let entries = config.hooks.entries_for_event(event_name);
-    let log_target = HookLogTarget {
-        output: config.log.hook_output,
-        file_path: log_file_path_with_dir(config.log.dir.as_deref(), &config.xdg),
+) -> FireOutcome {
+    let Some(event_name) = trigger.event_name() else {
+        return FireOutcome::Continue;
+    };
+    let Some(action_key) = action_for_trigger(trigger) else {
+        return FireOutcome::Continue;
     };
 
-    let event = build_event(event_name, task, backend, from_status, unblocked).await;
-    let (project, user) = resolve_envelope_context(config, backend).await;
-    let envelope = HookEnvelope {
-        runtime: runtime_mode.clone(),
-        backend: backend_info.clone(),
-        project,
-        user,
-        event,
-    };
-    let json = match serde_json::to_string(&envelope) {
-        Ok(j) => j,
-        Err(e) => {
-            let msg = format!("hook error: failed to serialize event: {e}");
-            eprintln!("{msg}");
-            let entry = HookLogEntry::new("ERROR", "hook_error")
-                .with_event_id(&envelope.event.event_id)
-                .with_event(event_name)
-                .with_task_id(Some(task.task_number()))
-                .with_runtime(runtime_mode.as_str())
-                .with_backend(backend_info)
-                .with_message(&msg);
-            write_hook_log(&log_target, &entry);
-            return;
-        }
+    let runtime_hooks = hooks_for_runtime(config, runtime_mode);
+    let Some(action) = runtime_hooks.action_config(action_key) else {
+        return FireOutcome::Continue;
     };
 
-    // Always log event_fired, even with 0 hooks
-    {
-        let entry = HookLogEntry::new("INFO", "event_fired")
-            .with_event_id(&envelope.event.event_id)
-            .with_event(event_name)
-            .with_task_id(Some(task.task_number()))
-            .with_runtime(runtime_mode.as_str())
-            .with_backend(backend_info);
-        write_hook_log(&log_target, &entry);
-    }
-
-    if entries.is_empty() {
-        return;
-    }
-
-    for (name, hook_entry) in &entries {
-        let missing = check_required_env(hook_entry);
-        if !missing.is_empty() {
-            let msg = format!(
-                "hook skipped ({}): {} — missing env: {}",
-                event_name,
-                name,
-                missing.join(", ")
-            );
-            eprintln!("{msg}");
-            let entry = HookLogEntry::new("WARN", "hook_skipped")
-                .with_event_id(&envelope.event.event_id)
-                .with_event(event_name)
-                .with_hook(name)
-                .with_command(&hook_entry.command)
-                .with_task_id(Some(task.task_number()))
-                .with_runtime(runtime_mode.as_str())
-                .with_backend(backend_info)
-                .with_message(&msg);
-            write_hook_log(&log_target, &entry);
-            continue;
-        }
-        execute_hook(
-            &hook_entry.command,
-            event_name,
-            &envelope.event.event_id,
-            name,
-            Some(task.id()),
-            &json,
-            Some(&log_target),
-        );
-    }
-}
-
-/// Fire hooks for the `no_eligible_task` event (no task object in payload).
-pub async fn fire_no_eligible_task_hooks(
-    config: &Config,
-    backend: &dyn HookDataSource,
-    project_id: i64,
-    runtime_mode: &RuntimeMode,
-    backend_info: &BackendInfo,
-) {
-    let entries = config.hooks.entries_for_event("no_eligible_task");
-    let log_target = HookLogTarget {
-        output: config.log.hook_output,
-        file_path: log_file_path_with_dir(config.log.dir.as_deref(), &config.xdg),
-    };
-
-    let stats = backend.task_stats(project_id).await.unwrap_or_default();
-    let ready_count = backend.ready_count(project_id).await.unwrap_or(0);
-    let event = NoEligibleTaskEvent {
-        event_id: Uuid::new_v4().to_string(),
-        event: "no_eligible_task".into(),
-        timestamp: Utc::now().to_rfc3339(),
-        stats,
-        ready_count,
-    };
-    let (project, user) = resolve_envelope_context(config, backend).await;
-    let envelope = HookEnvelope {
-        runtime: runtime_mode.clone(),
-        backend: backend_info.clone(),
-        project,
-        user,
-        event,
-    };
-
-    let json = match serde_json::to_string(&envelope) {
-        Ok(j) => j,
-        Err(e) => {
-            let msg = format!("hook error: failed to serialize event: {e}");
-            eprintln!("{msg}");
-            let entry = HookLogEntry::new("ERROR", "hook_error")
-                .with_event_id(&envelope.event.event_id)
-                .with_event("no_eligible_task")
-                .with_runtime(runtime_mode.as_str())
-                .with_backend(backend_info)
-                .with_message(&msg);
-            write_hook_log(&log_target, &entry);
-            return;
-        }
-    };
-
-    // Always log event_fired, even with 0 hooks
-    {
-        let entry = HookLogEntry::new("INFO", "event_fired")
-            .with_event_id(&envelope.event.event_id)
-            .with_event("no_eligible_task")
-            .with_runtime(runtime_mode.as_str())
-            .with_backend(backend_info);
-        write_hook_log(&log_target, &entry);
-    }
-
-    if entries.is_empty() {
-        return;
-    }
-
-    for (name, hook_entry) in &entries {
-        let missing = check_required_env(hook_entry);
-        if !missing.is_empty() {
-            let msg = format!(
-                "hook skipped (no_eligible_task): {} — missing env: {}",
-                name,
-                missing.join(", ")
-            );
-            eprintln!("{msg}");
-            let entry = HookLogEntry::new("WARN", "hook_skipped")
-                .with_event_id(&envelope.event.event_id)
-                .with_event("no_eligible_task")
-                .with_hook(name)
-                .with_command(&hook_entry.command)
-                .with_runtime(runtime_mode.as_str())
-                .with_backend(backend_info)
-                .with_message(&msg);
-            write_hook_log(&log_target, &entry);
-            continue;
-        }
-        execute_hook(
-            &hook_entry.command,
-            "no_eligible_task",
-            &envelope.event.event_id,
-            name,
-            None,
-            &json,
-            Some(&log_target),
-        );
-    }
-}
-
-/// Return the hook commands configured for the given event name,
-/// filtering out hooks with missing required environment variables.
-/// Returns `None` if the event name is not recognized.
-pub fn get_commands_for_event(config: &Config, event_name: &str) -> Option<Vec<String>> {
-    // Return None only for unrecognized event names
-    match event_name {
-        "task_added" | "task_ready" | "task_started" | "task_completed" | "task_canceled"
-        | "no_eligible_task" => {
-            let entries = config.hooks.entries_for_event(event_name);
-            let mut commands = Vec::new();
-            for (name, entry) in &entries {
-                let missing = check_required_env(entry);
-                if !missing.is_empty() {
-                    eprintln!(
-                        "hook skipped ({}): {} — missing env: {}",
-                        event_name,
-                        name,
-                        missing.join(", ")
-                    );
-                    continue;
-                }
-                commands.push(entry.command.clone());
-            }
-            Some(commands)
-        }
+    let trigger_result = match trigger {
+        HookTrigger::TaskSelect { result, .. } => Some(*result),
         _ => None,
+    };
+
+    let applicable: Vec<(String, HookDef)> = action
+        .hooks
+        .iter()
+        .filter(|(_, def)| hook_applies(def, when, trigger_result))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let log_target = HookLogTarget {
+        output: config.log.hook_output,
+        file_path: log_file_path_with_dir(config.log.dir.as_deref(), &config.xdg),
+    };
+
+    let (envelope_project, envelope_user) = resolve_envelope_context(config, backend).await;
+
+    // Build and serialize the envelope (shape depends on trigger kind).
+    let (envelope_json, envelope_event_id, task_id_for_log) = match trigger {
+        HookTrigger::Task(_) => {
+            let Some(task) = task else {
+                return FireOutcome::Continue;
+            };
+            let event = build_event(event_name, task, backend, from_status, unblocked).await;
+            let event_id = event.event_id.clone();
+            let envelope = HookEnvelope {
+                runtime: *runtime_mode,
+                backend: backend_info.clone(),
+                project: envelope_project,
+                user: envelope_user,
+                event,
+            };
+            match serde_json::to_string(&envelope) {
+                Ok(s) => (s, event_id, Some(task.task_number())),
+                Err(e) => {
+                    eprintln!("hook serialize error ({event_name}): {e}");
+                    return FireOutcome::Continue;
+                }
+            }
+        }
+        HookTrigger::TaskSelect { project_id, result } => {
+            let event = build_task_select_event(*result, backend, *project_id).await;
+            let event_id = event.event_id.clone();
+            let envelope = HookEnvelope {
+                runtime: *runtime_mode,
+                backend: backend_info.clone(),
+                project: envelope_project,
+                user: envelope_user,
+                event,
+            };
+            match serde_json::to_string(&envelope) {
+                Ok(s) => (s, event_id, None),
+                Err(e) => {
+                    eprintln!("hook serialize error ({event_name}): {e}");
+                    return FireOutcome::Continue;
+                }
+            }
+        }
+    };
+
+    // Log a single `event_fired` entry even when no hooks match.
+    {
+        let entry = HookLogEntry::new("INFO", "event_fired")
+            .with_event_id(&envelope_event_id)
+            .with_event(event_name)
+            .with_task_id(task_id_for_log)
+            .with_runtime(runtime_mode.as_str())
+            .with_backend(backend_info);
+        write_hook_log(&log_target, &entry);
     }
+
+    if applicable.is_empty() {
+        return FireOutcome::Continue;
+    }
+
+    let mut outcome = FireOutcome::Continue;
+    for (name, hook) in applicable {
+        let env_map = match resolve_env_vars(&hook) {
+            Ok(m) => m,
+            Err(missing) => {
+                let msg = format!(
+                    "hook skipped ({}): {} — missing required env: {}",
+                    event_name, name, missing
+                );
+                eprintln!("{msg}");
+                let entry = HookLogEntry::new("WARN", "hook_skipped")
+                    .with_event_id(&envelope_event_id)
+                    .with_event(event_name)
+                    .with_hook(&name)
+                    .with_command(&hook.command)
+                    .with_task_id(task_id_for_log)
+                    .with_runtime(runtime_mode.as_str())
+                    .with_backend(backend_info)
+                    .with_message(&msg);
+                write_hook_log(&log_target, &entry);
+                continue;
+            }
+        };
+
+        let sync = hook.mode == HookMode::Sync;
+        let status = run_hook_command(
+            &hook.command,
+            event_name,
+            &envelope_event_id,
+            &name,
+            task_id_for_log,
+            &envelope_json,
+            &env_map,
+            sync,
+            Some(&log_target),
+        );
+
+        if sync {
+            let failed = status.map(|s| !s.success()).unwrap_or(true);
+            if failed {
+                match hook.on_failure {
+                    OnFailure::Abort => {
+                        if when == HookWhen::Pre {
+                            outcome = FireOutcome::Abort;
+                            tracing::warn!(
+                                hook = %name,
+                                event = %event_name,
+                                "hook failed with on_failure=abort; aborting transition"
+                            );
+                            return outcome;
+                        } else {
+                            tracing::warn!(
+                                hook = %name,
+                                event = %event_name,
+                                "post-hook failed with on_failure=abort (no-op; abort only applies to sync+pre)"
+                            );
+                        }
+                    }
+                    OnFailure::Warn => {
+                        tracing::warn!(
+                            hook = %name,
+                            event = %event_name,
+                            "hook failed (on_failure=warn, continuing)"
+                        );
+                    }
+                    OnFailure::Ignore => {}
+                }
+            }
+        }
+    }
+
+    outcome
+}
+
+/// Warn once per process if the loaded config has hook definitions in runtime
+/// sections that do not match the current runtime.
+pub fn warn_about_mismatched_runtime_sections(config: &Config, runtime: &RuntimeMode) {
+    static FIRED: OnceLock<()> = OnceLock::new();
+    if FIRED.get().is_some() {
+        return;
+    }
+    let _ = FIRED.set(());
+
+    let active = runtime.section_label();
+    let mut mismatched: Vec<&str> = Vec::new();
+    if !matches!(runtime, RuntimeMode::Cli) && !config.cli.hooks.is_empty() {
+        mismatched.push("cli");
+    }
+    if !matches!(runtime, RuntimeMode::ServerRelay) && !config.server.relay.hooks.is_empty() {
+        mismatched.push("server.relay");
+    }
+    if !matches!(runtime, RuntimeMode::ServerRemote) && !config.server.remote.hooks.is_empty() {
+        mismatched.push("server.remote");
+    }
+    if !mismatched.is_empty() {
+        tracing::warn!(
+            active = active,
+            foreign_sections = ?mismatched,
+            "hooks configured under runtime sections that do not match the active runtime; they will not fire",
+        );
+    }
+}
+
+/// Emit load-time warnings for hook definitions with unreachable / ambiguous flags.
+/// `section_label` identifies where the hook lives (e.g., `cli.task_complete`).
+pub fn validate_hook_def(section_label: &str, name: &str, hook: &HookDef, is_task_select: bool) {
+    if matches!(hook.when, HookWhen::Pre)
+        && matches!(hook.mode, HookMode::Async)
+        && matches!(hook.on_failure, OnFailure::Abort)
+    {
+        tracing::warn!(
+            section = section_label,
+            hook = name,
+            "pre+async hooks cannot abort; on_failure=abort is effectively warn"
+        );
+    }
+    if hook.on_result.is_some() && hook.on_result != Some(OnResult::Any) && !is_task_select {
+        tracing::warn!(
+            section = section_label,
+            hook = name,
+            "on_result is only meaningful for task_select hooks; ignored"
+        );
+    }
+}
+
+/// Walk the entire config and run `validate_hook_def` on every hook definition.
+/// Callers (bootstrap) invoke this once at startup.
+pub fn validate_config_hooks(config: &Config) {
+    fn walk(label_prefix: &str, action: &TaskActionHooks) {
+        for (action_key, hooks) in [
+            ("task_add", &action.task_add),
+            ("task_ready", &action.task_ready),
+            ("task_start", &action.task_start),
+            ("task_complete", &action.task_complete),
+            ("task_cancel", &action.task_cancel),
+            ("task_select", &action.task_select),
+        ] {
+            let is_select = action_key == "task_select";
+            for (name, def) in &hooks.hooks {
+                validate_hook_def(
+                    &format!("{label_prefix}.{action_key}"),
+                    name,
+                    def,
+                    is_select,
+                );
+            }
+        }
+    }
+    walk("cli", &config.cli.hooks);
+    walk("server.relay", &config.server.relay.hooks);
+    walk("server.remote", &config.server.remote.hooks);
+    for (stage_name, stage) in &config.workflow.stages {
+        for (hook_name, def) in &stage.hooks {
+            validate_hook_def(&format!("workflow.{stage_name}"), hook_name, def, false);
+        }
+    }
+}
+
+/// Return the commands configured for the given CLI task-action event in the
+/// active runtime. Used by `senko hooks test`. Returns `None` if the action key
+/// is not a valid task action. Empty Vec means the action is valid but has no
+/// hooks configured.
+pub fn get_commands_for_event(config: &Config, event_name: &str) -> Option<Vec<String>> {
+    let action = config.cli.hooks.action_config(event_name)?;
+    let mut commands = Vec::new();
+    for (name, def) in &action.hooks {
+        match resolve_env_vars(def) {
+            Ok(_) => commands.push(def.command.clone()),
+            Err(missing) => {
+                eprintln!(
+                    "hook skipped ({}): {} — missing required env: {}",
+                    event_name, name, missing
+                );
+            }
+        }
+    }
+    Some(commands)
 }
 
 /// Execute a hook command synchronously, inheriting stdout/stderr.
-/// Returns the exit status of the child process.
 pub fn execute_hook_sync(command: &str, json: &str) -> Result<std::process::ExitStatus> {
     let mut child = std::process::Command::new("sh")
         .arg("-c")
@@ -717,9 +901,16 @@ pub fn execute_hook_sync(command: &str, json: &str) -> Result<std::process::Exit
         .with_context(|| format!("failed to wait for hook: {command}"))
 }
 
+/// Helper accessor so callers can inspect the current ActionConfig for diagnostic
+/// display (e.g., `senko doctor`). Returns `None` for unknown action names.
+pub fn action_hooks<'a>(
+    runtime_hooks: &'a TaskActionHooks,
+    action: &str,
+) -> Option<&'a ActionConfig> {
+    runtime_hooks.action_config(action)
+}
+
 /// Compute newly unblocked tasks after a task completion.
-/// Call this after `db::complete_task` with the set of ready task IDs
-/// captured before the completion.
 pub async fn compute_unblocked(
     backend: &dyn HookDataSource,
     project_id: i64,
@@ -735,2029 +926,251 @@ pub async fn compute_unblocked(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::port::TaskQueryPort;
-    use crate::bootstrap::load_config;
-    use crate::domain::TaskRepository;
-    use crate::infra::config::{HooksConfig, MergeVia, RawLogConfig, RawWorkflowConfig};
-    use crate::infra::sqlite::SqliteBackend;
+    use crate::application::hook_trigger::SelectResult;
+    use crate::infra::config::{EnvVarSpec, HookDef, HookMode, HookWhen, OnFailure, OnResult};
     use std::sync::Mutex;
 
-    /// Mutex to serialize tests that mutate `SENKO_*` env vars. XDG paths are
-    /// now injected via `XdgDirs`, but a few tests still exercise the
-    /// SENKO-side env handling and must run sequentially.
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
-
-    /// Build a fresh `XdgDirs` whose `config_home` points at a tempdir.
-    /// Replaces the old `with_isolated_user_config` closure that mutated
-    /// `$XDG_CONFIG_HOME`. The returned `TempDir` must be kept alive for the
-    /// duration of the test so the directory continues to exist.
-    fn isolated_user_config_xdg() -> (tempfile::TempDir, XdgDirs) {
-        let tmp = tempfile::tempdir().unwrap();
-        let xdg = XdgDirs {
-            config_home: Some(tmp.path().to_path_buf()),
-            ..Default::default()
-        };
-        (tmp, xdg)
-    }
-
-    fn setup_db() -> (tempfile::TempDir, SqliteBackend) {
-        let dir = tempfile::tempdir().unwrap();
-        let backend = SqliteBackend::new(
-            dir.path(),
-            Some(&dir.path().join("data.db")),
-            None,
-            &XdgDirs::default(),
-        )
-        .unwrap();
-        (dir, backend)
-    }
-
-    #[test]
-    fn load_config_missing_file() {
-        let (_tmp, xdg) = isolated_user_config_xdg();
-        let dir = tempfile::tempdir().unwrap();
-        let config = load_config(dir.path(), None, &xdg).unwrap();
-        assert!(config.hooks.on_task_added.is_empty());
-        assert!(config.hooks.on_task_completed.is_empty());
-    }
-
-    #[test]
-    fn load_config_valid_toml() {
-        let (_tmp, xdg) = isolated_user_config_xdg();
-        let dir = tempfile::tempdir().unwrap();
-        let senko_dir = dir.path().join(".senko");
-        std::fs::create_dir_all(&senko_dir).unwrap();
-        std::fs::write(
-            senko_dir.join("config.toml"),
-            r#"
-[hooks.on_task_added.my-hook]
-command = "echo added"
-
-[hooks.on_task_completed.my-hook]
-command = "echo completed"
-"#,
-        )
-        .unwrap();
-
-        let config = load_config(dir.path(), None, &xdg).unwrap();
-        assert_eq!(config.hooks.on_task_added.len(), 1);
-        assert_eq!(config.hooks.on_task_added["my-hook"].command, "echo added");
-        assert_eq!(config.hooks.on_task_completed.len(), 1);
-        assert_eq!(
-            config.hooks.on_task_completed["my-hook"].command,
-            "echo completed"
-        );
-    }
-
-    #[test]
-    fn load_config_empty_hooks() {
-        let (_tmp, xdg) = isolated_user_config_xdg();
-        let dir = tempfile::tempdir().unwrap();
-        let senko_dir = dir.path().join(".senko");
-        std::fs::create_dir_all(&senko_dir).unwrap();
-        std::fs::write(senko_dir.join("config.toml"), "[hooks]\n").unwrap();
-
-        let config = load_config(dir.path(), None, &xdg).unwrap();
-        assert!(config.hooks.on_task_added.is_empty());
-        assert!(config.hooks.on_task_completed.is_empty());
-    }
-
-    #[tokio::test]
-    async fn hook_event_serialization() {
-        let (_dir, backend) = setup_db();
-        let task = Task::new(
-            1,
-            1,
-            1,
-            "Test".into(),
-            None,
-            None,
-            None,
-            crate::domain::task::Priority::P2,
-            TaskStatus::Draft,
-            None,
-            None,
-            "2026-01-01T00:00:00Z".into(),
-            "2026-01-01T00:00:00Z".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        );
-        let event = build_event("task_added", &task, &backend, None, None).await;
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"event\":\"task_added\""));
-        assert!(json.contains("\"id\":1"));
-        assert!(json.contains("\"event_id\""));
-        assert!(json.contains("\"timestamp\""));
-        assert!(json.contains("\"stats\""));
-        assert!(json.contains("\"ready_count\""));
-        // unblocked_tasks should be absent when None
-        assert!(!json.contains("\"unblocked_tasks\""));
-    }
-
-    #[tokio::test]
-    async fn event_has_valid_uuid_and_timestamp() {
-        let (_dir, backend) = setup_db();
-        let task = Task::new(
-            1,
-            1,
-            1,
-            "Test".into(),
-            None,
-            None,
-            None,
-            crate::domain::task::Priority::P2,
-            TaskStatus::Draft,
-            None,
-            None,
-            "2026-01-01T00:00:00Z".into(),
-            "2026-01-01T00:00:00Z".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        );
-        let event = build_event("task_added", &task, &backend, None, None).await;
-        assert!(Uuid::parse_str(&event.event_id).is_ok());
-        assert!(chrono::DateTime::parse_from_rfc3339(&event.timestamp).is_ok());
-    }
-
-    #[tokio::test]
-    async fn event_has_stats() {
-        let (_dir, backend) = setup_db();
-        TaskRepository::create_task(
-            &backend,
-            1,
-            &crate::domain::task::CreateTaskParams {
-                title: "Task1".into(),
-                background: None,
-                description: None,
-                priority: None,
-                definition_of_done: vec![],
-                in_scope: vec![],
-                out_of_scope: vec![],
-                branch: None,
-                pr_url: None,
-                metadata: None,
-                tags: vec![],
-                dependencies: vec![],
-                assignee_user_id: None,
-                contract_id: None,
-            },
-        )
-        .await
-        .unwrap();
-        let task = TaskRepository::get_task(&backend, 1, 1).await.unwrap();
-        let event = build_event("task_added", &task, &backend, None, None).await;
-        assert!(event.stats.contains_key("draft"));
-        assert_eq!(*event.stats.get("draft").unwrap(), 1);
-    }
-
-    #[tokio::test]
-    async fn event_has_ready_count() {
-        let (_dir, backend) = setup_db();
-        TaskRepository::create_task(
-            &backend,
-            1,
-            &crate::domain::task::CreateTaskParams {
-                title: "Ready".into(),
-                background: None,
-                description: None,
-                priority: None,
-                definition_of_done: vec![],
-                in_scope: vec![],
-                out_of_scope: vec![],
-                branch: None,
-                pr_url: None,
-                metadata: None,
-                tags: vec![],
-                dependencies: vec![],
-                assignee_user_id: None,
-                contract_id: None,
-            },
-        )
-        .await
-        .unwrap();
-        let task = TaskRepository::get_task(&backend, 1, 1).await.unwrap();
-        let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-        TaskRepository::save(&backend, &task).await.unwrap();
-        let task = TaskRepository::get_task(&backend, 1, 1).await.unwrap();
-        let event = build_event("task_added", &task, &backend, None, None).await;
-        assert_eq!(event.ready_count, 1);
-    }
-
-    #[tokio::test]
-    async fn compute_unblocked_finds_newly_ready() {
-        let (_dir, backend) = setup_db();
-
-        // Create task 1 (will be completed) and task 2 (depends on task 1)
-        TaskRepository::create_task(
-            &backend,
-            1,
-            &crate::domain::task::CreateTaskParams {
-                title: "Dependency".into(),
-                background: None,
-                description: None,
-                priority: None,
-                definition_of_done: vec![],
-                in_scope: vec![],
-                out_of_scope: vec![],
-                branch: None,
-                pr_url: None,
-                metadata: None,
-                tags: vec![],
-                dependencies: vec![],
-                assignee_user_id: None,
-                contract_id: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t1 = TaskRepository::get_task(&backend, 1, 1).await.unwrap();
-        let (t1, _) = t1.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-        let (t1, _) = t1
-            .start(None, None, "2025-01-01T00:00:00Z".to_string(), None)
-            .unwrap();
-        TaskRepository::save(&backend, &t1).await.unwrap();
-
-        TaskRepository::create_task(
-            &backend,
-            1,
-            &crate::domain::task::CreateTaskParams {
-                title: "Blocked".into(),
-                background: None,
-                description: None,
-                priority: None,
-                definition_of_done: vec![],
-                in_scope: vec![],
-                out_of_scope: vec![],
-                branch: None,
-                pr_url: None,
-                metadata: None,
-                tags: vec![],
-                dependencies: vec![],
-                assignee_user_id: None,
-                contract_id: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t2 = TaskRepository::get_task(&backend, 1, 2).await.unwrap();
-        let (t2, _) = t2.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-        let (t2, _) = t2
-            .add_dependency(1, Some("2025-01-01T00:00:00Z".into()))
-            .unwrap();
-        TaskRepository::save(&backend, &t2).await.unwrap();
-
-        // Capture ready tasks before completion
-        let prev_ready: std::collections::HashSet<i64> =
-            TaskQueryPort::list_ready_tasks(&backend, 1)
-                .await
-                .unwrap()
-                .iter()
-                .map(|t| t.id())
-                .collect();
-
-        // Complete task 1
-        let t1 = TaskRepository::get_task(&backend, 1, 1).await.unwrap();
-        let (t1, _) = t1.complete("2025-01-01T00:00:00Z".to_string()).unwrap();
-        TaskRepository::save(&backend, &t1).await.unwrap();
-
-        let unblocked = compute_unblocked(&backend, 1, &prev_ready).await;
-        assert_eq!(unblocked.len(), 1);
-        assert_eq!(unblocked[0].id(), 2);
-        assert_eq!(unblocked[0].title(), "Blocked");
-    }
-
-    #[tokio::test]
-    async fn fire_hooks_executes_multiple_hooks() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_dir = dir.path().to_str().unwrap().to_string();
-        let marker1 = dir.path().join("hook1.txt");
-        let marker2 = dir.path().join("hook2.txt");
-        let cmd1 = format!("echo hook1 > {}", marker1.display());
-        let cmd2 = format!("echo hook2 > {}", marker2.display());
-
-        let mut on_task_added = std::collections::BTreeMap::new();
-        on_task_added.insert(
-            "hook1".to_string(),
-            HookEntry {
-                command: cmd1,
-                enabled: true,
-                requires_env: vec![],
-            },
-        );
-        on_task_added.insert(
-            "hook2".to_string(),
-            HookEntry {
-                command: cmd2,
-                enabled: true,
-                requires_env: vec![],
-            },
-        );
-
-        let config = Config {
-            hooks: HooksConfig {
-                on_task_added,
-                ..Default::default()
-            },
-            log: crate::infra::config::LogConfig {
-                dir: Some(log_dir),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let (_db_dir, backend) = setup_db();
-        let task = Task::new(
-            1,
-            1,
-            1,
-            "Test".into(),
-            None,
-            None,
-            None,
-            crate::domain::task::Priority::P2,
-            TaskStatus::Draft,
-            None,
-            None,
-            "2026-01-01T00:00:00Z".into(),
-            "2026-01-01T00:00:00Z".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        );
-        fire_hooks(
-            &config,
-            "task_added",
-            &task,
-            &backend,
-            None,
-            None,
-            &RuntimeMode::Cli,
-            &BackendInfo::Sqlite {
-                db_file_path: "test.db".into(),
-            },
-        )
-        .await;
-
-        // Give child processes a moment to complete
-        std::thread::sleep(std::time::Duration::from_millis(200));
-
-        assert!(marker1.exists(), "first hook should have run");
-        assert!(marker2.exists(), "second hook should have run");
-    }
-
-    #[tokio::test]
-    async fn fire_hooks_noop_when_no_commands() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_dir = dir.path().to_str().unwrap().to_string();
-        let (_db_dir, backend) = setup_db();
-        let config = Config {
-            log: crate::infra::config::LogConfig {
-                dir: Some(log_dir),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let task = Task::new(
-            1,
-            1,
-            1,
-            "Test".into(),
-            None,
-            None,
-            None,
-            crate::domain::task::Priority::P2,
-            TaskStatus::Draft,
-            None,
-            None,
-            "2026-01-01T00:00:00Z".into(),
-            "2026-01-01T00:00:00Z".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        );
-        // Should not panic
-        fire_hooks(
-            &config,
-            "task_added",
-            &task,
-            &backend,
-            None,
-            None,
-            &RuntimeMode::Cli,
-            &BackendInfo::Sqlite {
-                db_file_path: "test.db".into(),
-            },
-        )
-        .await;
-    }
-
-    #[test]
-    fn log_file_path_uses_xdg_state_home() {
-        let xdg = XdgDirs {
-            state_home: Some(PathBuf::from("/tmp/test-xdg-state")),
-            ..Default::default()
-        };
-        let path = log_file_path(&xdg).unwrap();
-        assert_eq!(path, PathBuf::from("/tmp/test-xdg-state/senko/hooks.log"));
-    }
-
-    #[test]
-    fn log_file_path_falls_back_to_home() {
-        // Simulate what `XdgDirs::from_env` would produce when XDG_STATE_HOME is
-        // unset but HOME is set: state_home resolves to `$HOME/.local/state`.
-        let xdg = XdgDirs {
-            state_home: Some(PathBuf::from("/tmp/test-home/.local/state")),
-            ..Default::default()
-        };
-        let path = log_file_path(&xdg).unwrap();
-        assert_eq!(
-            path,
-            PathBuf::from("/tmp/test-home/.local/state/senko/hooks.log")
-        );
-    }
-
-    #[test]
-    fn log_to_file_creates_and_appends() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_path = dir.path().join("nested").join("hooks.log");
-        let entry1 = HookLogEntry::new("INFO", "hook_ok").with_message("first message");
-        let entry2 = HookLogEntry::new("WARN", "hook_failed").with_message("second message");
-        log_to_file(&log_path, &entry1);
-        log_to_file(&log_path, &entry2);
-        let content = std::fs::read_to_string(&log_path).unwrap();
-        let lines: Vec<&str> = content.lines().collect();
-        assert_eq!(lines.len(), 2);
-        let j1: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
-        assert_eq!(j1["level"], "INFO");
-        assert_eq!(j1["type"], "hook_ok");
-        assert_eq!(j1["message"], "first message");
-        let j2: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
-        assert_eq!(j2["level"], "WARN");
-        assert_eq!(j2["type"], "hook_failed");
-    }
-
-    #[tokio::test]
-    async fn hook_failure_logged_to_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_path = dir.path().join("hooks.log");
-        let log_target = HookLogTarget {
-            output: HookOutput::File,
-            file_path: Some(log_path.clone()),
-        };
-
-        let (_db_dir, backend) = setup_db();
-        let task = Task::new(
-            1,
-            1,
-            1,
-            "Test".into(),
-            None,
-            None,
-            None,
-            crate::domain::task::Priority::P2,
-            TaskStatus::Draft,
-            None,
-            None,
-            "2026-01-01T00:00:00Z".into(),
-            "2026-01-01T00:00:00Z".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        );
-
-        // Call execute_hook directly with our log target
-        let json =
-            serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await)
-                .unwrap();
-        execute_hook(
-            "exit 1",
-            "task_added",
-            "test-event-id",
-            "fail",
-            Some(1),
-            &json,
-            Some(&log_target),
-        );
-
-        // Wait for the thread to finish logging
-        std::thread::sleep(std::time::Duration::from_millis(300));
-
-        let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value =
-            serde_json::from_str(content.lines().next().unwrap()).unwrap();
-        assert_eq!(line["level"], "WARN", "should log failure: {content}");
-        assert_eq!(
-            line["type"], "hook_failed",
-            "should be hook_failed type: {content}"
-        );
-        assert_eq!(line["event_id"], "test-event-id");
-        assert_eq!(line["hook"], "fail");
-        assert_eq!(line["event"], "task_added");
-        assert!(line["exit_code"].is_number());
-    }
 
     #[test]
     fn truncate_output_within_limit() {
-        let data = b"hello";
-        assert_eq!(truncate_output(data), "hello");
+        let data = b"hello world";
+        assert_eq!(truncate_output(data), "hello world");
     }
 
     #[test]
     fn truncate_output_at_limit() {
-        let data = vec![b'x'; MAX_OUTPUT_BYTES];
+        let data = vec![b'a'; MAX_OUTPUT_BYTES];
         assert_eq!(truncate_output(&data).len(), MAX_OUTPUT_BYTES);
     }
 
     #[test]
     fn truncate_output_over_limit_keeps_tail() {
-        let data: Vec<u8> = (0..MAX_OUTPUT_BYTES + 100)
-            .map(|i| b'A' + (i % 26) as u8)
-            .collect();
-        let result = truncate_output(&data);
-        assert_eq!(result.as_bytes(), &data[100..]);
+        let mut data = vec![b'x'; MAX_OUTPUT_BYTES];
+        data.extend_from_slice(b"end");
+        let out = truncate_output(&data);
+        assert!(out.ends_with("end"));
+        assert_eq!(out.len(), MAX_OUTPUT_BYTES);
     }
 
-    #[tokio::test]
-    async fn hook_success_discards_stdout_stderr() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_path = dir.path().join("hooks.log");
-        let log_target = HookLogTarget {
-            output: HookOutput::File,
-            file_path: Some(log_path.clone()),
-        };
-
-        let (_db_dir, backend) = setup_db();
-        let task = Task::new(
-            1,
-            1,
-            1,
-            "Test".into(),
-            None,
-            None,
-            None,
-            crate::domain::task::Priority::P2,
-            TaskStatus::Draft,
-            None,
-            None,
-            "2026-01-01T00:00:00Z".into(),
-            "2026-01-01T00:00:00Z".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        );
-
-        let json =
-            serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await)
-                .unwrap();
-        execute_hook(
-            "echo STDOUT_MSG; echo STDERR_MSG >&2; exit 0",
-            "task_added",
-            "eid",
-            "ok-hook",
-            Some(1),
-            &json,
-            Some(&log_target),
-        );
-
-        std::thread::sleep(std::time::Duration::from_millis(300));
-
-        let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value =
-            serde_json::from_str(content.lines().next().unwrap()).unwrap();
-        assert_eq!(line["type"], "hook_ok");
-        assert!(
-            line.get("stdout").is_none() || line["stdout"].is_null(),
-            "stdout should not be in success log"
-        );
-        assert!(
-            line.get("stderr").is_none() || line["stderr"].is_null(),
-            "stderr should not be in success log"
-        );
-    }
-
-    #[tokio::test]
-    async fn hook_failure_captures_stdout_stderr() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_path = dir.path().join("hooks.log");
-        let log_target = HookLogTarget {
-            output: HookOutput::File,
-            file_path: Some(log_path.clone()),
-        };
-
-        let (_db_dir, backend) = setup_db();
-        let task = Task::new(
-            1,
-            1,
-            1,
-            "Test".into(),
-            None,
-            None,
-            None,
-            crate::domain::task::Priority::P2,
-            TaskStatus::Draft,
-            None,
-            None,
-            "2026-01-01T00:00:00Z".into(),
-            "2026-01-01T00:00:00Z".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        );
-
-        let json =
-            serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await)
-                .unwrap();
-        execute_hook(
-            "echo STDOUT_MSG; echo STDERR_MSG >&2; exit 1",
-            "task_added",
-            "eid",
-            "fail-hook",
-            Some(1),
-            &json,
-            Some(&log_target),
-        );
-
-        std::thread::sleep(std::time::Duration::from_millis(300));
-
-        let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value =
-            serde_json::from_str(content.lines().next().unwrap()).unwrap();
-        assert_eq!(line["type"], "hook_failed");
-        assert_eq!(line["stdout"].as_str().unwrap().trim(), "STDOUT_MSG");
-        assert_eq!(line["stderr"].as_str().unwrap().trim(), "STDERR_MSG");
-    }
-
-    #[tokio::test]
-    async fn event_fired_logged_with_zero_hooks() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_dir = dir.path().to_str().unwrap().to_string();
-
-        let config = Config {
-            log: crate::infra::config::LogConfig {
-                dir: Some(log_dir.clone()),
-                ..Default::default()
-            },
+    #[test]
+    fn log_file_path_uses_xdg_state_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let xdg = XdgDirs {
+            state_home: Some(tmp.path().to_path_buf()),
             ..Default::default()
         };
-
-        let (_db_dir, backend) = setup_db();
-        let task = Task::new(
-            1,
-            1,
-            1,
-            "Test".into(),
-            None,
-            None,
-            None,
-            crate::domain::task::Priority::P2,
-            TaskStatus::Draft,
-            None,
-            None,
-            "2026-01-01T00:00:00Z".into(),
-            "2026-01-01T00:00:00Z".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        );
-
-        fire_hooks(
-            &config,
-            "task_added",
-            &task,
-            &backend,
-            None,
-            None,
-            &RuntimeMode::Cli,
-            &BackendInfo::Sqlite {
-                db_file_path: "test.db".into(),
-            },
-        )
-        .await;
-
-        let log_path = dir.path().join("hooks.log");
-        let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value =
-            serde_json::from_str(content.lines().next().unwrap()).unwrap();
-        assert_eq!(line["type"], "event_fired");
-        assert_eq!(line["event"], "task_added");
-        assert_eq!(line["task_id"], 1);
-        assert_eq!(line["runtime"], "cli");
-        assert_eq!(line["backend"]["type"], "sqlite");
-        assert_eq!(line["backend"]["db_file_path"], "test.db");
-    }
-
-    #[tokio::test]
-    async fn event_fired_logged_for_no_eligible_task() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_dir = dir.path().to_str().unwrap().to_string();
-
-        let config = Config {
-            log: crate::infra::config::LogConfig {
-                dir: Some(log_dir.clone()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let (_db_dir, backend) = setup_db();
-
-        fire_no_eligible_task_hooks(
-            &config,
-            &backend,
-            1,
-            &RuntimeMode::Cli,
-            &BackendInfo::Sqlite {
-                db_file_path: "test.db".into(),
-            },
-        )
-        .await;
-
-        let log_path = dir.path().join("hooks.log");
-        let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value =
-            serde_json::from_str(content.lines().next().unwrap()).unwrap();
-        assert_eq!(line["type"], "event_fired");
-        assert_eq!(line["event"], "no_eligible_task");
-        assert_eq!(line["runtime"], "cli");
-        assert_eq!(line["backend"]["type"], "sqlite");
-        assert_eq!(line["backend"]["db_file_path"], "test.db");
-    }
-
-    #[tokio::test]
-    async fn envelope_serialization() {
-        let (_dir, backend) = setup_db();
-        let task = Task::new(
-            1,
-            1,
-            1,
-            "Test".into(),
-            None,
-            None,
-            None,
-            crate::domain::task::Priority::P2,
-            TaskStatus::Draft,
-            None,
-            None,
-            "2026-01-01T00:00:00Z".into(),
-            "2026-01-01T00:00:00Z".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        );
-        let event = build_event("task_added", &task, &backend, None, None).await;
-        let envelope = HookEnvelope {
-            runtime: RuntimeMode::Cli,
-            backend: BackendInfo::Sqlite {
-                db_file_path: "/tmp/test.db".into(),
-            },
-            project: EnvelopeProjectInfo {
-                id: 1,
-                name: "default".into(),
-            },
-            user: EnvelopeUserInfo {
-                id: 1,
-                name: "default".into(),
-            },
-            event,
-        };
-        let json = serde_json::to_string(&envelope).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["runtime"], "cli");
-        assert_eq!(v["backend"]["type"], "sqlite");
-        assert_eq!(v["backend"]["db_file_path"], "/tmp/test.db");
-        assert_eq!(v["project"]["id"], 1);
-        assert_eq!(v["project"]["name"], "default");
-        assert_eq!(v["user"]["id"], 1);
-        assert_eq!(v["user"]["name"], "default");
-        assert_eq!(v["event"]["event"], "task_added");
-        assert_eq!(v["event"]["task"]["id"], 1);
-    }
-
-    #[test]
-    fn envelope_no_eligible_task_serialization() {
-        let event = NoEligibleTaskEvent {
-            event_id: "test-id".into(),
-            event: "no_eligible_task".into(),
-            timestamp: "2026-01-01T00:00:00Z".into(),
-            stats: HashMap::new(),
-            ready_count: 0,
-        };
-        let envelope = HookEnvelope {
-            runtime: RuntimeMode::Api,
-            backend: BackendInfo::Http {
-                api_url: "http://localhost:8080".into(),
-            },
-            project: EnvelopeProjectInfo {
-                id: 2,
-                name: "my-project".into(),
-            },
-            user: EnvelopeUserInfo {
-                id: 3,
-                name: "alice".into(),
-            },
-            event,
-        };
-        let json = serde_json::to_string(&envelope).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["runtime"], "api");
-        assert_eq!(v["backend"]["type"], "http");
-        assert_eq!(v["backend"]["api_url"], "http://localhost:8080");
-        assert_eq!(v["project"]["id"], 2);
-        assert_eq!(v["project"]["name"], "my-project");
-        assert_eq!(v["user"]["id"], 3);
-        assert_eq!(v["user"]["name"], "alice");
-        assert_eq!(v["event"]["event"], "no_eligible_task");
-    }
-
-    #[test]
-    fn backend_info_serialization_variants() {
-        let sqlite = BackendInfo::Sqlite {
-            db_file_path: "/path/db.sqlite".into(),
-        };
-        let v: serde_json::Value =
-            serde_json::from_str(&serde_json::to_string(&sqlite).unwrap()).unwrap();
-        assert_eq!(v["type"], "sqlite");
-        assert_eq!(v["db_file_path"], "/path/db.sqlite");
-
-        let pg = BackendInfo::Postgresql;
-        let v: serde_json::Value =
-            serde_json::from_str(&serde_json::to_string(&pg).unwrap()).unwrap();
-        assert_eq!(v["type"], "postgresql");
-
-        let http = BackendInfo::Http {
-            api_url: "http://example.com".into(),
-        };
-        let v: serde_json::Value =
-            serde_json::from_str(&serde_json::to_string(&http).unwrap()).unwrap();
-        assert_eq!(v["type"], "http");
-        assert_eq!(v["api_url"], "http://example.com");
-    }
-
-    #[test]
-    fn parse_named_hooks() {
-        let toml_str = r#"
-[hooks.on_task_added.notify]
-command = "echo added"
-
-[hooks.on_task_completed.log]
-command = "echo completed"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.hooks.on_task_added.len(), 1);
-        assert_eq!(config.hooks.on_task_added["notify"].command, "echo added");
-        assert!(config.hooks.on_task_added["notify"].enabled);
-        assert_eq!(
-            config.hooks.on_task_completed["log"].command,
-            "echo completed"
-        );
-    }
-
-    #[test]
-    fn parse_named_hooks_multiple() {
-        let toml_str = r#"
-[hooks.on_task_added.first]
-command = "echo first"
-
-[hooks.on_task_added.second]
-command = "echo second"
-
-[hooks.on_task_completed.notify]
-command = "notify"
-
-[hooks.on_task_completed.log]
-command = "log"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.hooks.on_task_added.len(), 2);
-        assert_eq!(config.hooks.on_task_completed.len(), 2);
-    }
-
-    #[test]
-    fn parse_hooks_with_enabled_false() {
-        let toml_str = r#"
-[hooks.on_task_added.disabled-hook]
-command = "echo disabled"
-enabled = false
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert!(!config.hooks.on_task_added["disabled-hook"].enabled);
-        let commands = config.hooks.commands_for_event("task_added");
-        assert!(commands.is_empty());
-    }
-
-    #[test]
-    fn parse_hooks_missing_fields() {
-        let toml_str = "[hooks]\n";
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert!(config.hooks.on_task_added.is_empty());
-        assert!(config.hooks.on_task_completed.is_empty());
-    }
-
-    #[test]
-    fn parse_requires_env_from_toml() {
-        let toml_str = r#"
-[hooks.on_task_ready.my-hook]
-command = "echo ready"
-requires_env = ["SENKO_HOST_PROJECT_DIR", "MY_VAR"]
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let entry = &config.hooks.on_task_ready["my-hook"];
-        assert_eq!(entry.requires_env, vec!["SENKO_HOST_PROJECT_DIR", "MY_VAR"]);
-    }
-
-    #[test]
-    fn parse_requires_env_defaults_to_empty() {
-        let toml_str = r#"
-[hooks.on_task_ready.my-hook]
-command = "echo ready"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let entry = &config.hooks.on_task_ready["my-hook"];
-        assert!(entry.requires_env.is_empty());
-    }
-
-    #[test]
-    fn entries_for_event_returns_enabled_entries() {
-        let toml_str = r#"
-[hooks.on_task_added.hook1]
-command = "echo 1"
-
-[hooks.on_task_added.hook2]
-command = "echo 2"
-enabled = false
-
-[hooks.on_task_added.hook3]
-command = "echo 3"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let entries = config.hooks.entries_for_event("task_added");
-        assert_eq!(entries.len(), 2);
-        let names: Vec<&str> = entries.iter().map(|(n, _)| *n).collect();
-        assert!(names.contains(&"hook1"));
-        assert!(names.contains(&"hook3"));
-    }
-
-    #[test]
-    fn check_required_env_all_set() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            std::env::set_var("SENKO_TEST_REQENV_A", "val");
-        }
-        let entry = HookEntry {
-            command: "echo test".into(),
-            enabled: true,
-            requires_env: vec!["SENKO_TEST_REQENV_A".into()],
-        };
-        let missing = check_required_env(&entry);
-        assert!(missing.is_empty());
-        unsafe {
-            std::env::remove_var("SENKO_TEST_REQENV_A");
-        }
-    }
-
-    #[test]
-    fn check_required_env_missing() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            std::env::remove_var("SENKO_TEST_REQENV_MISSING_1");
-            std::env::remove_var("SENKO_TEST_REQENV_MISSING_2");
-        }
-        let entry = HookEntry {
-            command: "echo test".into(),
-            enabled: true,
-            requires_env: vec![
-                "SENKO_TEST_REQENV_MISSING_1".into(),
-                "SENKO_TEST_REQENV_MISSING_2".into(),
-            ],
-        };
-        let missing = check_required_env(&entry);
-        assert_eq!(
-            missing,
-            vec!["SENKO_TEST_REQENV_MISSING_1", "SENKO_TEST_REQENV_MISSING_2"]
-        );
-    }
-
-    #[test]
-    fn check_required_env_empty_requires() {
-        let entry = HookEntry {
-            command: "echo test".into(),
-            enabled: true,
-            requires_env: vec![],
-        };
-        let missing = check_required_env(&entry);
-        assert!(missing.is_empty());
-    }
-
-    #[test]
-    fn fire_hooks_skips_hook_with_missing_env() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            std::env::remove_var("SENKO_TEST_FIRE_HOOK_MISSING");
-        }
-
-        let tmp = tempfile::tempdir().unwrap();
-        let log_path = tmp.path().join("hooks.log");
-
-        let mut on_task_added = std::collections::BTreeMap::new();
-        on_task_added.insert(
-            "needs-env".to_string(),
-            HookEntry {
-                command: "echo should-not-run".into(),
-                enabled: true,
-                requires_env: vec!["SENKO_TEST_FIRE_HOOK_MISSING".into()],
-            },
-        );
-
-        let config = Config {
-            hooks: HooksConfig {
-                on_task_added,
-                ..Default::default()
-            },
-            log: crate::infra::config::LogConfig {
-                dir: Some(tmp.path().to_str().unwrap().to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let entries = config.hooks.entries_for_event("task_added");
-        assert_eq!(entries.len(), 1);
-
-        // Simulate the env check that fire_hooks performs
-        let (name, entry) = &entries[0];
-        let missing = check_required_env(entry);
-        assert!(!missing.is_empty());
-
-        let msg = format!(
-            "hook skipped (task_added): {} — missing env: {}",
-            name,
-            missing.join(", ")
-        );
-        let log_entry = HookLogEntry::new("WARN", "hook_skipped")
-            .with_event("task_added")
-            .with_hook(name)
-            .with_message(&msg);
-        log_to_file(&log_path, &log_entry);
-
-        let log_content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value =
-            serde_json::from_str(log_content.lines().next().unwrap()).unwrap();
-        assert_eq!(line["type"], "hook_skipped");
-        assert_eq!(line["level"], "WARN");
-        assert!(
-            line["message"]
-                .as_str()
-                .unwrap()
-                .contains("hook skipped (task_added): needs-env")
-        );
-        assert!(
-            line["message"]
-                .as_str()
-                .unwrap()
-                .contains("SENKO_TEST_FIRE_HOOK_MISSING")
-        );
-    }
-
-    #[test]
-    fn get_commands_for_event_skips_missing_env() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            std::env::remove_var("SENKO_TEST_GET_CMD_MISSING");
-            std::env::set_var("SENKO_TEST_GET_CMD_PRESENT", "val");
-        }
-
-        let mut on_task_added = std::collections::BTreeMap::new();
-        on_task_added.insert(
-            "needs-env".to_string(),
-            HookEntry {
-                command: "echo skip".into(),
-                enabled: true,
-                requires_env: vec!["SENKO_TEST_GET_CMD_MISSING".into()],
-            },
-        );
-        on_task_added.insert(
-            "has-env".to_string(),
-            HookEntry {
-                command: "echo run".into(),
-                enabled: true,
-                requires_env: vec!["SENKO_TEST_GET_CMD_PRESENT".into()],
-            },
-        );
-        on_task_added.insert(
-            "no-req".to_string(),
-            HookEntry {
-                command: "echo always".into(),
-                enabled: true,
-                requires_env: vec![],
-            },
-        );
-
-        let config = Config {
-            hooks: HooksConfig {
-                on_task_added,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let commands = get_commands_for_event(&config, "task_added").unwrap();
-        assert_eq!(commands.len(), 2);
-        assert!(commands.contains(&"echo run".to_string()));
-        assert!(commands.contains(&"echo always".to_string()));
-        assert!(!commands.contains(&"echo skip".to_string()));
-
-        unsafe {
-            std::env::remove_var("SENKO_TEST_GET_CMD_PRESENT");
-        }
-    }
-
-    #[test]
-    fn legacy_hook_format_rejected() {
-        let (_tmp, xdg) = isolated_user_config_xdg();
-        let dir = tempfile::tempdir().unwrap();
-        let senko_dir = dir.path().join(".senko");
-        std::fs::create_dir_all(&senko_dir).unwrap();
-        std::fs::write(
-            senko_dir.join("config.toml"),
-            r#"
-[hooks]
-on_task_added = "echo added"
-"#,
-        )
-        .unwrap();
-
-        let result = load_config(dir.path(), None, &xdg);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("Legacy hook format"),
-            "error should mention legacy format: {err}"
-        );
-        assert!(
-            err.contains("named hooks"),
-            "error should mention migration: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn hook_receives_json_on_stdin() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_dir = dir.path().to_str().unwrap().to_string();
-        let output_file = dir.path().join("stdin_capture.json");
-        let cmd = format!("cat > {}", output_file.display());
-
-        let mut on_task_added = std::collections::BTreeMap::new();
-        on_task_added.insert(
-            "capture".to_string(),
-            HookEntry {
-                command: cmd,
-                enabled: true,
-                requires_env: vec![],
-            },
-        );
-        let config = Config {
-            hooks: HooksConfig {
-                on_task_added,
-                ..Default::default()
-            },
-            log: crate::infra::config::LogConfig {
-                dir: Some(log_dir),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let (_db_dir, backend) = setup_db();
-        let task = Task::new(
-            42,
-            42,
-            1,
-            "Hook stdin test".into(),
-            None,
-            None,
-            None,
-            crate::domain::task::Priority::P1,
-            TaskStatus::Draft,
-            None,
-            None,
-            "2026-01-01T00:00:00Z".into(),
-            "2026-01-01T00:00:00Z".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        );
-        fire_hooks(
-            &config,
-            "task_added",
-            &task,
-            &backend,
-            None,
-            None,
-            &RuntimeMode::Cli,
-            &BackendInfo::Sqlite {
-                db_file_path: "test.db".into(),
-            },
-        )
-        .await;
-
-        std::thread::sleep(std::time::Duration::from_millis(200));
-
-        let content = std::fs::read_to_string(&output_file).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
-        // Envelope wraps the event
-        assert_eq!(json["runtime"], "cli");
-        assert_eq!(json["backend"]["type"], "sqlite");
-        assert_eq!(json["backend"]["db_file_path"], "test.db");
-        assert_eq!(json["event"]["event"], "task_added");
-        assert_eq!(json["event"]["task"]["id"], 42);
-        assert_eq!(json["event"]["task"]["title"], "Hook stdin test");
-    }
-
-    #[test]
-    fn env_override_merge_via() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            let orig = std::env::var("SENKO_MERGE_VIA").ok();
-            std::env::set_var("SENKO_MERGE_VIA", "pr");
-            let mut config = Config::default();
-            config.apply_env();
-            assert_eq!(config.workflow.merge_via, MergeVia::Pr);
-            match orig {
-                Some(v) => std::env::set_var("SENKO_MERGE_VIA", v),
-                None => std::env::remove_var("SENKO_MERGE_VIA"),
-            }
-        }
-    }
-
-    #[test]
-    fn env_override_auto_merge() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            let orig = std::env::var("SENKO_AUTO_MERGE").ok();
-            std::env::set_var("SENKO_AUTO_MERGE", "false");
-            let mut config = Config::default();
-            config.apply_env();
-            assert!(!config.workflow.auto_merge);
-            std::env::set_var("SENKO_AUTO_MERGE", "0");
-            let mut config = Config::default();
-            config.apply_env();
-            assert!(!config.workflow.auto_merge);
-            match orig {
-                Some(v) => std::env::set_var("SENKO_AUTO_MERGE", v),
-                None => std::env::remove_var("SENKO_AUTO_MERGE"),
-            }
-        }
-    }
-
-    #[test]
-    fn env_override_hooks_enabled() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            let orig = std::env::var("SENKO_HOOKS_ENABLED").ok();
-            std::env::set_var("SENKO_HOOKS_ENABLED", "false");
-            let mut config = Config::default();
-            config.apply_env();
-            assert!(!config.hooks.enabled);
-            std::env::set_var("SENKO_HOOKS_ENABLED", "true");
-            let mut config = Config::default();
-            config.apply_env();
-            assert!(config.hooks.enabled);
-            match orig {
-                Some(v) => std::env::set_var("SENKO_HOOKS_ENABLED", v),
-                None => std::env::remove_var("SENKO_HOOKS_ENABLED"),
-            }
-        }
-    }
-
-    #[test]
-    fn env_override_cli_remote_url() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            let orig = std::env::var("SENKO_CLI_REMOTE_URL").ok();
-            std::env::set_var("SENKO_CLI_REMOTE_URL", "http://remote:3142");
-            let mut config = Config::default();
-            config.apply_env();
-            assert_eq!(
-                config.cli.remote.url,
-                Some("http://remote:3142".to_string())
-            );
-            match orig {
-                Some(v) => std::env::set_var("SENKO_CLI_REMOTE_URL", v),
-                None => std::env::remove_var("SENKO_CLI_REMOTE_URL"),
-            }
-        }
-    }
-
-    #[test]
-    fn env_override_hooks_insert() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            let orig = std::env::var("SENKO_HOOK_ON_TASK_ADDED").ok();
-            std::env::set_var("SENKO_HOOK_ON_TASK_ADDED", "env-hook");
-            // Start with a config that already has a hook from config.toml
-            let mut config = Config::default();
-            config.hooks.on_task_added.insert(
-                "toml-hook".to_string(),
-                HookEntry {
-                    command: "toml-hook".into(),
-                    enabled: true,
-                    requires_env: vec![],
-                },
-            );
-            config.apply_env();
-            assert_eq!(config.hooks.on_task_added.len(), 2);
-            assert_eq!(config.hooks.on_task_added["toml-hook"].command, "toml-hook");
-            assert_eq!(config.hooks.on_task_added["_env"].command, "env-hook");
-            match orig {
-                Some(v) => std::env::set_var("SENKO_HOOK_ON_TASK_ADDED", v),
-                None => std::env::remove_var("SENKO_HOOK_ON_TASK_ADDED"),
-            }
-        }
-    }
-
-    #[test]
-    fn env_override_empty_values_ignored() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            let orig_url = std::env::var("SENKO_CLI_REMOTE_URL").ok();
-            let orig_hook = std::env::var("SENKO_HOOK_ON_TASK_ADDED").ok();
-            std::env::set_var("SENKO_CLI_REMOTE_URL", "");
-            std::env::set_var("SENKO_HOOK_ON_TASK_ADDED", "");
-            let mut config = Config::default();
-            config.apply_env();
-            assert_eq!(config.cli.remote.url, None);
-            assert!(config.hooks.on_task_added.is_empty());
-            match orig_url {
-                Some(v) => std::env::set_var("SENKO_CLI_REMOTE_URL", v),
-                None => std::env::remove_var("SENKO_CLI_REMOTE_URL"),
-            }
-            match orig_hook {
-                Some(v) => std::env::set_var("SENKO_HOOK_ON_TASK_ADDED", v),
-                None => std::env::remove_var("SENKO_HOOK_ON_TASK_ADDED"),
-            }
-        }
-    }
-
-    #[test]
-    fn load_config_no_file_with_env_overrides() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        let (_tmp, xdg) = isolated_user_config_xdg();
-        unsafe {
-            let orig = std::env::var("SENKO_COMPLETION_MODE").ok();
-            std::env::set_var("SENKO_COMPLETION_MODE", "pr_then_complete");
-            let tmp = tempfile::tempdir().unwrap();
-            let config = load_config(tmp.path(), None, &xdg).unwrap();
-            assert_eq!(config.workflow.merge_via, MergeVia::Pr);
-            match orig {
-                Some(v) => std::env::set_var("SENKO_COMPLETION_MODE", v),
-                None => std::env::remove_var("SENKO_COMPLETION_MODE"),
-            }
-        }
-    }
-
-    #[test]
-    fn load_config_explicit_path() {
-        let (_tmp, xdg) = isolated_user_config_xdg();
-        let tmp = tempfile::tempdir().unwrap();
-        let config_file = tmp.path().join("custom-config.toml");
-        std::fs::write(
-            &config_file,
-            r#"
-[workflow]
-completion_mode = "pr_then_complete"
-auto_merge = false
-"#,
-        )
-        .unwrap();
-        let config = load_config(tmp.path(), Some(&config_file), &xdg).unwrap();
-        assert_eq!(config.workflow.merge_via, MergeVia::Pr);
-        assert!(!config.workflow.auto_merge);
-    }
-
-    #[test]
-    fn load_config_explicit_path_not_found() {
-        let (_tmp, xdg) = isolated_user_config_xdg();
-        let tmp = tempfile::tempdir().unwrap();
-        let missing = tmp.path().join("nonexistent.toml");
-        let result = load_config(tmp.path(), Some(&missing), &xdg);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("config file not found"),
-            "should report missing config file"
-        );
-    }
-
-    #[test]
-    fn load_config_env_var_path() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        let (_tmp, xdg) = isolated_user_config_xdg();
-        let tmp = tempfile::tempdir().unwrap();
-        let config_file = tmp.path().join("env-config.toml");
-        std::fs::write(
-            &config_file,
-            r#"
-[workflow]
-auto_merge = false
-"#,
-        )
-        .unwrap();
-
-        unsafe {
-            let orig = std::env::var("SENKO_CONFIG").ok();
-            std::env::set_var("SENKO_CONFIG", config_file.to_str().unwrap());
-            let config = load_config(tmp.path(), None, &xdg).unwrap();
-            assert!(!config.workflow.auto_merge);
-            match orig {
-                Some(v) => std::env::set_var("SENKO_CONFIG", v),
-                None => std::env::remove_var("SENKO_CONFIG"),
-            }
-        }
-    }
-
-    #[test]
-    fn load_config_explicit_overrides_env_var() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        let (_tmp, xdg) = isolated_user_config_xdg();
-        let tmp = tempfile::tempdir().unwrap();
-
-        let env_config = tmp.path().join("env-config.toml");
-        std::fs::write(
-            &env_config,
-            r#"
-[workflow]
-auto_merge = true
-"#,
-        )
-        .unwrap();
-
-        let cli_config = tmp.path().join("cli-config.toml");
-        std::fs::write(
-            &cli_config,
-            r#"
-[workflow]
-auto_merge = false
-"#,
-        )
-        .unwrap();
-
-        unsafe {
-            let orig = std::env::var("SENKO_CONFIG").ok();
-            std::env::set_var("SENKO_CONFIG", env_config.to_str().unwrap());
-            let config = load_config(tmp.path(), Some(&cli_config), &xdg).unwrap();
-            // CLI flag should take priority over env var
-            assert!(!config.workflow.auto_merge);
-            match orig {
-                Some(v) => std::env::set_var("SENKO_CONFIG", v),
-                None => std::env::remove_var("SENKO_CONFIG"),
-            }
-        }
-    }
-
-    #[test]
-    fn load_config_env_var_not_found() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        let (_tmp, xdg) = isolated_user_config_xdg();
-        let tmp = tempfile::tempdir().unwrap();
-        unsafe {
-            let orig = std::env::var("SENKO_CONFIG").ok();
-            std::env::set_var("SENKO_CONFIG", "/nonexistent/path/config.toml");
-            let result = load_config(tmp.path(), None, &xdg);
-            assert!(result.is_err());
-            assert!(
-                result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("config file not found"),
-                "should report missing config file from env var"
-            );
-            match orig {
-                Some(v) => std::env::set_var("SENKO_CONFIG", v),
-                None => std::env::remove_var("SENKO_CONFIG"),
-            }
-        }
+        let p = log_file_path(&xdg).unwrap();
+        assert_eq!(p, tmp.path().join("senko").join("hooks.log"));
     }
 
     #[test]
     fn log_file_path_with_custom_dir() {
-        let path = log_file_path_with_dir(Some("/custom/log/dir"), &XdgDirs::default()).unwrap();
-        assert_eq!(path, PathBuf::from("/custom/log/dir/hooks.log"));
-    }
-
-    #[test]
-    fn log_file_path_with_dir_none_uses_default() {
-        // When None is passed, it should behave like the original log_file_path()
         let xdg = XdgDirs::default();
-        let with_dir = log_file_path_with_dir(None, &xdg);
-        let original = log_file_path(&xdg);
-        assert_eq!(with_dir, original);
+        let p = log_file_path_with_dir(Some("/var/logs"), &xdg).unwrap();
+        assert_eq!(p, PathBuf::from("/var/logs/hooks.log"));
     }
 
-    /// Merged into a single test to avoid env-var races between parallel tests.
     #[test]
-    fn env_override_log_dir() {
+    fn log_file_path_falls_back_none_when_state_home_absent() {
+        let xdg = XdgDirs {
+            state_home: None,
+            ..Default::default()
+        };
+        assert!(log_file_path(&xdg).is_none());
+    }
+
+    #[test]
+    fn log_to_file_creates_and_appends() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("sub").join("hooks.log");
+        let entry = HookLogEntry::new("INFO", "test")
+            .with_event_id("id1")
+            .with_event("task_add");
+        log_to_file(&path, &entry);
+        let entry2 = HookLogEntry::new("INFO", "test").with_event_id("id2");
+        log_to_file(&path, &entry2);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content.lines().count(), 2);
+        assert!(content.contains("id1"));
+        assert!(content.contains("id2"));
+    }
+
+    #[test]
+    fn backend_info_serialization_variants() {
+        let s = serde_json::to_string(&BackendInfo::Sqlite {
+            db_file_path: "/tmp/a.db".into(),
+        })
+        .unwrap();
+        assert!(s.contains("\"sqlite\""));
+        let s = serde_json::to_string(&BackendInfo::Postgresql).unwrap();
+        assert!(s.contains("\"postgresql\""));
+        let s = serde_json::to_string(&BackendInfo::Http {
+            api_url: "http://x".into(),
+        })
+        .unwrap();
+        assert!(s.contains("\"http\""));
+    }
+
+    #[test]
+    fn hook_applies_filters_enabled_when_on_result() {
+        let def = HookDef {
+            command: "true".into(),
+            when: HookWhen::Post,
+            mode: HookMode::Async,
+            on_failure: OnFailure::Abort,
+            enabled: false,
+            env_vars: vec![],
+            on_result: None,
+            prompt: None,
+        };
+        assert!(!hook_applies(&def, HookWhen::Post, None));
+
+        let mut def = def;
+        def.enabled = true;
+        assert!(hook_applies(&def, HookWhen::Post, None));
+        assert!(!hook_applies(&def, HookWhen::Pre, None));
+
+        def.on_result = Some(OnResult::Selected);
+        assert!(hook_applies(
+            &def,
+            HookWhen::Post,
+            Some(SelectResult::Selected)
+        ));
+        assert!(!hook_applies(
+            &def,
+            HookWhen::Post,
+            Some(SelectResult::None)
+        ));
+        // non-TaskSelect trigger: other triggers are treated as "no result info".
+        assert!(!hook_applies(&def, HookWhen::Post, None));
+
+        def.on_result = Some(OnResult::Any);
+        assert!(hook_applies(&def, HookWhen::Post, None));
+    }
+
+    #[test]
+    fn resolve_env_vars_required_missing_returns_err() {
+        let def = HookDef {
+            command: "true".into(),
+            when: HookWhen::Post,
+            mode: HookMode::Async,
+            on_failure: OnFailure::Abort,
+            enabled: true,
+            env_vars: vec![EnvVarSpec {
+                name: "DEFINITELY_NOT_SET_XYZ_123".into(),
+                required: true,
+                default: None,
+                description: None,
+            }],
+            on_result: None,
+            prompt: None,
+        };
+        let res = resolve_env_vars(&def);
+        assert!(matches!(res, Err(ref s) if s == "DEFINITELY_NOT_SET_XYZ_123"));
+    }
+
+    #[test]
+    fn resolve_env_vars_default_applied_when_unset() {
+        let def = HookDef {
+            command: "true".into(),
+            when: HookWhen::Post,
+            mode: HookMode::Async,
+            on_failure: OnFailure::Abort,
+            enabled: true,
+            env_vars: vec![EnvVarSpec {
+                name: "SENKO_TEST_ENV_DEFAULT_XYZ".into(),
+                required: true,
+                default: Some("fallback".into()),
+                description: None,
+            }],
+            on_result: None,
+            prompt: None,
+        };
+        // SAFETY: serialized via ENV_MUTEX with other env-touching tests.
+        let _guard = ENV_MUTEX.lock().unwrap();
         unsafe {
-            let orig = std::env::var("SENKO_LOG_DIR").ok();
-
-            // Non-empty value is applied
-            std::env::set_var("SENKO_LOG_DIR", "/tmp/custom-logs");
-            let mut config = Config::default();
-            config.apply_env();
-            assert_eq!(config.log.dir, Some("/tmp/custom-logs".into()));
-
-            // Empty value is ignored
-            std::env::set_var("SENKO_LOG_DIR", "");
-            let mut config2 = Config::default();
-            config2.apply_env();
-            assert_eq!(config2.log.dir, None);
-
-            match orig {
-                Some(v) => std::env::set_var("SENKO_LOG_DIR", v),
-                None => std::env::remove_var("SENKO_LOG_DIR"),
-            }
+            std::env::remove_var("SENKO_TEST_ENV_DEFAULT_XYZ");
         }
-    }
-
-    #[test]
-    fn log_config_deserialization() {
-        let toml_str = r#"
-[log]
-dir = "/var/log/senko"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.log.dir, Some("/var/log/senko".into()));
-    }
-
-    #[test]
-    fn log_config_deserialization_missing_section() {
-        let toml_str = "[hooks]\n";
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.log.dir, None);
-    }
-
-    #[test]
-    fn raw_config_merge_overlay_wins() {
-        let base = RawConfig {
-            workflow: RawWorkflowConfig {
-                merge_via: Some(MergeVia::Direct),
-                auto_merge: Some(true),
-                ..Default::default()
-            },
-            log: RawLogConfig {
-                level: Some("debug".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let overlay = RawConfig {
-            workflow: RawWorkflowConfig {
-                merge_via: Some(MergeVia::Pr),
-                auto_merge: None,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let merged = base.merge(overlay).resolve();
-        assert_eq!(merged.workflow.merge_via, MergeVia::Pr);
-        assert!(merged.workflow.auto_merge); // from base
-        assert_eq!(merged.log.level, "debug"); // from base
-    }
-
-    #[test]
-    fn raw_config_merge_hooks() {
-        let mut base_hooks = HooksConfig::default();
-        base_hooks.on_task_added.insert(
-            "user-hook".to_string(),
-            HookEntry {
-                command: "user-cmd".into(),
-                enabled: true,
-                requires_env: vec![],
-            },
-        );
-        base_hooks.on_task_completed.insert(
-            "shared".to_string(),
-            HookEntry {
-                command: "user-completed".into(),
-                enabled: true,
-                requires_env: vec![],
-            },
-        );
-
-        let mut overlay_hooks = HooksConfig::default();
-        overlay_hooks.on_task_added.insert(
-            "project-hook".to_string(),
-            HookEntry {
-                command: "project-cmd".into(),
-                enabled: true,
-                requires_env: vec![],
-            },
-        );
-        // Override the shared hook
-        overlay_hooks.on_task_completed.insert(
-            "shared".to_string(),
-            HookEntry {
-                command: "project-completed".into(),
-                enabled: true,
-                requires_env: vec![],
-            },
-        );
-
-        let base = RawConfig {
-            hooks: base_hooks,
-            ..Default::default()
-        };
-        let overlay = RawConfig {
-            hooks: overlay_hooks,
-            ..Default::default()
-        };
-        let merged = base.merge(overlay).resolve();
-
-        // Both hooks present for on_task_added
-        assert_eq!(merged.hooks.on_task_added.len(), 2);
-        assert_eq!(merged.hooks.on_task_added["user-hook"].command, "user-cmd");
+        let map = resolve_env_vars(&def).unwrap();
         assert_eq!(
-            merged.hooks.on_task_added["project-hook"].command,
-            "project-cmd"
-        );
-        // Shared hook overridden by overlay
-        assert_eq!(
-            merged.hooks.on_task_completed["shared"].command,
-            "project-completed"
+            map.get("SENKO_TEST_ENV_DEFAULT_XYZ"),
+            Some(&"fallback".to_string())
         );
     }
 
     #[test]
-    fn raw_config_merge_hook_disable() {
-        let mut base_hooks = HooksConfig::default();
-        base_hooks.on_task_added.insert(
-            "notify".to_string(),
-            HookEntry {
-                command: "notify-cmd".into(),
+    fn resolve_env_vars_optional_missing_no_error() {
+        let def = HookDef {
+            command: "true".into(),
+            when: HookWhen::Post,
+            mode: HookMode::Async,
+            on_failure: OnFailure::Abort,
+            enabled: true,
+            env_vars: vec![EnvVarSpec {
+                name: "SENKO_TEST_OPTIONAL_VAR".into(),
+                required: false,
+                default: None,
+                description: None,
+            }],
+            on_result: None,
+            prompt: None,
+        };
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe {
+            std::env::remove_var("SENKO_TEST_OPTIONAL_VAR");
+        }
+        let map = resolve_env_vars(&def).unwrap();
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn warn_about_mismatched_runtime_sections_does_not_panic() {
+        let mut config = Config::default();
+        config.server.relay.hooks.task_complete.hooks.insert(
+            "foreign".into(),
+            HookDef {
+                command: "true".into(),
+                when: HookWhen::Post,
+                mode: HookMode::Async,
+                on_failure: OnFailure::Abort,
                 enabled: true,
-                requires_env: vec![],
+                env_vars: vec![],
+                on_result: None,
+                prompt: None,
             },
         );
+        // Running as CLI — the relay section is mismatched. Warning is emitted
+        // via tracing; just verify the function completes.
+        warn_about_mismatched_runtime_sections(&config, &RuntimeMode::Cli);
+    }
 
-        let mut overlay_hooks = HooksConfig::default();
-        overlay_hooks.on_task_added.insert(
-            "notify".to_string(),
-            HookEntry {
-                command: "".into(),
-                enabled: false,
-                requires_env: vec![],
+    #[test]
+    fn validate_config_hooks_accepts_valid_definitions() {
+        let mut config = Config::default();
+        config.cli.hooks.task_complete.hooks.insert(
+            "ok_hook".into(),
+            HookDef {
+                command: "true".into(),
+                when: HookWhen::Pre,
+                mode: HookMode::Sync,
+                on_failure: OnFailure::Abort,
+                enabled: true,
+                env_vars: vec![],
+                on_result: None,
+                prompt: None,
             },
         );
-
-        let base = RawConfig {
-            hooks: base_hooks,
-            ..Default::default()
-        };
-        let overlay = RawConfig {
-            hooks: overlay_hooks,
-            ..Default::default()
-        };
-        let merged = base.merge(overlay).resolve();
-
-        // Hook is in the map but disabled
-        assert!(!merged.hooks.on_task_added["notify"].enabled);
-        // commands_for_event should filter it out
-        let cmds = merged.hooks.commands_for_event("task_added");
-        assert!(cmds.is_empty());
+        // Should not panic even when hook config has warnings / is fine.
+        validate_config_hooks(&config);
     }
 
     #[test]
-    fn user_config_loaded_as_fallback() {
-        let tmp = tempfile::tempdir().unwrap();
-        let user_config_dir = tmp.path().join("user-config").join("senko");
-        std::fs::create_dir_all(&user_config_dir).unwrap();
-        std::fs::write(
-            user_config_dir.join("config.toml"),
-            r#"
-[workflow]
-auto_merge = false
-
-[hooks.on_task_added.user-hook]
-command = "user-cmd"
-"#,
-        )
-        .unwrap();
-
-        // Project has no config
-        let project_dir = tmp.path().join("project");
-        std::fs::create_dir_all(project_dir.join(".senko")).unwrap();
-
-        let xdg = XdgDirs {
-            config_home: Some(tmp.path().join("user-config")),
-            ..Default::default()
-        };
-        let config = load_config(project_dir.as_path(), None, &xdg).unwrap();
-        assert!(!config.workflow.auto_merge);
-        assert_eq!(config.hooks.on_task_added.len(), 1);
-        assert_eq!(config.hooks.on_task_added["user-hook"].command, "user-cmd");
-    }
-
-    #[test]
-    fn project_config_overrides_user_config() {
-        let tmp = tempfile::tempdir().unwrap();
-
-        // User config
-        let user_config_dir = tmp.path().join("user-config").join("senko");
-        std::fs::create_dir_all(&user_config_dir).unwrap();
-        std::fs::write(
-            user_config_dir.join("config.toml"),
-            r#"
-[workflow]
-auto_merge = false
-completion_mode = "pr_then_complete"
-
-[hooks.on_task_added.user-hook]
-command = "user-cmd"
-"#,
-        )
-        .unwrap();
-
-        // Project config overrides some fields
-        let project_dir = tmp.path().join("project");
-        let senko_dir = project_dir.join(".senko");
-        std::fs::create_dir_all(&senko_dir).unwrap();
-        std::fs::write(
-            senko_dir.join("config.toml"),
-            r#"
-[workflow]
-auto_merge = true
-
-[hooks.on_task_added.project-hook]
-command = "project-cmd"
-"#,
-        )
-        .unwrap();
-
-        let xdg = XdgDirs {
-            config_home: Some(tmp.path().join("user-config")),
-            ..Default::default()
-        };
-        let config = load_config(project_dir.as_path(), None, &xdg).unwrap();
-        // auto_merge overridden by project
-        assert!(config.workflow.auto_merge);
-        // merge_via falls back to user config
-        assert_eq!(config.workflow.merge_via, MergeVia::Pr);
-        // Both hooks present
-        assert_eq!(config.hooks.on_task_added.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn hook_stdout_mode_does_not_write_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_path = dir.path().join("hooks.log");
-        let log_target = HookLogTarget {
-            output: HookOutput::Stdout,
-            file_path: Some(log_path.clone()),
-        };
-
-        let (_db_dir, backend) = setup_db();
-        let task = Task::new(
-            1,
-            1,
-            1,
-            "Test".into(),
-            None,
-            None,
-            None,
-            crate::domain::task::Priority::P2,
-            TaskStatus::Draft,
-            None,
-            None,
-            "2026-01-01T00:00:00Z".into(),
-            "2026-01-01T00:00:00Z".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        );
-
-        let json =
-            serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await)
-                .unwrap();
-        execute_hook(
-            "exit 0",
-            "task_added",
-            "eid",
-            "stdout-hook",
-            Some(1),
-            &json,
-            Some(&log_target),
-        );
-
-        std::thread::sleep(std::time::Duration::from_millis(300));
-
-        // In stdout mode, the file should NOT be created
-        assert!(
-            !log_path.exists(),
-            "log file should not exist in stdout mode"
-        );
-    }
-
-    #[tokio::test]
-    async fn hook_both_mode_writes_file_and_stdout() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_path = dir.path().join("hooks.log");
-        let log_target = HookLogTarget {
-            output: HookOutput::Both,
-            file_path: Some(log_path.clone()),
-        };
-
-        let (_db_dir, backend) = setup_db();
-        let task = Task::new(
-            1,
-            1,
-            1,
-            "Test".into(),
-            None,
-            None,
-            None,
-            crate::domain::task::Priority::P2,
-            TaskStatus::Draft,
-            None,
-            None,
-            "2026-01-01T00:00:00Z".into(),
-            "2026-01-01T00:00:00Z".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        );
-
-        let json =
-            serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await)
-                .unwrap();
-        execute_hook(
-            "exit 0",
-            "task_added",
-            "eid",
-            "both-hook",
-            Some(1),
-            &json,
-            Some(&log_target),
-        );
-
-        std::thread::sleep(std::time::Duration::from_millis(300));
-
-        // In both mode, the file SHOULD be created
-        let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value =
-            serde_json::from_str(content.lines().next().unwrap()).unwrap();
-        assert_eq!(line["type"], "hook_ok");
-    }
-
-    #[test]
-    fn write_hook_log_stdout_mode_skips_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_path = dir.path().join("hooks.log");
-        let target = HookLogTarget {
-            output: HookOutput::Stdout,
-            file_path: Some(log_path.clone()),
-        };
-        let entry = HookLogEntry::new("INFO", "hook_ok").with_message("test");
-        write_hook_log(&target, &entry);
-        assert!(!log_path.exists(), "stdout mode should not write to file");
-    }
-
-    #[test]
-    fn write_hook_log_both_mode_writes_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_path = dir.path().join("hooks.log");
-        let target = HookLogTarget {
-            output: HookOutput::Both,
-            file_path: Some(log_path.clone()),
-        };
-        let entry = HookLogEntry::new("INFO", "hook_ok").with_message("test");
-        write_hook_log(&target, &entry);
-        assert!(log_path.exists(), "both mode should write to file");
-        let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value =
-            serde_json::from_str(content.lines().next().unwrap()).unwrap();
-        assert_eq!(line["type"], "hook_ok");
+    fn hooks_for_runtime_returns_correct_section() {
+        let config = Config::default();
+        // All empty by default.
+        assert!(hooks_for_runtime(&config, &RuntimeMode::Cli).is_empty());
+        assert!(hooks_for_runtime(&config, &RuntimeMode::ServerRelay).is_empty());
+        assert!(hooks_for_runtime(&config, &RuntimeMode::ServerRemote).is_empty());
     }
 }

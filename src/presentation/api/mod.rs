@@ -261,6 +261,7 @@ fn classify_error(e: anyhow::Error) -> ApiError {
             | DomainError::CannotDeleteDefaultProject
             | DomainError::CannotDeleteProjectWithTasks { .. }
             | DomainError::SessionLimitExceeded { .. }
+            | DomainError::HookAborted { .. }
             | DomainError::MetadataFieldNameConflict { .. } => ApiError::Conflict(msg),
 
             DomainError::UnsupportedOperation { .. } => ApiError::NotImplemented(msg),
@@ -484,8 +485,12 @@ pub async fn serve(
     let backend_info = bootstrap::resolve_backend_info(config, &project_root);
     let hook_data: Arc<dyn crate::application::port::HookDataSource> =
         Arc::new(crate::application::port::BackendHookData(backend.clone()));
-    let hook_executor =
-        bootstrap::create_api_hook_executor(config.clone(), backend_info, hook_data);
+    let hook_executor = bootstrap::create_server_hook_executor(
+        config.clone(),
+        crate::infra::hook::RuntimeMode::ServerRemote,
+        backend_info,
+        hook_data,
+    );
     let pr_verifier = bootstrap::create_pr_verifier();
     let completion_policy = CompletionPolicy::new(config.workflow.merge_via);
 
@@ -532,8 +537,12 @@ pub async fn serve_proxy(
         .expect("server.relay.url required for proxy mode");
     let api_key = config.server.relay.token.clone();
     let backend_info = bootstrap::resolve_backend_info(config, &project_root);
-    let hook_executor =
-        bootstrap::create_api_hook_executor(config.clone(), backend_info, hook_data);
+    let hook_executor = bootstrap::create_server_hook_executor(
+        config.clone(),
+        crate::infra::hook::RuntimeMode::ServerRelay,
+        backend_info,
+        hook_data,
+    );
 
     let state = AppState {
         project_root: Arc::new(project_root),

@@ -3,17 +3,17 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
+use crate::application::hook_trigger::SelectResult;
 use crate::application::port::{HookDataSource, HookTestPort};
 use crate::domain::task::Task;
 use crate::infra::config::Config;
 
 use super::{
-    BackendInfo, HookEnvelope, NoEligibleTaskEvent, RuntimeMode, build_event, execute_hook_sync,
-    get_commands_for_event, resolve_envelope_context,
+    BackendInfo, HookEnvelope, RuntimeMode, build_event, build_task_select_event,
+    execute_hook_sync, get_commands_for_event, resolve_envelope_context,
 };
 
 /// Shell-based implementation of [`HookTestPort`].
-/// Uses the existing infra hook functions for envelope construction and synchronous execution.
 pub struct ShellHookTestExecutor {
     config: Config,
     runtime_mode: RuntimeMode,
@@ -49,7 +49,7 @@ impl HookTestPort for ShellHookTestExecutor {
             resolve_envelope_context(&self.config, self.backend.as_ref()).await;
         let event = build_event(event_name, task, self.backend.as_ref(), None, None).await;
         let envelope = HookEnvelope {
-            runtime: self.runtime_mode.clone(),
+            runtime: self.runtime_mode,
             backend: self.backend_info.clone(),
             project: envelope_project,
             user: envelope_user,
@@ -58,24 +58,16 @@ impl HookTestPort for ShellHookTestExecutor {
         Ok(serde_json::to_string_pretty(&envelope)?)
     }
 
-    async fn build_no_eligible_task_envelope(&self, project_id: i64) -> Result<String> {
+    async fn build_task_select_envelope(
+        &self,
+        project_id: i64,
+        result: SelectResult,
+    ) -> Result<String> {
         let (envelope_project, envelope_user) =
             resolve_envelope_context(&self.config, self.backend.as_ref()).await;
-        let stats = self
-            .backend
-            .task_stats(project_id)
-            .await
-            .unwrap_or_default();
-        let ready_count = self.backend.ready_count(project_id).await.unwrap_or(0);
-        let event = NoEligibleTaskEvent {
-            event_id: uuid::Uuid::new_v4().to_string(),
-            event: "no_eligible_task".into(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            stats,
-            ready_count,
-        };
+        let event = build_task_select_event(result, self.backend.as_ref(), project_id).await;
         let envelope = HookEnvelope {
-            runtime: self.runtime_mode.clone(),
+            runtime: self.runtime_mode,
             backend: self.backend_info.clone(),
             project: envelope_project,
             user: envelope_user,

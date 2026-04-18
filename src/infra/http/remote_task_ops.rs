@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::application::HookTrigger;
+use crate::application::hook_trigger::SelectResult;
 use crate::application::port::task_operations::{CompleteResult, PreviewResult};
 use crate::application::port::{HookExecutor, TaskOperations};
 use crate::domain::error::DomainError;
@@ -15,6 +16,7 @@ use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority, Task, TaskEvent, TaskStatus,
     UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
 };
+use crate::infra::config::HookWhen;
 
 use super::client::HttpClient;
 use super::{
@@ -111,9 +113,11 @@ impl TaskOperations for RemoteTaskOperations {
             .await?;
         let task: Task = read_json_or_error(resp).await?;
 
-        self.hooks
+        let _ = self
+            .hooks
             .fire(
                 &HookTrigger::Task(TaskEvent::Created),
+                HookWhen::Post,
                 Some(&task),
                 None,
                 None,
@@ -135,9 +139,11 @@ impl TaskOperations for RemoteTaskOperations {
             .await?;
         let task: Task = read_json_or_error(resp).await?;
 
-        self.hooks
+        let _ = self
+            .hooks
             .fire(
                 &HookTrigger::Task(TaskEvent::Readied),
+                HookWhen::Post,
                 Some(&task),
                 Some(prev_status),
                 None,
@@ -182,9 +188,11 @@ impl TaskOperations for RemoteTaskOperations {
             .await?;
         let task: Task = read_json_or_error(resp).await?;
 
-        self.hooks
+        let _ = self
+            .hooks
             .fire(
                 &HookTrigger::Task(TaskEvent::Started),
+                HookWhen::Post,
                 Some(&task),
                 Some(prev_status),
                 None,
@@ -227,9 +235,14 @@ impl TaskOperations for RemoteTaskOperations {
             .await?;
 
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            self.hooks
+            let _ = self
+                .hooks
                 .fire(
-                    &HookTrigger::NoEligibleTask { project_id },
+                    &HookTrigger::TaskSelect {
+                        project_id,
+                        result: SelectResult::None,
+                    },
+                    HookWhen::Post,
                     None,
                     None,
                     None,
@@ -244,9 +257,25 @@ impl TaskOperations for RemoteTaskOperations {
 
         let task: Task = resp.json().await?;
 
-        self.hooks
+        let _ = self
+            .hooks
+            .fire(
+                &HookTrigger::TaskSelect {
+                    project_id,
+                    result: SelectResult::Selected,
+                },
+                HookWhen::Post,
+                Some(&task),
+                None,
+                None,
+            )
+            .await;
+
+        let _ = self
+            .hooks
             .fire(
                 &HookTrigger::Task(TaskEvent::Started),
+                HookWhen::Post,
                 Some(&task),
                 Some(TaskStatus::Todo),
                 None,
@@ -280,9 +309,11 @@ impl TaskOperations for RemoteTaskOperations {
         let api_resp: CompleteApiResponse = read_json_or_error(resp).await?;
         let unblocked = parse_unblocked(api_resp.unblocked_tasks);
 
-        self.hooks
+        let _ = self
+            .hooks
             .fire(
                 &HookTrigger::Task(TaskEvent::Completed),
+                HookWhen::Post,
                 Some(&api_resp.task),
                 Some(prev_status),
                 Some(unblocked.clone()),
@@ -312,9 +343,11 @@ impl TaskOperations for RemoteTaskOperations {
             .await?;
         let task: Task = read_json_or_error(resp).await?;
 
-        self.hooks
+        let _ = self
+            .hooks
             .fire(
                 &HookTrigger::Task(TaskEvent::Canceled),
+                HookWhen::Post,
                 Some(&task),
                 Some(prev_status),
                 None,

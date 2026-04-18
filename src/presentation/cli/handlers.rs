@@ -742,22 +742,28 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
             println!("    auto_merge: {}", config.workflow.auto_merge);
             println!("    branch_mode: {}", config.workflow.branch_mode);
             println!("    merge_strategy: {}", config.workflow.merge_strategy);
-            println!("  [hooks]");
-            for (event, hooks) in [
-                ("on_task_added", &config.hooks.on_task_added),
-                ("on_task_ready", &config.hooks.on_task_ready),
-                ("on_task_started", &config.hooks.on_task_started),
-                ("on_task_completed", &config.hooks.on_task_completed),
-                ("on_task_canceled", &config.hooks.on_task_canceled),
-                ("on_no_eligible_task", &config.hooks.on_no_eligible_task),
-            ] {
-                if hooks.is_empty() {
-                    println!("    {event}: (none)");
-                } else {
-                    println!("    {event}:");
-                    for (name, entry) in hooks {
-                        let status = if entry.enabled { "" } else { " [disabled]" };
-                        println!("      {name}: {}{status}", entry.command);
+            println!("  [cli hooks]");
+            print_task_action_hooks("cli", &config.cli.hooks);
+            println!("  [server.relay hooks]");
+            print_task_action_hooks("server.relay", &config.server.relay.hooks);
+            println!("  [server.remote hooks]");
+            print_task_action_hooks("server.remote", &config.server.remote.hooks);
+            println!("  [workflow stages]");
+            if config.workflow.stages.is_empty() {
+                println!("    (none)");
+            } else {
+                let mut stage_names: Vec<&String> = config.workflow.stages.keys().collect();
+                stage_names.sort();
+                for stage_name in stage_names {
+                    let stage = &config.workflow.stages[stage_name];
+                    println!(
+                        "    {stage_name}: {} hook(s), {} instruction(s)",
+                        stage.hooks.len(),
+                        stage.instructions.len()
+                    );
+                    for (name, def) in &stage.hooks {
+                        let status = if def.enabled { "" } else { " [disabled]" };
+                        println!("      {name}: {}{status}", def.command);
                     }
                 }
             }
@@ -807,8 +813,6 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                 Some(n) => println!("    max_per_user: {n}"),
                 None => println!("    max_per_user: (none)"),
             }
-            println!("  [hooks]");
-            println!("    enabled: {}", config.hooks.enabled);
             println!("  [project]");
             match config.project.name {
                 Some(ref name) => println!("    name: {name}"),
@@ -878,26 +882,59 @@ fn extract_script_path(command: &str) -> Option<String> {
     }
 }
 
-fn run_hook_checks(entry: &crate::infra::config::HookEntry) -> Vec<CheckResult> {
+fn print_task_action_hooks(label: &str, hooks: &crate::infra::config::TaskActionHooks) {
+    let sections: [(&str, &crate::infra::config::ActionConfig); 6] = [
+        ("task_add", &hooks.task_add),
+        ("task_ready", &hooks.task_ready),
+        ("task_start", &hooks.task_start),
+        ("task_complete", &hooks.task_complete),
+        ("task_cancel", &hooks.task_cancel),
+        ("task_select", &hooks.task_select),
+    ];
+    let mut any = false;
+    for (action, action_cfg) in sections {
+        if action_cfg.hooks.is_empty() {
+            continue;
+        }
+        any = true;
+        println!("    {label}.{action}:");
+        for (name, def) in &action_cfg.hooks {
+            let status = if def.enabled { "" } else { " [disabled]" };
+            println!("      {name}: {}{status}", def.command);
+        }
+    }
+    if !any {
+        println!("    (no hooks)");
+    }
+}
+
+fn run_hook_checks(def: &crate::infra::config::HookDef) -> Vec<CheckResult> {
     let mut checks = Vec::new();
 
-    // Check requires_env
-    for var in &entry.requires_env {
-        let (status, message) = if std::env::var(var).is_ok() {
-            (CheckStatus::Ok, None)
+    // Check required env_vars (required=true + unset + no default)
+    for spec in &def.env_vars {
+        if !spec.required {
+            continue;
+        }
+        if std::env::var(&spec.name).is_ok() || spec.default.is_some() {
+            checks.push(CheckResult {
+                check: "env_var".to_string(),
+                target: spec.name.clone(),
+                status: CheckStatus::Ok,
+                message: None,
+            });
         } else {
-            (CheckStatus::Error, Some(format!("{var} is not set")))
-        };
-        checks.push(CheckResult {
-            check: "env_var".to_string(),
-            target: var.clone(),
-            status,
-            message,
-        });
+            checks.push(CheckResult {
+                check: "env_var".to_string(),
+                target: spec.name.clone(),
+                status: CheckStatus::Error,
+                message: Some(format!("{} is not set and has no default", spec.name)),
+            });
+        }
     }
 
     // Check script existence and permissions
-    if let Some(script_path) = extract_script_path(&entry.command) {
+    if let Some(script_path) = extract_script_path(&def.command) {
         let path = std::path::Path::new(&script_path);
         if path.exists() {
             checks.push(CheckResult {
@@ -945,26 +982,48 @@ pub fn cmd_doctor(cli: &Cli) -> Result<()> {
     let xdg = crate::infra::xdg::XdgDirs::from_env();
     let config = crate::bootstrap::load_config(&root, cli.config.as_deref(), &xdg)?;
 
-    let events = [
-        ("on_task_added", &config.hooks.on_task_added),
-        ("on_task_ready", &config.hooks.on_task_ready),
-        ("on_task_started", &config.hooks.on_task_started),
-        ("on_task_completed", &config.hooks.on_task_completed),
-        ("on_task_canceled", &config.hooks.on_task_canceled),
-        ("on_no_eligible_task", &config.hooks.on_no_eligible_task),
+    let runtime_sections: [(&str, &crate::infra::config::TaskActionHooks); 3] = [
+        ("cli", &config.cli.hooks),
+        ("server.relay", &config.server.relay.hooks),
+        ("server.remote", &config.server.remote.hooks),
     ];
 
     let mut diagnostics = Vec::new();
-    for (event_name, hook_map) in &events {
-        for (name, entry) in *hook_map {
-            if !entry.enabled {
+    for (runtime_label, action_hooks) in runtime_sections {
+        let actions: [(&str, &crate::infra::config::ActionConfig); 6] = [
+            ("task_add", &action_hooks.task_add),
+            ("task_ready", &action_hooks.task_ready),
+            ("task_start", &action_hooks.task_start),
+            ("task_complete", &action_hooks.task_complete),
+            ("task_cancel", &action_hooks.task_cancel),
+            ("task_select", &action_hooks.task_select),
+        ];
+        for (action, action_cfg) in actions {
+            for (name, def) in &action_cfg.hooks {
+                if !def.enabled {
+                    continue;
+                }
+                let checks = run_hook_checks(def);
+                diagnostics.push(HookDiagnostic {
+                    event: format!("{runtime_label}.{action}"),
+                    name: name.clone(),
+                    command: def.command.clone(),
+                    checks,
+                });
+            }
+        }
+    }
+
+    for (stage_name, stage) in &config.workflow.stages {
+        for (name, def) in &stage.hooks {
+            if !def.enabled {
                 continue;
             }
-            let checks = run_hook_checks(entry);
+            let checks = run_hook_checks(def);
             diagnostics.push(HookDiagnostic {
-                event: event_name.to_string(),
+                event: format!("workflow.{stage_name}"),
                 name: name.clone(),
-                command: entry.command.clone(),
+                command: def.command.clone(),
                 checks,
             });
         }
@@ -3207,14 +3266,31 @@ mod tests {
         assert_eq!(super::extract_script_path("echo hello"), None);
     }
 
+    fn make_hook_def(command: &str, required_env: Vec<&str>) -> crate::infra::config::HookDef {
+        crate::infra::config::HookDef {
+            command: command.to_string(),
+            when: crate::infra::config::HookWhen::Post,
+            mode: crate::infra::config::HookMode::Async,
+            on_failure: crate::infra::config::OnFailure::Abort,
+            enabled: true,
+            env_vars: required_env
+                .into_iter()
+                .map(|name| crate::infra::config::EnvVarSpec {
+                    name: name.to_string(),
+                    required: true,
+                    default: None,
+                    description: None,
+                })
+                .collect(),
+            on_result: None,
+            prompt: None,
+        }
+    }
+
     #[test]
     fn run_hook_checks_env_missing() {
-        let entry = crate::infra::config::HookEntry {
-            command: "echo test".to_string(),
-            enabled: true,
-            requires_env: vec!["SENKO_DOCTOR_TEST_NONEXISTENT_VAR_12345".to_string()],
-        };
-        let checks = super::run_hook_checks(&entry);
+        let def = make_hook_def("echo test", vec!["SENKO_DOCTOR_TEST_NONEXISTENT_VAR_12345"]);
+        let checks = super::run_hook_checks(&def);
         assert_eq!(checks.len(), 1);
         assert_eq!(checks[0].check, "env_var");
         assert_eq!(checks[0].status, super::CheckStatus::Error);
@@ -3225,12 +3301,8 @@ mod tests {
         unsafe {
             std::env::set_var("SENKO_DOCTOR_TEST_VAR_OK", "1");
         }
-        let entry = crate::infra::config::HookEntry {
-            command: "echo test".to_string(),
-            enabled: true,
-            requires_env: vec!["SENKO_DOCTOR_TEST_VAR_OK".to_string()],
-        };
-        let checks = super::run_hook_checks(&entry);
+        let def = make_hook_def("echo test", vec!["SENKO_DOCTOR_TEST_VAR_OK"]);
+        let checks = super::run_hook_checks(&def);
         assert_eq!(checks.len(), 1);
         assert_eq!(checks[0].status, super::CheckStatus::Ok);
         unsafe {
@@ -3240,12 +3312,8 @@ mod tests {
 
     #[test]
     fn run_hook_checks_script_not_found() {
-        let entry = crate::infra::config::HookEntry {
-            command: "/nonexistent/path/hook.sh".to_string(),
-            enabled: true,
-            requires_env: vec![],
-        };
-        let checks = super::run_hook_checks(&entry);
+        let def = make_hook_def("/nonexistent/path/hook.sh", vec![]);
+        let checks = super::run_hook_checks(&def);
         assert_eq!(checks.len(), 1);
         assert_eq!(checks[0].check, "script_exists");
         assert_eq!(checks[0].status, super::CheckStatus::Error);
@@ -3261,12 +3329,8 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
-        let entry = crate::infra::config::HookEntry {
-            command: script.to_str().unwrap().to_string(),
-            enabled: true,
-            requires_env: vec![],
-        };
-        let checks = super::run_hook_checks(&entry);
+        let def = make_hook_def(script.to_str().unwrap(), vec![]);
+        let checks = super::run_hook_checks(&def);
         assert_eq!(checks.len(), 2);
         assert_eq!(checks[0].check, "script_exists");
         assert_eq!(checks[0].status, super::CheckStatus::Ok);
@@ -3284,12 +3348,8 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
         }
-        let entry = crate::infra::config::HookEntry {
-            command: script.to_str().unwrap().to_string(),
-            enabled: true,
-            requires_env: vec![],
-        };
-        let checks = super::run_hook_checks(&entry);
+        let def = make_hook_def(script.to_str().unwrap(), vec![]);
+        let checks = super::run_hook_checks(&def);
         assert_eq!(checks.len(), 2);
         assert_eq!(checks[0].check, "script_exists");
         assert_eq!(checks[0].status, super::CheckStatus::Ok);
@@ -3299,12 +3359,8 @@ mod tests {
 
     #[test]
     fn run_hook_checks_bare_command_no_file_checks() {
-        let entry = crate::infra::config::HookEntry {
-            command: "echo hello world".to_string(),
-            enabled: true,
-            requires_env: vec![],
-        };
-        let checks = super::run_hook_checks(&entry);
+        let def = make_hook_def("echo hello world", vec![]);
+        let checks = super::run_hook_checks(&def);
         assert!(checks.is_empty());
     }
 
