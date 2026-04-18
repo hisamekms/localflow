@@ -96,7 +96,8 @@ mod tests {
             Some(&dir.path().join("data.db")),
             None,
             &crate::infra::xdg::XdgDirs::default(),
-        ).unwrap();
+        )
+        .unwrap();
         let backend: Arc<dyn TaskBackend> = Arc::new(backend);
         // Default project id=1 is seeded by migration v1.
         (dir, backend, 1)
@@ -135,7 +136,9 @@ mod tests {
         let (_dir, backend, project_id) = new_backend().await;
         let ops = LocalContractOperations::new(backend);
 
-        ops.create_contract(project_id, &simple_params()).await.unwrap();
+        ops.create_contract(project_id, &simple_params())
+            .await
+            .unwrap();
         let mut p2 = simple_params();
         p2.title = "another".to_string();
         ops.create_contract(project_id, &p2).await.unwrap();
@@ -229,7 +232,9 @@ mod tests {
         assert_eq!(n1.content(), "first note");
         assert_eq!(n1.source_task_id(), Some(task.id()));
 
-        ops.add_note(c.id(), "second".to_string(), None).await.unwrap();
+        ops.add_note(c.id(), "second".to_string(), None)
+            .await
+            .unwrap();
 
         let notes = ops.list_notes(c.id()).await.unwrap();
         assert_eq!(notes.len(), 2);

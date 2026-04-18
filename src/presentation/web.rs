@@ -2,19 +2,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use axum::Router;
 use axum::extract::{Path, State};
-use axum_extra::extract::Query;
 use axum::http::StatusCode;
 use axum::response::Html;
 use axum::routing::get;
-use axum::Router;
+use axum_extra::extract::Query;
 use tower_http::trace::TraceLayer;
 
 use pulldown_cmark::{Options, Parser};
 
 use crate::application::{ListTasksFilter, TaskOperations};
-use crate::infra::config::Config;
 use crate::bootstrap;
+use crate::infra::config::Config;
 use crate::presentation::dto::{DodItemViewModel, TaskViewModel};
 
 #[derive(Clone)]
@@ -64,7 +64,10 @@ pub async fn serve(
         let device_ip = get_local_ip()
             .map(|ip| ip.to_string())
             .unwrap_or_else(|| "0.0.0.0".to_string());
-        tracing::info!(port = actual_port, "Listening on http://localhost:{actual_port}");
+        tracing::info!(
+            port = actual_port,
+            "Listening on http://localhost:{actual_port}"
+        );
         tracing::info!(port = actual_port, addr = %device_ip, "Listening on http://{device_ip}:{actual_port}");
     } else {
         tracing::info!(port = actual_port, addr = %bind_ip, "Listening on http://{bind_ip}:{actual_port}");
@@ -85,23 +88,37 @@ async fn index_handler(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> Result<Html<String>, StatusCode> {
-    let statuses = query.status
+    let statuses = query
+        .status
         .iter()
         .filter(|s| !s.is_empty())
         .map(|s| s.parse())
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let tags: Vec<String> = query.tag.iter().filter(|t| !t.is_empty()).cloned().collect();
+    let tags: Vec<String> = query
+        .tag
+        .iter()
+        .filter(|t| !t.is_empty())
+        .cloned()
+        .collect();
     let filter = ListTasksFilter {
         statuses,
         tags,
         ..Default::default()
     };
     let project_id = state.project_id;
-    let tasks: Vec<TaskViewModel> = state.task_service.list_tasks(project_id, &filter).await
+    let tasks: Vec<TaskViewModel> = state
+        .task_service
+        .list_tasks(project_id, &filter)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .into_iter().map(TaskViewModel::from).collect();
-    let all_tags = state.task_service.list_all_tags(project_id).await
+        .into_iter()
+        .map(TaskViewModel::from)
+        .collect();
+    let all_tags = state
+        .task_service
+        .list_all_tags(project_id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let body = render_task_list(&tasks, &query, &all_tags);
@@ -112,7 +129,10 @@ async fn task_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Html<String>, StatusCode> {
-    let task: TaskViewModel = state.task_service.get_task(state.project_id, id).await
+    let task: TaskViewModel = state
+        .task_service
+        .get_task(state.project_id, id)
+        .await
         .map_err(|_| StatusCode::NOT_FOUND)?
         .into();
 
@@ -125,23 +145,37 @@ async fn graph_handler(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> Result<Html<String>, StatusCode> {
-    let statuses = query.status
+    let statuses = query
+        .status
         .iter()
         .filter(|s| !s.is_empty())
         .map(|s| s.parse())
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let tags: Vec<String> = query.tag.iter().filter(|t| !t.is_empty()).cloned().collect();
+    let tags: Vec<String> = query
+        .tag
+        .iter()
+        .filter(|t| !t.is_empty())
+        .cloned()
+        .collect();
     let filter = ListTasksFilter {
         statuses,
         tags,
         ..Default::default()
     };
     let project_id = state.project_id;
-    let tasks: Vec<TaskViewModel> = state.task_service.list_tasks(project_id, &filter).await
+    let tasks: Vec<TaskViewModel> = state
+        .task_service
+        .list_tasks(project_id, &filter)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .into_iter().map(TaskViewModel::from).collect();
-    let all_tags = state.task_service.list_all_tags(project_id).await
+        .into_iter()
+        .map(TaskViewModel::from)
+        .collect();
+    let all_tags = state
+        .task_service
+        .list_all_tags(project_id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let body = render_graph_page(&tasks, &query, &all_tags);
@@ -207,7 +241,10 @@ fn render_graph_page(tasks: &[TaskViewModel], query: &ListQuery, all_tags: &[Str
     }
     if !in_progress.is_empty() {
         mermaid.push_str("    classDef in_progress fill:#fef9c3,stroke:#ca8a04,stroke-width:1.5px,color:#854d0e,rx:12,ry:12\n");
-        mermaid.push_str(&format!("    class {} in_progress\n", in_progress.join(",")));
+        mermaid.push_str(&format!(
+            "    class {} in_progress\n",
+            in_progress.join(",")
+        ));
     }
     if !todo.is_empty() {
         mermaid.push_str("    classDef todo fill:#dbeafe,stroke:#3b82f6,stroke-width:1.5px,color:#1e40af,rx:12,ry:12\n");
@@ -624,9 +661,7 @@ fn render_task_detail(task: &TaskViewModel) -> String {
         html.push_str("<h2>Dependencies</h2>");
         html.push_str("<div class=\"section\">");
         for dep in &task.dependencies {
-            html.push_str(&format!(
-                "<div><a href=\"/tasks/{dep}\">#{dep}</a></div>"
-            ));
+            html.push_str(&format!("<div><a href=\"/tasks/{dep}\">#{dep}</a></div>"));
         }
         html.push_str("</div>");
     }
@@ -681,7 +716,10 @@ fn status_badge(status: &str) -> String {
         "canceled" => "status-canceled",
         _ => "status-draft",
     };
-    format!(r#"<span class="badge {class}">{}</span>"#, escape_html(status))
+    format!(
+        r#"<span class="badge {class}">{}</span>"#,
+        escape_html(status)
+    )
 }
 
 fn priority_badge(priority: &str) -> String {
@@ -692,13 +730,15 @@ fn priority_badge(priority: &str) -> String {
         "p3" => "priority-p3",
         _ => "priority-p2",
     };
-    format!(r#"<span class="badge {class}">{}</span>"#, escape_html(priority))
+    format!(
+        r#"<span class="badge {class}">{}</span>"#,
+        escape_html(priority)
+    )
 }
 
 fn render_markdown(input: &str) -> String {
-    let options = Options::ENABLE_TABLES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS;
+    let options =
+        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let parser = Parser::new_ext(input, options);
     let mut raw_html = String::new();
     pulldown_cmark::html::push_html(&mut raw_html, parser);

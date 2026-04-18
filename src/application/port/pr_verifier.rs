@@ -5,4 +5,3 @@ use anyhow::Result;
 pub trait PrVerifier: Send + Sync {
     fn verify_pr_status(&self, pr_url: &str) -> Result<()>;
 }
-

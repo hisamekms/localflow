@@ -33,7 +33,9 @@ pub(crate) async fn extract_error(resp: reqwest::Response) -> String {
 }
 
 /// Read a successful JSON response, or return `UpstreamHttpError` on non-2xx.
-pub(crate) async fn read_json_or_error<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
+pub(crate) async fn read_json_or_error<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+) -> Result<T> {
     if resp.status().is_success() {
         Ok(resp.json().await?)
     } else {

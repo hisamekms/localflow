@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::application::port::ContractOperations;
 use crate::domain::contract::{
@@ -117,7 +117,11 @@ impl ContractOperations for RemoteContractOperations {
     ) -> Result<Contract> {
         let url = self.project_url(project_id, "/contracts");
         let resp = self
-            .auth(self.client().post(&url).json(&create_params_to_json(params)))
+            .auth(
+                self.client()
+                    .post(&url)
+                    .json(&create_params_to_json(params)),
+            )
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -143,7 +147,10 @@ impl ContractOperations for RemoteContractOperations {
     ) -> Result<Contract> {
         let url = self.url(&format!("/api/v1/contracts/{id}"));
         let body = update_body(params, array_params);
-        let resp = self.auth(self.client().put(&url).json(&body)).send().await?;
+        let resp = self
+            .auth(self.client().put(&url).json(&body))
+            .send()
+            .await?;
         read_json_or_error(resp).await
     }
 
@@ -180,7 +187,10 @@ impl ContractOperations for RemoteContractOperations {
             "content": content,
             "source_task_id": source_task_id,
         });
-        let resp = self.auth(self.client().post(&url).json(&body)).send().await?;
+        let resp = self
+            .auth(self.client().post(&url).json(&body))
+            .send()
+            .await?;
         read_json_or_error(resp).await
     }
 

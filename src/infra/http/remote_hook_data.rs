@@ -32,7 +32,11 @@ impl HookDataSource for RemoteHookDataSource {
     async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
         let resp = self
             .http
-            .auth(self.http.reqwest().get(self.http.project_url(project_id, "/stats")))
+            .auth(
+                self.http
+                    .reqwest()
+                    .get(self.http.project_url(project_id, "/stats")),
+            )
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -41,11 +45,7 @@ impl HookDataSource for RemoteHookDataSource {
     async fn ready_count(&self, project_id: i64) -> Result<i64> {
         let tasks: Vec<Task> = {
             let url = format!("{}?ready=true", self.http.project_url(project_id, "/tasks"));
-            let resp = self
-                .http
-                .auth(self.http.reqwest().get(&url))
-                .send()
-                .await?;
+            let resp = self.http.auth(self.http.reqwest().get(&url)).send().await?;
             read_json_or_error(resp).await?
         };
         Ok(tasks.len() as i64)
@@ -54,7 +54,11 @@ impl HookDataSource for RemoteHookDataSource {
     async fn get_project(&self, id: i64) -> Result<Project> {
         let resp = self
             .http
-            .auth(self.http.reqwest().get(self.http.url(&format!("/api/v1/projects/{id}"))))
+            .auth(
+                self.http
+                    .reqwest()
+                    .get(self.http.url(&format!("/api/v1/projects/{id}"))),
+            )
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -78,7 +82,11 @@ impl HookDataSource for RemoteHookDataSource {
     async fn get_user(&self, id: i64) -> Result<User> {
         let resp = self
             .http
-            .auth(self.http.reqwest().get(self.http.url(&format!("/api/v1/users/{id}"))))
+            .auth(
+                self.http
+                    .reqwest()
+                    .get(self.http.url(&format!("/api/v1/users/{id}"))),
+            )
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -102,7 +110,11 @@ impl HookDataSource for RemoteHookDataSource {
     async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
         let resp = self
             .http
-            .auth(self.http.reqwest().get(self.http.project_url(project_id, &format!("/tasks/{id}"))))
+            .auth(
+                self.http
+                    .reqwest()
+                    .get(self.http.project_url(project_id, &format!("/tasks/{id}"))),
+            )
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -110,11 +122,7 @@ impl HookDataSource for RemoteHookDataSource {
 
     async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
         let url = format!("{}?ready=true", self.http.project_url(project_id, "/tasks"));
-        let resp = self
-            .http
-            .auth(self.http.reqwest().get(&url))
-            .send()
-            .await?;
+        let resp = self.http.auth(self.http.reqwest().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 }

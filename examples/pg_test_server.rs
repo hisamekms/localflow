@@ -20,8 +20,12 @@ async fn main() {
 
     eprintln!("pg-test-server: setting up embedded PostgreSQL...");
     let mut pg = PostgreSQL::default();
-    pg.setup().await.expect("failed to setup embedded PostgreSQL");
-    pg.start().await.expect("failed to start embedded PostgreSQL");
+    pg.setup()
+        .await
+        .expect("failed to setup embedded PostgreSQL");
+    pg.start()
+        .await
+        .expect("failed to start embedded PostgreSQL");
 
     eprintln!("pg-test-server: creating {db_count} databases...");
     for i in 0..db_count {
@@ -40,7 +44,7 @@ async fn main() {
         .strip_suffix(marker)
         .expect("URL should end with the database name marker");
 
-    fs::write(url_file, &url_prefix).expect("failed to write URL file");
+    fs::write(url_file, url_prefix).expect("failed to write URL file");
     eprintln!("pg-test-server: ready ({db_count} databases, URL prefix written to {url_file})");
 
     // Wait for SIGINT or SIGTERM.

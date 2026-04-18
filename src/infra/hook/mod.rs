@@ -11,11 +11,11 @@ use serde::Serialize;
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::infra::config::{Config, HookEntry, HookOutput};
-#[cfg(test)]
-use crate::infra::config::RawConfig;
 use crate::application::port::HookDataSource;
 use crate::domain::task::{self, Task, TaskStatus, UnblockedTask};
+#[cfg(test)]
+use crate::infra::config::RawConfig;
+use crate::infra::config::{Config, HookEntry, HookOutput};
 use crate::infra::xdg::XdgDirs;
 
 #[derive(Debug, Clone, Serialize)]
@@ -203,7 +203,10 @@ pub async fn build_event(
     from_status: Option<TaskStatus>,
     unblocked: Option<Vec<UnblockedTask>>,
 ) -> HookEvent {
-    let stats = backend.task_stats(task.project_id()).await.unwrap_or_default();
+    let stats = backend
+        .task_stats(task.project_id())
+        .await
+        .unwrap_or_default();
     let ready_count = backend.ready_count(task.project_id()).await.unwrap_or(0);
     HookEvent {
         event_id: Uuid::new_v4().to_string(),
@@ -318,21 +321,22 @@ fn execute_hook(
         }
     };
     if let Some(mut stdin) = child.stdin.take()
-        && let Err(e) = stdin.write_all(json.as_bytes()) {
-            let msg = format!("hook stdin error ({}): {}: {:#}", event_name, command, e);
-            eprintln!("{msg}");
-            if let Some(t) = log_target {
-                let entry = HookLogEntry::new("ERROR", "hook_error")
-                    .with_event_id(event_id)
-                    .with_event(event_name)
-                    .with_hook(hook_name)
-                    .with_command(command)
-                    .with_task_id(task_id)
-                    .with_message(&msg);
-                write_hook_log(t, &entry);
-            }
-            return;
+        && let Err(e) = stdin.write_all(json.as_bytes())
+    {
+        let msg = format!("hook stdin error ({}): {}: {:#}", event_name, command, e);
+        eprintln!("{msg}");
+        if let Some(t) = log_target {
+            let entry = HookLogEntry::new("ERROR", "hook_error")
+                .with_event_id(event_id)
+                .with_event(event_name)
+                .with_hook(hook_name)
+                .with_command(command)
+                .with_task_id(task_id)
+                .with_message(&msg);
+            write_hook_log(t, &entry);
         }
+        return;
+    }
 
     // Spawn a thread to wait for exit and log the result.
     // The CLI returns immediately; the thread outlives the main function
@@ -363,7 +367,10 @@ fn execute_hook(
                     "hook failed ({}): {} (exit: {})",
                     evt,
                     cmd,
-                    output.status.code().map_or("signal".to_string(), |c| c.to_string())
+                    output
+                        .status
+                        .code()
+                        .map_or("signal".to_string(), |c| c.to_string())
                 );
                 eprintln!("{msg}");
                 if let Some(ref t) = log {
@@ -422,25 +429,49 @@ pub async fn resolve_envelope_context(
         Some(name) => backend
             .get_project_by_name(name)
             .await
-            .map(|p| EnvelopeProjectInfo { id: p.id(), name: p.name().to_owned() })
-            .unwrap_or_else(|_| EnvelopeProjectInfo { id: DEFAULT_PROJECT_ID, name: "default".into() }),
+            .map(|p| EnvelopeProjectInfo {
+                id: p.id(),
+                name: p.name().to_owned(),
+            })
+            .unwrap_or_else(|_| EnvelopeProjectInfo {
+                id: DEFAULT_PROJECT_ID,
+                name: "default".into(),
+            }),
         None => backend
             .get_project(DEFAULT_PROJECT_ID)
             .await
-            .map(|p| EnvelopeProjectInfo { id: p.id(), name: p.name().to_owned() })
-            .unwrap_or_else(|_| EnvelopeProjectInfo { id: DEFAULT_PROJECT_ID, name: "default".into() }),
+            .map(|p| EnvelopeProjectInfo {
+                id: p.id(),
+                name: p.name().to_owned(),
+            })
+            .unwrap_or_else(|_| EnvelopeProjectInfo {
+                id: DEFAULT_PROJECT_ID,
+                name: "default".into(),
+            }),
     };
     let user = match config.user.name.as_deref() {
         Some(name) => backend
             .get_user_by_username(name)
             .await
-            .map(|u| EnvelopeUserInfo { id: u.id(), name: u.username().to_owned() })
-            .unwrap_or_else(|_| EnvelopeUserInfo { id: DEFAULT_USER_ID, name: "default".into() }),
+            .map(|u| EnvelopeUserInfo {
+                id: u.id(),
+                name: u.username().to_owned(),
+            })
+            .unwrap_or_else(|_| EnvelopeUserInfo {
+                id: DEFAULT_USER_ID,
+                name: "default".into(),
+            }),
         None => backend
             .get_user(DEFAULT_USER_ID)
             .await
-            .map(|u| EnvelopeUserInfo { id: u.id(), name: u.username().to_owned() })
-            .unwrap_or_else(|_| EnvelopeUserInfo { id: DEFAULT_USER_ID, name: "default".into() }),
+            .map(|u| EnvelopeUserInfo {
+                id: u.id(),
+                name: u.username().to_owned(),
+            })
+            .unwrap_or_else(|_| EnvelopeUserInfo {
+                id: DEFAULT_USER_ID,
+                name: "default".into(),
+            }),
     };
     (project, user)
 }
@@ -511,7 +542,9 @@ pub async fn fire_hooks(
         if !missing.is_empty() {
             let msg = format!(
                 "hook skipped ({}): {} — missing env: {}",
-                event_name, name, missing.join(", ")
+                event_name,
+                name,
+                missing.join(", ")
             );
             eprintln!("{msg}");
             let entry = HookLogEntry::new("WARN", "hook_skipped")
@@ -605,7 +638,8 @@ pub async fn fire_no_eligible_task_hooks(
         if !missing.is_empty() {
             let msg = format!(
                 "hook skipped (no_eligible_task): {} — missing env: {}",
-                name, missing.join(", ")
+                name,
+                missing.join(", ")
             );
             eprintln!("{msg}");
             let entry = HookLogEntry::new("WARN", "hook_skipped")
@@ -646,7 +680,9 @@ pub fn get_commands_for_event(config: &Config, event_name: &str) -> Option<Vec<S
                 if !missing.is_empty() {
                     eprintln!(
                         "hook skipped ({}): {} — missing env: {}",
-                        event_name, name, missing.join(", ")
+                        event_name,
+                        name,
+                        missing.join(", ")
                     );
                     continue;
                 }
@@ -689,20 +725,21 @@ pub async fn compute_unblocked(
     project_id: i64,
     prev_ready_ids: &std::collections::HashSet<i64>,
 ) -> Vec<UnblockedTask> {
-    let curr_ready = backend.list_ready_tasks(project_id).await.unwrap_or_default();
+    let curr_ready = backend
+        .list_ready_tasks(project_id)
+        .await
+        .unwrap_or_default();
     task::compute_unblocked(&curr_ready, prev_ready_ids)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bootstrap::load_config;
-    use crate::infra::config::{
-        MergeVia, HooksConfig, RawLogConfig, RawWorkflowConfig,
-    };
-    use crate::infra::sqlite::SqliteBackend;
     use crate::application::port::TaskQueryPort;
+    use crate::bootstrap::load_config;
     use crate::domain::TaskRepository;
+    use crate::infra::config::{HooksConfig, MergeVia, RawLogConfig, RawWorkflowConfig};
+    use crate::infra::sqlite::SqliteBackend;
     use std::sync::Mutex;
 
     /// Mutex to serialize tests that mutate `SENKO_*` env vars. XDG paths are
@@ -730,7 +767,8 @@ mod tests {
             Some(&dir.path().join("data.db")),
             None,
             &XdgDirs::default(),
-        ).unwrap();
+        )
+        .unwrap();
         (dir, backend)
     }
 
@@ -765,7 +803,10 @@ command = "echo completed"
         assert_eq!(config.hooks.on_task_added.len(), 1);
         assert_eq!(config.hooks.on_task_added["my-hook"].command, "echo added");
         assert_eq!(config.hooks.on_task_completed.len(), 1);
-        assert_eq!(config.hooks.on_task_completed["my-hook"].command, "echo completed");
+        assert_eq!(
+            config.hooks.on_task_completed["my-hook"].command,
+            "echo completed"
+        );
     }
 
     #[test]
@@ -785,12 +826,32 @@ command = "echo completed"
     async fn hook_event_serialization() {
         let (_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, 1, "Test".into(), None, None, None,
-            crate::domain::task::Priority::P2, TaskStatus::Draft,
-            None, None,
-            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "Test".into(),
+            None,
+            None,
+            None,
+            crate::domain::task::Priority::P2,
+            TaskStatus::Draft,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
         let event = build_event("task_added", &task, &backend, None, None).await;
         let json = serde_json::to_string(&event).unwrap();
@@ -808,12 +869,32 @@ command = "echo completed"
     async fn event_has_valid_uuid_and_timestamp() {
         let (_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, 1, "Test".into(), None, None, None,
-            crate::domain::task::Priority::P2, TaskStatus::Draft,
-            None, None,
-            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "Test".into(),
+            None,
+            None,
+            None,
+            crate::domain::task::Priority::P2,
+            TaskStatus::Draft,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
         let event = build_event("task_added", &task, &backend, None, None).await;
         assert!(Uuid::parse_str(&event.event_id).is_ok());
@@ -823,7 +904,8 @@ command = "echo completed"
     #[tokio::test]
     async fn event_has_stats() {
         let (_dir, backend) = setup_db();
-        TaskRepository::create_task(&backend,
+        TaskRepository::create_task(
+            &backend,
             1,
             &crate::domain::task::CreateTaskParams {
                 title: "Task1".into(),
@@ -853,7 +935,8 @@ command = "echo completed"
     #[tokio::test]
     async fn event_has_ready_count() {
         let (_dir, backend) = setup_db();
-        TaskRepository::create_task(&backend,
+        TaskRepository::create_task(
+            &backend,
             1,
             &crate::domain::task::CreateTaskParams {
                 title: "Ready".into(),
@@ -887,7 +970,8 @@ command = "echo completed"
         let (_dir, backend) = setup_db();
 
         // Create task 1 (will be completed) and task 2 (depends on task 1)
-        TaskRepository::create_task(&backend,
+        TaskRepository::create_task(
+            &backend,
             1,
             &crate::domain::task::CreateTaskParams {
                 title: "Dependency".into(),
@@ -910,10 +994,13 @@ command = "echo completed"
         .unwrap();
         let t1 = TaskRepository::get_task(&backend, 1, 1).await.unwrap();
         let (t1, _) = t1.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-        let (t1, _) = t1.start(None, None, "2025-01-01T00:00:00Z".to_string(), None).unwrap();
+        let (t1, _) = t1
+            .start(None, None, "2025-01-01T00:00:00Z".to_string(), None)
+            .unwrap();
         TaskRepository::save(&backend, &t1).await.unwrap();
 
-        TaskRepository::create_task(&backend,
+        TaskRepository::create_task(
+            &backend,
             1,
             &crate::domain::task::CreateTaskParams {
                 title: "Blocked".into(),
@@ -936,12 +1023,19 @@ command = "echo completed"
         .unwrap();
         let t2 = TaskRepository::get_task(&backend, 1, 2).await.unwrap();
         let (t2, _) = t2.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-        let (t2, _) = t2.add_dependency(1, Some("2025-01-01T00:00:00Z".into())).unwrap();
+        let (t2, _) = t2
+            .add_dependency(1, Some("2025-01-01T00:00:00Z".into()))
+            .unwrap();
         TaskRepository::save(&backend, &t2).await.unwrap();
 
         // Capture ready tasks before completion
         let prev_ready: std::collections::HashSet<i64> =
-            TaskQueryPort::list_ready_tasks(&backend, 1).await.unwrap().iter().map(|t| t.id()).collect();
+            TaskQueryPort::list_ready_tasks(&backend, 1)
+                .await
+                .unwrap()
+                .iter()
+                .map(|t| t.id())
+                .collect();
 
         // Complete task 1
         let t1 = TaskRepository::get_task(&backend, 1, 1).await.unwrap();
@@ -964,8 +1058,22 @@ command = "echo completed"
         let cmd2 = format!("echo hook2 > {}", marker2.display());
 
         let mut on_task_added = std::collections::BTreeMap::new();
-        on_task_added.insert("hook1".to_string(), HookEntry { command: cmd1, enabled: true, requires_env: vec![] });
-        on_task_added.insert("hook2".to_string(), HookEntry { command: cmd2, enabled: true, requires_env: vec![] });
+        on_task_added.insert(
+            "hook1".to_string(),
+            HookEntry {
+                command: cmd1,
+                enabled: true,
+                requires_env: vec![],
+            },
+        );
+        on_task_added.insert(
+            "hook2".to_string(),
+            HookEntry {
+                command: cmd2,
+                enabled: true,
+                requires_env: vec![],
+            },
+        );
 
         let config = Config {
             hooks: HooksConfig {
@@ -981,14 +1089,46 @@ command = "echo completed"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, 1, "Test".into(), None, None, None,
-            crate::domain::task::Priority::P2, TaskStatus::Draft,
-            None, None,
-            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "Test".into(),
+            None,
+            None,
+            None,
+            crate::domain::task::Priority::P2,
+            TaskStatus::Draft,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
-        fire_hooks(&config, "task_added", &task, &backend, None, None, &RuntimeMode::Cli, &BackendInfo::Sqlite { db_file_path: "test.db".into() }).await;
+        fire_hooks(
+            &config,
+            "task_added",
+            &task,
+            &backend,
+            None,
+            None,
+            &RuntimeMode::Cli,
+            &BackendInfo::Sqlite {
+                db_file_path: "test.db".into(),
+            },
+        )
+        .await;
 
         // Give child processes a moment to complete
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -1010,15 +1150,47 @@ command = "echo completed"
             ..Default::default()
         };
         let task = Task::new(
-            1, 1, 1, "Test".into(), None, None, None,
-            crate::domain::task::Priority::P2, TaskStatus::Draft,
-            None, None,
-            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "Test".into(),
+            None,
+            None,
+            None,
+            crate::domain::task::Priority::P2,
+            TaskStatus::Draft,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
         // Should not panic
-        fire_hooks(&config, "task_added", &task, &backend, None, None, &RuntimeMode::Cli, &BackendInfo::Sqlite { db_file_path: "test.db".into() }).await;
+        fire_hooks(
+            &config,
+            "task_added",
+            &task,
+            &backend,
+            None,
+            None,
+            &RuntimeMode::Cli,
+            &BackendInfo::Sqlite {
+                db_file_path: "test.db".into(),
+            },
+        )
+        .await;
     }
 
     #[test]
@@ -1040,17 +1212,18 @@ command = "echo completed"
             ..Default::default()
         };
         let path = log_file_path(&xdg).unwrap();
-        assert_eq!(path, PathBuf::from("/tmp/test-home/.local/state/senko/hooks.log"));
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/test-home/.local/state/senko/hooks.log")
+        );
     }
 
     #[test]
     fn log_to_file_creates_and_appends() {
         let dir = tempfile::tempdir().unwrap();
         let log_path = dir.path().join("nested").join("hooks.log");
-        let entry1 = HookLogEntry::new("INFO", "hook_ok")
-            .with_message("first message");
-        let entry2 = HookLogEntry::new("WARN", "hook_failed")
-            .with_message("second message");
+        let entry1 = HookLogEntry::new("INFO", "hook_ok").with_message("first message");
+        let entry2 = HookLogEntry::new("WARN", "hook_failed").with_message("second message");
         log_to_file(&log_path, &entry1);
         log_to_file(&log_path, &entry2);
         let content = std::fs::read_to_string(&log_path).unwrap();
@@ -1076,25 +1249,59 @@ command = "echo completed"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, 1, "Test".into(), None, None, None,
-            crate::domain::task::Priority::P2, TaskStatus::Draft,
-            None, None,
-            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "Test".into(),
+            None,
+            None,
+            None,
+            crate::domain::task::Priority::P2,
+            TaskStatus::Draft,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
 
         // Call execute_hook directly with our log target
-        let json = serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await).unwrap();
-        execute_hook("exit 1", "task_added", "test-event-id", "fail", Some(1), &json, Some(&log_target));
+        let json =
+            serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await)
+                .unwrap();
+        execute_hook(
+            "exit 1",
+            "task_added",
+            "test-event-id",
+            "fail",
+            Some(1),
+            &json,
+            Some(&log_target),
+        );
 
         // Wait for the thread to finish logging
         std::thread::sleep(std::time::Duration::from_millis(300));
 
         let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        let line: serde_json::Value =
+            serde_json::from_str(content.lines().next().unwrap()).unwrap();
         assert_eq!(line["level"], "WARN", "should log failure: {content}");
-        assert_eq!(line["type"], "hook_failed", "should be hook_failed type: {content}");
+        assert_eq!(
+            line["type"], "hook_failed",
+            "should be hook_failed type: {content}"
+        );
         assert_eq!(line["event_id"], "test-event-id");
         assert_eq!(line["hook"], "fail");
         assert_eq!(line["event"], "task_added");
@@ -1133,24 +1340,61 @@ command = "echo completed"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, 1, "Test".into(), None, None, None,
-            crate::domain::task::Priority::P2, TaskStatus::Draft,
-            None, None,
-            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "Test".into(),
+            None,
+            None,
+            None,
+            crate::domain::task::Priority::P2,
+            TaskStatus::Draft,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
 
-        let json = serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await).unwrap();
-        execute_hook("echo STDOUT_MSG; echo STDERR_MSG >&2; exit 0", "task_added", "eid", "ok-hook", Some(1), &json, Some(&log_target));
+        let json =
+            serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await)
+                .unwrap();
+        execute_hook(
+            "echo STDOUT_MSG; echo STDERR_MSG >&2; exit 0",
+            "task_added",
+            "eid",
+            "ok-hook",
+            Some(1),
+            &json,
+            Some(&log_target),
+        );
 
         std::thread::sleep(std::time::Duration::from_millis(300));
 
         let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        let line: serde_json::Value =
+            serde_json::from_str(content.lines().next().unwrap()).unwrap();
         assert_eq!(line["type"], "hook_ok");
-        assert!(line.get("stdout").is_none() || line["stdout"].is_null(), "stdout should not be in success log");
-        assert!(line.get("stderr").is_none() || line["stderr"].is_null(), "stderr should not be in success log");
+        assert!(
+            line.get("stdout").is_none() || line["stdout"].is_null(),
+            "stdout should not be in success log"
+        );
+        assert!(
+            line.get("stderr").is_none() || line["stderr"].is_null(),
+            "stderr should not be in success log"
+        );
     }
 
     #[tokio::test]
@@ -1164,21 +1408,52 @@ command = "echo completed"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, 1, "Test".into(), None, None, None,
-            crate::domain::task::Priority::P2, TaskStatus::Draft,
-            None, None,
-            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "Test".into(),
+            None,
+            None,
+            None,
+            crate::domain::task::Priority::P2,
+            TaskStatus::Draft,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
 
-        let json = serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await).unwrap();
-        execute_hook("echo STDOUT_MSG; echo STDERR_MSG >&2; exit 1", "task_added", "eid", "fail-hook", Some(1), &json, Some(&log_target));
+        let json =
+            serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await)
+                .unwrap();
+        execute_hook(
+            "echo STDOUT_MSG; echo STDERR_MSG >&2; exit 1",
+            "task_added",
+            "eid",
+            "fail-hook",
+            Some(1),
+            &json,
+            Some(&log_target),
+        );
 
         std::thread::sleep(std::time::Duration::from_millis(300));
 
         let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        let line: serde_json::Value =
+            serde_json::from_str(content.lines().next().unwrap()).unwrap();
         assert_eq!(line["type"], "hook_failed");
         assert_eq!(line["stdout"].as_str().unwrap().trim(), "STDOUT_MSG");
         assert_eq!(line["stderr"].as_str().unwrap().trim(), "STDERR_MSG");
@@ -1199,19 +1474,52 @@ command = "echo completed"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, 1, "Test".into(), None, None, None,
-            crate::domain::task::Priority::P2, TaskStatus::Draft,
-            None, None,
-            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "Test".into(),
+            None,
+            None,
+            None,
+            crate::domain::task::Priority::P2,
+            TaskStatus::Draft,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
 
-        fire_hooks(&config, "task_added", &task, &backend, None, None, &RuntimeMode::Cli, &BackendInfo::Sqlite { db_file_path: "test.db".into() }).await;
+        fire_hooks(
+            &config,
+            "task_added",
+            &task,
+            &backend,
+            None,
+            None,
+            &RuntimeMode::Cli,
+            &BackendInfo::Sqlite {
+                db_file_path: "test.db".into(),
+            },
+        )
+        .await;
 
         let log_path = dir.path().join("hooks.log");
         let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        let line: serde_json::Value =
+            serde_json::from_str(content.lines().next().unwrap()).unwrap();
         assert_eq!(line["type"], "event_fired");
         assert_eq!(line["event"], "task_added");
         assert_eq!(line["task_id"], 1);
@@ -1235,11 +1543,21 @@ command = "echo completed"
 
         let (_db_dir, backend) = setup_db();
 
-        fire_no_eligible_task_hooks(&config, &backend, 1, &RuntimeMode::Cli, &BackendInfo::Sqlite { db_file_path: "test.db".into() }).await;
+        fire_no_eligible_task_hooks(
+            &config,
+            &backend,
+            1,
+            &RuntimeMode::Cli,
+            &BackendInfo::Sqlite {
+                db_file_path: "test.db".into(),
+            },
+        )
+        .await;
 
         let log_path = dir.path().join("hooks.log");
         let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        let line: serde_json::Value =
+            serde_json::from_str(content.lines().next().unwrap()).unwrap();
         assert_eq!(line["type"], "event_fired");
         assert_eq!(line["event"], "no_eligible_task");
         assert_eq!(line["runtime"], "cli");
@@ -1251,19 +1569,47 @@ command = "echo completed"
     async fn envelope_serialization() {
         let (_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, 1, "Test".into(), None, None, None,
-            crate::domain::task::Priority::P2, TaskStatus::Draft,
-            None, None,
-            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "Test".into(),
+            None,
+            None,
+            None,
+            crate::domain::task::Priority::P2,
+            TaskStatus::Draft,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
         let event = build_event("task_added", &task, &backend, None, None).await;
         let envelope = HookEnvelope {
             runtime: RuntimeMode::Cli,
-            backend: BackendInfo::Sqlite { db_file_path: "/tmp/test.db".into() },
-            project: EnvelopeProjectInfo { id: 1, name: "default".into() },
-            user: EnvelopeUserInfo { id: 1, name: "default".into() },
+            backend: BackendInfo::Sqlite {
+                db_file_path: "/tmp/test.db".into(),
+            },
+            project: EnvelopeProjectInfo {
+                id: 1,
+                name: "default".into(),
+            },
+            user: EnvelopeUserInfo {
+                id: 1,
+                name: "default".into(),
+            },
             event,
         };
         let json = serde_json::to_string(&envelope).unwrap();
@@ -1290,9 +1636,17 @@ command = "echo completed"
         };
         let envelope = HookEnvelope {
             runtime: RuntimeMode::Api,
-            backend: BackendInfo::Http { api_url: "http://localhost:8080".into() },
-            project: EnvelopeProjectInfo { id: 2, name: "my-project".into() },
-            user: EnvelopeUserInfo { id: 3, name: "alice".into() },
+            backend: BackendInfo::Http {
+                api_url: "http://localhost:8080".into(),
+            },
+            project: EnvelopeProjectInfo {
+                id: 2,
+                name: "my-project".into(),
+            },
+            user: EnvelopeUserInfo {
+                id: 3,
+                name: "alice".into(),
+            },
             event,
         };
         let json = serde_json::to_string(&envelope).unwrap();
@@ -1309,17 +1663,24 @@ command = "echo completed"
 
     #[test]
     fn backend_info_serialization_variants() {
-        let sqlite = BackendInfo::Sqlite { db_file_path: "/path/db.sqlite".into() };
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&sqlite).unwrap()).unwrap();
+        let sqlite = BackendInfo::Sqlite {
+            db_file_path: "/path/db.sqlite".into(),
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&sqlite).unwrap()).unwrap();
         assert_eq!(v["type"], "sqlite");
         assert_eq!(v["db_file_path"], "/path/db.sqlite");
 
         let pg = BackendInfo::Postgresql;
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&pg).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&pg).unwrap()).unwrap();
         assert_eq!(v["type"], "postgresql");
 
-        let http = BackendInfo::Http { api_url: "http://example.com".into() };
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&http).unwrap()).unwrap();
+        let http = BackendInfo::Http {
+            api_url: "http://example.com".into(),
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&http).unwrap()).unwrap();
         assert_eq!(v["type"], "http");
         assert_eq!(v["api_url"], "http://example.com");
     }
@@ -1337,7 +1698,10 @@ command = "echo completed"
         assert_eq!(config.hooks.on_task_added.len(), 1);
         assert_eq!(config.hooks.on_task_added["notify"].command, "echo added");
         assert!(config.hooks.on_task_added["notify"].enabled);
-        assert_eq!(config.hooks.on_task_completed["log"].command, "echo completed");
+        assert_eq!(
+            config.hooks.on_task_completed["log"].command,
+            "echo completed"
+        );
     }
 
     #[test]
@@ -1459,7 +1823,10 @@ command = "echo 3"
             ],
         };
         let missing = check_required_env(&entry);
-        assert_eq!(missing, vec!["SENKO_TEST_REQENV_MISSING_1", "SENKO_TEST_REQENV_MISSING_2"]);
+        assert_eq!(
+            missing,
+            vec!["SENKO_TEST_REQENV_MISSING_1", "SENKO_TEST_REQENV_MISSING_2"]
+        );
     }
 
     #[test]
@@ -1525,11 +1892,22 @@ command = "echo 3"
         log_to_file(&log_path, &log_entry);
 
         let log_content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value = serde_json::from_str(log_content.lines().next().unwrap()).unwrap();
+        let line: serde_json::Value =
+            serde_json::from_str(log_content.lines().next().unwrap()).unwrap();
         assert_eq!(line["type"], "hook_skipped");
         assert_eq!(line["level"], "WARN");
-        assert!(line["message"].as_str().unwrap().contains("hook skipped (task_added): needs-env"));
-        assert!(line["message"].as_str().unwrap().contains("SENKO_TEST_FIRE_HOOK_MISSING"));
+        assert!(
+            line["message"]
+                .as_str()
+                .unwrap()
+                .contains("hook skipped (task_added): needs-env")
+        );
+        assert!(
+            line["message"]
+                .as_str()
+                .unwrap()
+                .contains("SENKO_TEST_FIRE_HOOK_MISSING")
+        );
     }
 
     #[test]
@@ -1603,8 +1981,14 @@ on_task_added = "echo added"
         let result = load_config(dir.path(), None, &xdg);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("Legacy hook format"), "error should mention legacy format: {err}");
-        assert!(err.contains("named hooks"), "error should mention migration: {err}");
+        assert!(
+            err.contains("Legacy hook format"),
+            "error should mention legacy format: {err}"
+        );
+        assert!(
+            err.contains("named hooks"),
+            "error should mention migration: {err}"
+        );
     }
 
     #[tokio::test]
@@ -1615,7 +1999,14 @@ on_task_added = "echo added"
         let cmd = format!("cat > {}", output_file.display());
 
         let mut on_task_added = std::collections::BTreeMap::new();
-        on_task_added.insert("capture".to_string(), HookEntry { command: cmd, enabled: true, requires_env: vec![] });
+        on_task_added.insert(
+            "capture".to_string(),
+            HookEntry {
+                command: cmd,
+                enabled: true,
+                requires_env: vec![],
+            },
+        );
         let config = Config {
             hooks: HooksConfig {
                 on_task_added,
@@ -1630,14 +2021,46 @@ on_task_added = "echo added"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            42, 42, 1, "Hook stdin test".into(), None, None, None,
-            crate::domain::task::Priority::P1, TaskStatus::Draft,
-            None, None,
-            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            42,
+            42,
+            1,
+            "Hook stdin test".into(),
+            None,
+            None,
+            None,
+            crate::domain::task::Priority::P1,
+            TaskStatus::Draft,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
-        fire_hooks(&config, "task_added", &task, &backend, None, None, &RuntimeMode::Cli, &BackendInfo::Sqlite { db_file_path: "test.db".into() }).await;
+        fire_hooks(
+            &config,
+            "task_added",
+            &task,
+            &backend,
+            None,
+            None,
+            &RuntimeMode::Cli,
+            &BackendInfo::Sqlite {
+                db_file_path: "test.db".into(),
+            },
+        )
+        .await;
 
         std::thread::sleep(std::time::Duration::from_millis(200));
 
@@ -1716,7 +2139,10 @@ on_task_added = "echo added"
             std::env::set_var("SENKO_CLI_REMOTE_URL", "http://remote:3142");
             let mut config = Config::default();
             config.apply_env();
-            assert_eq!(config.cli.remote.url, Some("http://remote:3142".to_string()));
+            assert_eq!(
+                config.cli.remote.url,
+                Some("http://remote:3142".to_string())
+            );
             match orig {
                 Some(v) => std::env::set_var("SENKO_CLI_REMOTE_URL", v),
                 None => std::env::remove_var("SENKO_CLI_REMOTE_URL"),
@@ -1734,7 +2160,11 @@ on_task_added = "echo added"
             let mut config = Config::default();
             config.hooks.on_task_added.insert(
                 "toml-hook".to_string(),
-                HookEntry { command: "toml-hook".into(), enabled: true, requires_env: vec![] },
+                HookEntry {
+                    command: "toml-hook".into(),
+                    enabled: true,
+                    requires_env: vec![],
+                },
             );
             config.apply_env();
             assert_eq!(config.hooks.on_task_added.len(), 2);
@@ -1814,7 +2244,10 @@ auto_merge = false
         let result = load_config(tmp.path(), Some(&missing), &xdg);
         assert!(result.is_err());
         assert!(
-            result.unwrap_err().to_string().contains("config file not found"),
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("config file not found"),
             "should report missing config file"
         );
     }
@@ -1896,7 +2329,10 @@ auto_merge = false
             let result = load_config(tmp.path(), None, &xdg);
             assert!(result.is_err());
             assert!(
-                result.unwrap_err().to_string().contains("config file not found"),
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("config file not found"),
                 "should report missing config file from env var"
             );
             match orig {
@@ -1996,34 +2432,62 @@ dir = "/var/log/senko"
         let mut base_hooks = HooksConfig::default();
         base_hooks.on_task_added.insert(
             "user-hook".to_string(),
-            HookEntry { command: "user-cmd".into(), enabled: true, requires_env: vec![] },
+            HookEntry {
+                command: "user-cmd".into(),
+                enabled: true,
+                requires_env: vec![],
+            },
         );
         base_hooks.on_task_completed.insert(
             "shared".to_string(),
-            HookEntry { command: "user-completed".into(), enabled: true, requires_env: vec![] },
+            HookEntry {
+                command: "user-completed".into(),
+                enabled: true,
+                requires_env: vec![],
+            },
         );
 
         let mut overlay_hooks = HooksConfig::default();
         overlay_hooks.on_task_added.insert(
             "project-hook".to_string(),
-            HookEntry { command: "project-cmd".into(), enabled: true, requires_env: vec![] },
+            HookEntry {
+                command: "project-cmd".into(),
+                enabled: true,
+                requires_env: vec![],
+            },
         );
         // Override the shared hook
         overlay_hooks.on_task_completed.insert(
             "shared".to_string(),
-            HookEntry { command: "project-completed".into(), enabled: true, requires_env: vec![] },
+            HookEntry {
+                command: "project-completed".into(),
+                enabled: true,
+                requires_env: vec![],
+            },
         );
 
-        let base = RawConfig { hooks: base_hooks, ..Default::default() };
-        let overlay = RawConfig { hooks: overlay_hooks, ..Default::default() };
+        let base = RawConfig {
+            hooks: base_hooks,
+            ..Default::default()
+        };
+        let overlay = RawConfig {
+            hooks: overlay_hooks,
+            ..Default::default()
+        };
         let merged = base.merge(overlay).resolve();
 
         // Both hooks present for on_task_added
         assert_eq!(merged.hooks.on_task_added.len(), 2);
         assert_eq!(merged.hooks.on_task_added["user-hook"].command, "user-cmd");
-        assert_eq!(merged.hooks.on_task_added["project-hook"].command, "project-cmd");
+        assert_eq!(
+            merged.hooks.on_task_added["project-hook"].command,
+            "project-cmd"
+        );
         // Shared hook overridden by overlay
-        assert_eq!(merged.hooks.on_task_completed["shared"].command, "project-completed");
+        assert_eq!(
+            merged.hooks.on_task_completed["shared"].command,
+            "project-completed"
+        );
     }
 
     #[test]
@@ -2031,17 +2495,31 @@ dir = "/var/log/senko"
         let mut base_hooks = HooksConfig::default();
         base_hooks.on_task_added.insert(
             "notify".to_string(),
-            HookEntry { command: "notify-cmd".into(), enabled: true, requires_env: vec![] },
+            HookEntry {
+                command: "notify-cmd".into(),
+                enabled: true,
+                requires_env: vec![],
+            },
         );
 
         let mut overlay_hooks = HooksConfig::default();
         overlay_hooks.on_task_added.insert(
             "notify".to_string(),
-            HookEntry { command: "".into(), enabled: false, requires_env: vec![] },
+            HookEntry {
+                command: "".into(),
+                enabled: false,
+                requires_env: vec![],
+            },
         );
 
-        let base = RawConfig { hooks: base_hooks, ..Default::default() };
-        let overlay = RawConfig { hooks: overlay_hooks, ..Default::default() };
+        let base = RawConfig {
+            hooks: base_hooks,
+            ..Default::default()
+        };
+        let overlay = RawConfig {
+            hooks: overlay_hooks,
+            ..Default::default()
+        };
         let merged = base.merge(overlay).resolve();
 
         // Hook is in the map but disabled
@@ -2142,21 +2620,54 @@ command = "project-cmd"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, 1, "Test".into(), None, None, None,
-            crate::domain::task::Priority::P2, TaskStatus::Draft,
-            None, None,
-            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "Test".into(),
+            None,
+            None,
+            None,
+            crate::domain::task::Priority::P2,
+            TaskStatus::Draft,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
 
-        let json = serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await).unwrap();
-        execute_hook("exit 0", "task_added", "eid", "stdout-hook", Some(1), &json, Some(&log_target));
+        let json =
+            serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await)
+                .unwrap();
+        execute_hook(
+            "exit 0",
+            "task_added",
+            "eid",
+            "stdout-hook",
+            Some(1),
+            &json,
+            Some(&log_target),
+        );
 
         std::thread::sleep(std::time::Duration::from_millis(300));
 
         // In stdout mode, the file should NOT be created
-        assert!(!log_path.exists(), "log file should not exist in stdout mode");
+        assert!(
+            !log_path.exists(),
+            "log file should not exist in stdout mode"
+        );
     }
 
     #[tokio::test]
@@ -2170,22 +2681,53 @@ command = "project-cmd"
 
         let (_db_dir, backend) = setup_db();
         let task = Task::new(
-            1, 1, 1, "Test".into(), None, None, None,
-            crate::domain::task::Priority::P2, TaskStatus::Draft,
-            None, None,
-            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "Test".into(),
+            None,
+            None,
+            None,
+            crate::domain::task::Priority::P2,
+            TaskStatus::Draft,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
 
-        let json = serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await).unwrap();
-        execute_hook("exit 0", "task_added", "eid", "both-hook", Some(1), &json, Some(&log_target));
+        let json =
+            serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await)
+                .unwrap();
+        execute_hook(
+            "exit 0",
+            "task_added",
+            "eid",
+            "both-hook",
+            Some(1),
+            &json,
+            Some(&log_target),
+        );
 
         std::thread::sleep(std::time::Duration::from_millis(300));
 
         // In both mode, the file SHOULD be created
         let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        let line: serde_json::Value =
+            serde_json::from_str(content.lines().next().unwrap()).unwrap();
         assert_eq!(line["type"], "hook_ok");
     }
 
@@ -2214,7 +2756,8 @@ command = "project-cmd"
         write_hook_log(&target, &entry);
         assert!(log_path.exists(), "both mode should write to file");
         let content = std::fs::read_to_string(&log_path).unwrap();
-        let line: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        let line: serde_json::Value =
+            serde_json::from_str(content.lines().next().unwrap()).unwrap();
         assert_eq!(line["type"], "hook_ok");
     }
 }

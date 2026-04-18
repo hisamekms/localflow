@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::application::port::HookExecutor;
 use crate::application::HookTrigger;
 use crate::application::port::HookDataSource;
-use crate::infra::config::Config;
+use crate::application::port::HookExecutor;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
+use crate::infra::config::Config;
 
-use super::{fire_hooks, fire_no_eligible_task_hooks, RuntimeMode, BackendInfo};
+use super::{BackendInfo, RuntimeMode, fire_hooks, fire_no_eligible_task_hooks};
 
 /// Shell-based hook executor that spawns hook commands as child processes.
 /// Respects the `should_fire` flag to control whether hooks actually execute.
@@ -57,16 +57,26 @@ impl HookExecutor for ShellHookExecutor {
             HookTrigger::Task(_) => {
                 let task = task.expect("task required for Task hook trigger");
                 fire_hooks(
-                    &self.config, event_name, task, self.backend.as_ref(),
-                    from_status, unblocked,
-                    &self.runtime_mode, &self.backend_info,
-                ).await;
+                    &self.config,
+                    event_name,
+                    task,
+                    self.backend.as_ref(),
+                    from_status,
+                    unblocked,
+                    &self.runtime_mode,
+                    &self.backend_info,
+                )
+                .await;
             }
             HookTrigger::NoEligibleTask { project_id } => {
                 fire_no_eligible_task_hooks(
-                    &self.config, self.backend.as_ref(), *project_id,
-                    &self.runtime_mode, &self.backend_info,
-                ).await;
+                    &self.config,
+                    self.backend.as_ref(),
+                    *project_id,
+                    &self.runtime_mode,
+                    &self.backend_info,
+                )
+                .await;
             }
         }
     }

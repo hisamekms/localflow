@@ -9,10 +9,10 @@ use subtle::ConstantTimeEq;
 use tokio::sync::{OnceCell, RwLock};
 use zeroize::Zeroizing;
 
-use crate::application::port::auth::{AuthError, AuthProvider};
 use crate::application::port::TaskBackend;
+use crate::application::port::auth::{AuthError, AuthProvider};
 use crate::domain::duration::parse_duration;
-use crate::domain::user::{hash_api_key, CreateUserParams};
+use crate::domain::user::{CreateUserParams, hash_api_key};
 use crate::infra::config::SessionConfig;
 
 fn constant_time_key_eq(a: &str, b: &str) -> bool {
@@ -28,7 +28,11 @@ pub struct ApiKeyProvider {
 }
 
 impl ApiKeyProvider {
-    pub fn new(backend: Arc<dyn TaskBackend>, master_api_key: Option<String>, session_config: SessionConfig) -> Self {
+    pub fn new(
+        backend: Arc<dyn TaskBackend>,
+        master_api_key: Option<String>,
+        session_config: SessionConfig,
+    ) -> Self {
         Self {
             backend,
             master_api_key: master_api_key.map(Zeroizing::new),
@@ -39,7 +43,10 @@ impl ApiKeyProvider {
 
 #[async_trait]
 impl AuthProvider for ApiKeyProvider {
-    async fn authenticate(&self, token: &str) -> std::result::Result<crate::domain::user::User, AuthError> {
+    async fn authenticate(
+        &self,
+        token: &str,
+    ) -> std::result::Result<crate::domain::user::User, AuthError> {
         if let Some(ref master_key) = self.master_api_key
             && constant_time_key_eq(token, master_key)
         {
@@ -54,36 +61,34 @@ impl AuthProvider for ApiKeyProvider {
         }
 
         let key_hash = hash_api_key(token);
-        let auth_result = self.backend
+        let auth_result = self
+            .backend
             .get_user_by_api_key(&key_hash)
             .await
             .map_err(|_| AuthError::InvalidToken)?;
 
         // Check absolute TTL
-        if let Some(ref ttl_str) = self.session_config.ttl {
-            if let Ok(ttl) = parse_duration(ttl_str) {
-                if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&auth_result.key_created_at) {
-                    let elapsed = chrono::Utc::now().signed_duration_since(created);
-                    if elapsed > chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::MAX) {
-                        tracing::debug!(key_created_at = %auth_result.key_created_at, "API key expired (TTL)");
-                        return Err(AuthError::InvalidToken);
-                    }
-                }
+        if let Some(ref ttl_str) = self.session_config.ttl
+            && let Ok(ttl) = parse_duration(ttl_str)
+            && let Ok(created) = chrono::DateTime::parse_from_rfc3339(&auth_result.key_created_at)
+        {
+            let elapsed = chrono::Utc::now().signed_duration_since(created);
+            if elapsed > chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::MAX) {
+                tracing::debug!(key_created_at = %auth_result.key_created_at, "API key expired (TTL)");
+                return Err(AuthError::InvalidToken);
             }
         }
 
         // Check inactive TTL
-        if let Some(ref inactive_ttl_str) = self.session_config.inactive_ttl {
-            if let Ok(inactive_ttl) = parse_duration(inactive_ttl_str) {
-                if let Some(ref last_used) = auth_result.key_last_used_at {
-                    if let Ok(last) = chrono::DateTime::parse_from_rfc3339(last_used) {
-                        let elapsed = chrono::Utc::now().signed_duration_since(last);
-                        if elapsed > chrono::Duration::from_std(inactive_ttl).unwrap_or(chrono::Duration::MAX) {
-                            tracing::debug!(last_used_at = %last_used, "API key expired (inactive TTL)");
-                            return Err(AuthError::InvalidToken);
-                        }
-                    }
-                }
+        if let Some(ref inactive_ttl_str) = self.session_config.inactive_ttl
+            && let Ok(inactive_ttl) = parse_duration(inactive_ttl_str)
+            && let Some(ref last_used) = auth_result.key_last_used_at
+            && let Ok(last) = chrono::DateTime::parse_from_rfc3339(last_used)
+        {
+            let elapsed = chrono::Utc::now().signed_duration_since(last);
+            if elapsed > chrono::Duration::from_std(inactive_ttl).unwrap_or(chrono::Duration::MAX) {
+                tracing::debug!(last_used_at = %last_used, "API key expired (inactive TTL)");
+                return Err(AuthError::InvalidToken);
             }
         }
 
@@ -270,21 +275,19 @@ impl JwtAuthProvider {
             jwks.keys.first().ok_or(AuthError::InvalidToken)?
         };
 
-        let decoding_key =
-            jsonwebtoken::DecodingKey::from_jwk(jwk).map_err(|e| {
-                tracing::warn!(error = %e, "failed to create decoding key from JWK");
-                AuthError::InvalidToken
-            })?;
+        let decoding_key = jsonwebtoken::DecodingKey::from_jwk(jwk).map_err(|e| {
+            tracing::warn!(error = %e, "failed to create decoding key from JWK");
+            AuthError::InvalidToken
+        })?;
 
         let mut validation = jsonwebtoken::Validation::new(algorithm);
         validation.set_issuer(&[&self.issuer_url]);
         validation.set_audience(&[&self.client_id]);
 
-        jsonwebtoken::decode::<serde_json::Value>(token, &decoding_key, &validation)
-            .map_err(|e| {
-                tracing::debug!(error = %e, "JWT validation failed");
-                AuthError::InvalidToken
-            })
+        jsonwebtoken::decode::<serde_json::Value>(token, &decoding_key, &validation).map_err(|e| {
+            tracing::debug!(error = %e, "JWT validation failed");
+            AuthError::InvalidToken
+        })
     }
 }
 
@@ -310,7 +313,10 @@ impl AuthProvider for JwtAuthProvider {
                     }
                 }
                 Some(serde_json::Value::Array(arr)) => {
-                    if !arr.iter().any(|v| v.as_str() == Some(expected_value.as_str())) {
+                    if !arr
+                        .iter()
+                        .any(|v| v.as_str() == Some(expected_value.as_str()))
+                    {
                         tracing::debug!(claim = %claim_name, expected = %expected_value, "required claim value not found in array");
                         return Err(AuthError::InvalidToken);
                     }
@@ -354,8 +360,16 @@ impl AuthProvider for JwtAuthProvider {
         match self.backend.get_user_by_sub(sub).await {
             Ok(user) => Ok(user),
             Err(_) => {
-                let display_name = token_data.claims.get("name").and_then(|v| v.as_str()).map(String::from);
-                let email = token_data.claims.get("email").and_then(|v| v.as_str()).map(String::from);
+                let display_name = token_data
+                    .claims
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let email = token_data
+                    .claims
+                    .get("email")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
                 tracing::info!(sub = %sub, username = %username, "auto-provisioning user from OIDC claims");
                 self.backend
                     .create_user(&CreateUserParams {
@@ -444,7 +458,8 @@ impl TrustedHeadersAuthProvider {
             .map(String::from);
 
         // Username fallback: name_header -> email -> sub
-        let username = name_value.as_deref()
+        let username = name_value
+            .as_deref()
             .or(email.as_deref())
             .unwrap_or(sub)
             .to_string();
@@ -459,7 +474,12 @@ impl TrustedHeadersAuthProvider {
             .as_ref()
             .and_then(|h| headers.get(h.as_str()))
             .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
-            .map(|s| s.split(',').map(|g| g.trim().to_string()).filter(|g| !g.is_empty()).collect())
+            .map(|s| {
+                s.split(',')
+                    .map(|g| g.trim().to_string())
+                    .filter(|g| !g.is_empty())
+                    .collect()
+            })
             .unwrap_or_default();
 
         let scopes = self
@@ -467,7 +487,12 @@ impl TrustedHeadersAuthProvider {
             .as_ref()
             .and_then(|h| headers.get(h.as_str()))
             .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
-            .map(|s| s.split(',').map(|g| g.trim().to_string()).filter(|g| !g.is_empty()).collect())
+            .map(|s| {
+                s.split(',')
+                    .map(|g| g.trim().to_string())
+                    .filter(|g| !g.is_empty())
+                    .collect()
+            })
             .unwrap_or_default();
 
         let user = match self.backend.get_user_by_sub(sub).await {
@@ -489,7 +514,11 @@ impl TrustedHeadersAuthProvider {
             }
         };
 
-        Ok(TrustedHeadersAuthResult { user, groups, scopes })
+        Ok(TrustedHeadersAuthResult {
+            user,
+            groups,
+            scopes,
+        })
     }
 }
 
@@ -522,8 +551,11 @@ mod tests {
     #[tokio::test]
     async fn master_key_match() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
-        let provider =
-            ApiKeyProvider::new(backend, Some("master-secret".to_string()), SessionConfig::default());
+        let provider = ApiKeyProvider::new(
+            backend,
+            Some("master-secret".to_string()),
+            SessionConfig::default(),
+        );
 
         let user = provider.authenticate("master-secret").await.unwrap();
 
@@ -534,8 +566,11 @@ mod tests {
     #[tokio::test]
     async fn master_key_mismatch_valid_user_key() {
         let (backend, raw_key) = setup_backend_with_api_key().await;
-        let provider =
-            ApiKeyProvider::new(backend, Some("master-secret".to_string()), SessionConfig::default());
+        let provider = ApiKeyProvider::new(
+            backend,
+            Some("master-secret".to_string()),
+            SessionConfig::default(),
+        );
 
         let user = provider.authenticate(&raw_key).await.unwrap();
 
@@ -545,8 +580,11 @@ mod tests {
     #[tokio::test]
     async fn master_key_mismatch_invalid() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
-        let provider =
-            ApiKeyProvider::new(backend, Some("master-secret".to_string()), SessionConfig::default());
+        let provider = ApiKeyProvider::new(
+            backend,
+            Some("master-secret".to_string()),
+            SessionConfig::default(),
+        );
 
         let result = provider.authenticate("wrong-key").await;
 
@@ -751,9 +789,7 @@ mod tests {
     const TEST_JWK_E: &str = "AQAB";
 
     fn make_test_jwk() -> jsonwebtoken::jwk::Jwk {
-        use jsonwebtoken::jwk::{
-            CommonParameters, Jwk, KeyAlgorithm, RSAKeyParameters,
-        };
+        use jsonwebtoken::jwk::{CommonParameters, Jwk, KeyAlgorithm, RSAKeyParameters};
         Jwk {
             common: CommonParameters {
                 public_key_use: Some(jsonwebtoken::jwk::PublicKeyUse::Signature),
@@ -777,10 +813,7 @@ mod tests {
         jsonwebtoken::EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_KEY_PEM.as_bytes()).unwrap()
     }
 
-    fn make_jwt(
-        encoding_key: &jsonwebtoken::EncodingKey,
-        claims: &serde_json::Value,
-    ) -> String {
+    fn make_jwt(encoding_key: &jsonwebtoken::EncodingKey, claims: &serde_json::Value) -> String {
         let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
         header.kid = Some("test-kid".to_string());
         jsonwebtoken::encode(&header, claims, encoding_key).unwrap()

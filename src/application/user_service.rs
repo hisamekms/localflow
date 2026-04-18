@@ -3,8 +3,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::application::port::user_operations::UserOperations;
 use crate::application::port::TaskBackend;
+use crate::application::port::user_operations::UserOperations;
 use crate::domain::duration::parse_duration;
 use crate::domain::user::{
     ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, UpdateUserParams, User,
@@ -63,7 +63,9 @@ impl UserOperations for UserService {
         device_name: Option<&str>,
     ) -> Result<ApiKeyWithSecret> {
         let new_key = NewApiKey::generate();
-        self.backend.create_api_key(user_id, name, device_name, &new_key).await
+        self.backend
+            .create_api_key(user_id, name, device_name, &new_key)
+            .await
     }
 
     async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
@@ -120,7 +122,9 @@ impl UserOperations for UserService {
         }
 
         let new_key = NewApiKey::generate();
-        self.backend.create_api_key(user_id, "", device_name, &new_key).await
+        self.backend
+            .create_api_key(user_id, "", device_name, &new_key)
+            .await
     }
 
     /// List active (non-expired) sessions for a user.
@@ -156,28 +160,25 @@ pub fn is_key_expired(
     now: chrono::DateTime<chrono::Utc>,
 ) -> bool {
     // Check absolute TTL
-    if let Some(ref ttl_str) = session_config.ttl {
-        if let Ok(ttl) = parse_duration(ttl_str) {
-            if let Ok(created) = chrono::DateTime::parse_from_rfc3339(key.created_at()) {
-                let elapsed = now.signed_duration_since(created);
-                if elapsed > chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::MAX) {
-                    return true;
-                }
-            }
+    if let Some(ref ttl_str) = session_config.ttl
+        && let Ok(ttl) = parse_duration(ttl_str)
+        && let Ok(created) = chrono::DateTime::parse_from_rfc3339(key.created_at())
+    {
+        let elapsed = now.signed_duration_since(created);
+        if elapsed > chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::MAX) {
+            return true;
         }
     }
 
     // Check inactive TTL
-    if let Some(ref inactive_ttl_str) = session_config.inactive_ttl {
-        if let Ok(inactive_ttl) = parse_duration(inactive_ttl_str) {
-            if let Some(last_used) = key.last_used_at() {
-                if let Ok(last) = chrono::DateTime::parse_from_rfc3339(last_used) {
-                    let elapsed = now.signed_duration_since(last);
-                    if elapsed > chrono::Duration::from_std(inactive_ttl).unwrap_or(chrono::Duration::MAX) {
-                        return true;
-                    }
-                }
-            }
+    if let Some(ref inactive_ttl_str) = session_config.inactive_ttl
+        && let Ok(inactive_ttl) = parse_duration(inactive_ttl_str)
+        && let Some(last_used) = key.last_used_at()
+        && let Ok(last) = chrono::DateTime::parse_from_rfc3339(last_used)
+    {
+        let elapsed = now.signed_duration_since(last);
+        if elapsed > chrono::Duration::from_std(inactive_ttl).unwrap_or(chrono::Duration::MAX) {
+            return true;
         }
     }
 

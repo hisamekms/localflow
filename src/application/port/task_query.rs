@@ -11,7 +11,12 @@ use crate::domain::task::{ListTasksFilter, Task};
 #[async_trait]
 pub trait TaskQueryPort: Send + Sync {
     async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>>;
-    async fn next_task(&self, project_id: i64, user_id: Option<i64>, include_unassigned: bool) -> Result<Option<Task>>;
+    async fn next_task(
+        &self,
+        project_id: i64,
+        user_id: Option<i64>,
+        include_unassigned: bool,
+    ) -> Result<Option<Task>>;
     async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>>;
     async fn ready_count(&self, project_id: i64) -> Result<i64>;
     async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>>;

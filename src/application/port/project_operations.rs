@@ -38,11 +38,7 @@ pub trait ProjectOperations: Send + Sync {
         user_id: i64,
         caller_user_id: Option<i64>,
     ) -> Result<()>;
-    async fn get_project_member(
-        &self,
-        project_id: i64,
-        user_id: i64,
-    ) -> Result<ProjectMember>;
+    async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember>;
     async fn update_member_role(
         &self,
         project_id: i64,

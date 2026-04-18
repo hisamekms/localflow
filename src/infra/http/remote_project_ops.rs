@@ -142,11 +142,7 @@ impl ProjectOperations for RemoteProjectOperations {
         check_success(resp).await
     }
 
-    async fn get_project_member(
-        &self,
-        project_id: i64,
-        user_id: i64,
-    ) -> Result<ProjectMember> {
+    async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember> {
         let resp = self
             .auth(
                 self.client()

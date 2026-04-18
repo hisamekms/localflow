@@ -2,8 +2,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 
-use crate::domain::task::{MetadataUpdate, Task};
 use crate::domain::TaskRepository;
+use crate::domain::task::{MetadataUpdate, Task};
 
 /// Port for task state transitions.
 ///
@@ -21,18 +21,8 @@ pub trait TaskTransitionPort: Send + Sync {
         user_id: Option<i64>,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task>;
-    async fn complete_task(
-        &self,
-        project_id: i64,
-        id: i64,
-        skip_pr_check: bool,
-    ) -> Result<Task>;
-    async fn cancel_task(
-        &self,
-        project_id: i64,
-        id: i64,
-        reason: Option<String>,
-    ) -> Result<Task>;
+    async fn complete_task(&self, project_id: i64, id: i64, skip_pr_check: bool) -> Result<Task>;
+    async fn cancel_task(&self, project_id: i64, id: i64, reason: Option<String>) -> Result<Task>;
 }
 
 fn now_rfc3339() -> String {
@@ -92,8 +82,13 @@ macro_rules! impl_task_transition_default {
     ($ty:ty) => {
         #[async_trait::async_trait]
         impl $crate::application::port::task_transition::TaskTransitionPort for $ty {
-            async fn ready_task(&self, project_id: i64, id: i64) -> anyhow::Result<$crate::domain::task::Task> {
-                $crate::application::port::task_transition::default_ready_task(self, project_id, id).await
+            async fn ready_task(
+                &self,
+                project_id: i64,
+                id: i64,
+            ) -> anyhow::Result<$crate::domain::task::Task> {
+                $crate::application::port::task_transition::default_ready_task(self, project_id, id)
+                    .await
             }
             async fn start_task(
                 &self,
@@ -103,7 +98,10 @@ macro_rules! impl_task_transition_default {
                 user_id: Option<i64>,
                 metadata: Option<$crate::domain::task::MetadataUpdate>,
             ) -> anyhow::Result<$crate::domain::task::Task> {
-                $crate::application::port::task_transition::default_start_task(self, project_id, id, session_id, user_id, metadata).await
+                $crate::application::port::task_transition::default_start_task(
+                    self, project_id, id, session_id, user_id, metadata,
+                )
+                .await
             }
             async fn complete_task(
                 &self,
@@ -111,7 +109,10 @@ macro_rules! impl_task_transition_default {
                 id: i64,
                 _skip_pr_check: bool,
             ) -> anyhow::Result<$crate::domain::task::Task> {
-                $crate::application::port::task_transition::default_complete_task(self, project_id, id).await
+                $crate::application::port::task_transition::default_complete_task(
+                    self, project_id, id,
+                )
+                .await
             }
             async fn cancel_task(
                 &self,
@@ -119,7 +120,10 @@ macro_rules! impl_task_transition_default {
                 id: i64,
                 reason: Option<String>,
             ) -> anyhow::Result<$crate::domain::task::Task> {
-                $crate::application::port::task_transition::default_cancel_task(self, project_id, id, reason).await
+                $crate::application::port::task_transition::default_cancel_task(
+                    self, project_id, id, reason,
+                )
+                .await
             }
         }
     };

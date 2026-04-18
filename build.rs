@@ -43,7 +43,11 @@ fn main() {
     // INSTALLABLE_FILES array
     code.push_str("pub const INSTALLABLE_FILES: &[InstallableFile] = &[\n");
     for entry in &entries {
-        let segments: Vec<String> = entry.segments.iter().map(|s| format!("\"{}\"", s)).collect();
+        let segments: Vec<String> = entry
+            .segments
+            .iter()
+            .map(|s| format!("\"{}\"", s))
+            .collect();
         code.push_str(&format!(
             "    InstallableFile {{ segments: &[{}], content: {} }},\n",
             segments.join(", "),
@@ -93,9 +97,7 @@ fn scan_dir(base: &Path, dir: &Path, entries: &mut Vec<SkillEntry>) {
             // Const name: SKILLS_SENKO_ + relative path parts joined by _
             let const_name = format!(
                 "SKILLS_SENKO_{}",
-                relative_str
-                    .replace(['/', '-', '.'], "_")
-                    .to_uppercase()
+                relative_str.replace(['/', '-', '.'], "_").to_uppercase()
             );
 
             entries.push(SkillEntry {

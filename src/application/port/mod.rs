@@ -31,10 +31,42 @@ pub use user_operations::UserOperations;
 pub use user_query::UserQueryPort;
 
 use crate::domain::contract::ContractRepository;
-use crate::domain::{ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::{
+    ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository,
+    TaskRepository, UserRepository,
+};
 
 /// Combined trait for backends that implement all repository traits, query ports, and TaskTransitionPort.
 /// Backends automatically implement TaskBackend via the blanket impl.
-pub trait TaskBackend: TaskRepository + ContractRepository + ProjectRepository + ProjectMemberRepository + UserRepository + ApiKeyRepository + MetadataFieldRepository + AuthenticationPort + TaskQueryPort + TaskTransitionPort + ProjectQueryPort + UserQueryPort {}
+pub trait TaskBackend:
+    TaskRepository
+    + ContractRepository
+    + ProjectRepository
+    + ProjectMemberRepository
+    + UserRepository
+    + ApiKeyRepository
+    + MetadataFieldRepository
+    + AuthenticationPort
+    + TaskQueryPort
+    + TaskTransitionPort
+    + ProjectQueryPort
+    + UserQueryPort
+{
+}
 
-impl<T: TaskRepository + ContractRepository + ProjectRepository + ProjectMemberRepository + UserRepository + ApiKeyRepository + MetadataFieldRepository + AuthenticationPort + TaskQueryPort + TaskTransitionPort + ProjectQueryPort + UserQueryPort> TaskBackend for T {}
+impl<
+    T: TaskRepository
+        + ContractRepository
+        + ProjectRepository
+        + ProjectMemberRepository
+        + UserRepository
+        + ApiKeyRepository
+        + MetadataFieldRepository
+        + AuthenticationPort
+        + TaskQueryPort
+        + TaskTransitionPort
+        + ProjectQueryPort
+        + UserQueryPort,
+> TaskBackend for T
+{
+}

@@ -36,7 +36,10 @@ impl FromStr for Role {
             "owner" => Ok(Role::Owner),
             "member" => Ok(Role::Member),
             "viewer" => Ok(Role::Viewer),
-            _ => Err(DomainError::InvalidRole { value: s.to_string() }.into()),
+            _ => Err(DomainError::InvalidRole {
+                value: s.to_string(),
+            }
+            .into()),
         }
     }
 }
@@ -53,8 +56,22 @@ pub struct User {
 }
 
 impl User {
-    pub fn new(id: i64, username: String, sub: String, display_name: Option<String>, email: Option<String>, created_at: String) -> Self {
-        Self { id, username, sub, display_name, email, created_at }
+    pub fn new(
+        id: i64,
+        username: String,
+        sub: String,
+        display_name: Option<String>,
+        email: Option<String>,
+        created_at: String,
+    ) -> Self {
+        Self {
+            id,
+            username,
+            sub,
+            display_name,
+            email,
+            created_at,
+        }
     }
 
     pub fn id(&self) -> i64 {
@@ -117,7 +134,13 @@ pub struct ProjectMember {
 
 impl ProjectMember {
     pub fn new(id: i64, project_id: i64, user_id: i64, role: Role, created_at: String) -> Self {
-        Self { id, project_id, user_id, role, created_at }
+        Self {
+            id,
+            project_id,
+            user_id,
+            role,
+            created_at,
+        }
     }
 
     pub fn id(&self) -> i64 {
@@ -170,8 +193,24 @@ pub struct ApiKey {
 }
 
 impl ApiKey {
-    pub fn new(id: i64, user_id: i64, key_prefix: String, name: String, device_name: Option<String>, created_at: String, last_used_at: Option<String>) -> Self {
-        Self { id, user_id, key_prefix, name, device_name, created_at, last_used_at }
+    pub fn new(
+        id: i64,
+        user_id: i64,
+        key_prefix: String,
+        name: String,
+        device_name: Option<String>,
+        created_at: String,
+        last_used_at: Option<String>,
+    ) -> Self {
+        Self {
+            id,
+            user_id,
+            key_prefix,
+            name,
+            device_name,
+            created_at,
+            last_used_at,
+        }
     }
 
     pub fn id(&self) -> i64 {
@@ -215,8 +254,24 @@ pub struct ApiKeyWithSecret {
 }
 
 impl ApiKeyWithSecret {
-    pub fn new(id: i64, user_id: i64, key: String, key_prefix: String, name: String, device_name: Option<String>, created_at: String) -> Self {
-        Self { id, user_id, key, key_prefix, name, device_name, created_at }
+    pub fn new(
+        id: i64,
+        user_id: i64,
+        key: String,
+        key_prefix: String,
+        name: String,
+        device_name: Option<String>,
+        created_at: String,
+    ) -> Self {
+        Self {
+            id,
+            user_id,
+            key,
+            key_prefix,
+            name,
+            device_name,
+            created_at,
+        }
     }
 
     pub fn id(&self) -> i64 {
@@ -277,7 +332,11 @@ impl NewApiKey {
 pub fn hash_api_key(key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(key.as_bytes());
-    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
 }
 
 #[async_trait]
@@ -297,7 +356,13 @@ pub trait ApiKeyRepository: Send + Sync {
         true
     }
 
-    async fn create_api_key(&self, user_id: i64, name: &str, device_name: Option<&str>, new_key: &NewApiKey) -> Result<ApiKeyWithSecret>;
+    async fn create_api_key(
+        &self,
+        user_id: i64,
+        name: &str,
+        device_name: Option<&str>,
+        new_key: &NewApiKey,
+    ) -> Result<ApiKeyWithSecret>;
     async fn delete_api_key(&self, key_id: i64) -> Result<()>;
     async fn delete_api_key_for_user(&self, key_id: i64, user_id: i64) -> Result<()>;
     async fn delete_all_api_keys_for_user(&self, user_id: i64) -> Result<()>;

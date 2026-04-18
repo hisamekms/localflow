@@ -26,11 +26,9 @@ impl AwsSecretFetcher {
     async fn client(&self) -> Result<&Client> {
         self.client
             .get_or_try_init(|| async {
-                let mut config_loader =
-                    aws_config::defaults(aws_config::BehaviorVersion::latest());
+                let mut config_loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
                 if let Some(ref region) = self.region {
-                    config_loader =
-                        config_loader.region(aws_config::Region::new(region.clone()));
+                    config_loader = config_loader.region(aws_config::Region::new(region.clone()));
                 }
                 let sdk_config = config_loader.load().await;
                 Ok(Client::new(&sdk_config))
@@ -107,8 +105,8 @@ impl SecretsManagerClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct FakeSecretFetcher {
         secrets: Arc<RwLock<HashMap<String, String>>>,
@@ -151,9 +149,10 @@ mod tests {
 
     #[tokio::test]
     async fn cache_hit_fetcher_called_once() {
-        let (fetcher, call_count) = FakeSecretFetcher::new(HashMap::from([
-            ("arn:a".to_string(), "value-a".to_string()),
-        ]));
+        let (fetcher, call_count) = FakeSecretFetcher::new(HashMap::from([(
+            "arn:a".to_string(),
+            "value-a".to_string(),
+        )]));
         let client = SecretsManagerClient::with_fetcher(Box::new(fetcher));
 
         let v1 = client.get_secret("arn:a").await.unwrap();
@@ -188,8 +187,7 @@ mod tests {
     #[tokio::test]
     async fn cache_no_store_on_error() {
         let secrets = Arc::new(RwLock::new(HashMap::new()));
-        let (fetcher, call_count) =
-            FakeSecretFetcher::new_with_shared_secrets(secrets.clone());
+        let (fetcher, call_count) = FakeSecretFetcher::new_with_shared_secrets(secrets.clone());
         let client = SecretsManagerClient::with_fetcher(Box::new(fetcher));
 
         // First attempt: secret not found -> error

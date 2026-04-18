@@ -34,7 +34,11 @@ pub struct ContractNote {
 
 impl ContractNote {
     pub fn new(content: String, source_task_id: Option<i64>, created_at: String) -> Self {
-        Self { content, source_task_id, created_at }
+        Self {
+            content,
+            source_task_id,
+            created_at,
+        }
     }
 
     pub fn content(&self) -> &str {
@@ -149,8 +153,7 @@ impl Contract {
     /// Returns true when the contract has at least one DoD item and all items are checked.
     /// An empty DoD is not considered completed, because completion cannot be evaluated.
     pub fn is_completed(&self) -> bool {
-        !self.definition_of_done.is_empty()
-            && self.definition_of_done.iter().all(|d| d.checked())
+        !self.definition_of_done.is_empty() && self.definition_of_done.iter().all(|d| d.checked())
     }
 
     // --- Aggregate methods ---
@@ -232,8 +235,11 @@ impl Contract {
             changed = true;
         }
         if !params.remove_definition_of_done.is_empty() {
-            self.definition_of_done
-                .retain(|d| !params.remove_definition_of_done.contains(&d.content().to_string()));
+            self.definition_of_done.retain(|d| {
+                !params
+                    .remove_definition_of_done
+                    .contains(&d.content().to_string())
+            });
             changed = true;
         }
 
@@ -253,7 +259,11 @@ impl Contract {
     }
 
     /// Check a DoD item by 1-based index.
-    pub fn check_dod(mut self, index: usize, now: String) -> Result<(Contract, Vec<ContractEvent>)> {
+    pub fn check_dod(
+        mut self,
+        index: usize,
+        now: String,
+    ) -> Result<(Contract, Vec<ContractEvent>)> {
         if index == 0 || index > self.definition_of_done.len() {
             return Err(DomainError::DodIndexOutOfRange {
                 index,
@@ -269,7 +279,11 @@ impl Contract {
     }
 
     /// Uncheck a DoD item by 1-based index.
-    pub fn uncheck_dod(mut self, index: usize, now: String) -> Result<(Contract, Vec<ContractEvent>)> {
+    pub fn uncheck_dod(
+        mut self,
+        index: usize,
+        now: String,
+    ) -> Result<(Contract, Vec<ContractEvent>)> {
         if index == 0 || index > self.definition_of_done.len() {
             return Err(DomainError::DodIndexOutOfRange {
                 index,
@@ -329,7 +343,11 @@ impl UpdateContractParams {
         if let Some(ref title) = self.title {
             validate_string_length("title", title, MAX_TITLE_LEN)?;
         }
-        validate_optional_nullable_string_length("description", &self.description, MAX_LONG_TEXT_LEN)?;
+        validate_optional_nullable_string_length(
+            "description",
+            &self.description,
+            MAX_LONG_TEXT_LEN,
+        )?;
         if let Some(MetadataUpdate::Replace(ref value)) | Some(MetadataUpdate::Merge(ref value)) =
             self.metadata
         {
@@ -356,7 +374,12 @@ impl UpdateContractArrayParams {
         }
         validate_string_vec_items("add_tags", &self.add_tags, MAX_TAG_LEN, MAX_TAGS_COUNT)?;
         if let Some(ref dod) = self.set_definition_of_done {
-            validate_string_vec_items("set_definition_of_done", dod, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+            validate_string_vec_items(
+                "set_definition_of_done",
+                dod,
+                MAX_SHORT_TEXT_LEN,
+                MAX_ITEMS_COUNT,
+            )?;
         }
         validate_string_vec_items(
             "add_definition_of_done",
@@ -423,7 +446,11 @@ mod tests {
 
     #[test]
     fn contract_note_new_and_getters() {
-        let note = ContractNote::new("hello".to_string(), Some(42), "2026-01-02T00:00:00Z".to_string());
+        let note = ContractNote::new(
+            "hello".to_string(),
+            Some(42),
+            "2026-01-02T00:00:00Z".to_string(),
+        );
         assert_eq!(note.content(), "hello");
         assert_eq!(note.source_task_id(), Some(42));
         assert_eq!(note.created_at(), "2026-01-02T00:00:00Z");
@@ -431,13 +458,21 @@ mod tests {
 
     #[test]
     fn contract_note_validate_ok() {
-        let note = ContractNote::new("short".to_string(), None, "2026-01-01T00:00:00Z".to_string());
+        let note = ContractNote::new(
+            "short".to_string(),
+            None,
+            "2026-01-01T00:00:00Z".to_string(),
+        );
         assert!(note.validate().is_ok());
     }
 
     #[test]
     fn contract_note_validate_too_long() {
-        let note = ContractNote::new("x".repeat(MAX_LONG_TEXT_LEN + 1), None, "2026-01-01T00:00:00Z".to_string());
+        let note = ContractNote::new(
+            "x".repeat(MAX_LONG_TEXT_LEN + 1),
+            None,
+            "2026-01-01T00:00:00Z".to_string(),
+        );
         assert!(note.validate().is_err());
     }
 
@@ -505,7 +540,9 @@ mod tests {
     #[test]
     fn uncheck_dod_valid_index() {
         let c = make_contract(vec![DodItem::new("a".to_string(), true)]);
-        let (c, events) = c.uncheck_dod(1, "2026-01-02T00:00:00Z".to_string()).unwrap();
+        let (c, events) = c
+            .uncheck_dod(1, "2026-01-02T00:00:00Z".to_string())
+            .unwrap();
         assert_eq!(events, vec![ContractEvent::DodUnchecked { index: 1 }]);
         assert!(!c.definition_of_done()[0].checked());
     }
@@ -515,7 +552,11 @@ mod tests {
     #[test]
     fn add_note_appends_and_updates_timestamp() {
         let c = make_contract(vec![]);
-        let note = ContractNote::new("n".to_string(), Some(10), "2026-01-02T00:00:00Z".to_string());
+        let note = ContractNote::new(
+            "n".to_string(),
+            Some(10),
+            "2026-01-02T00:00:00Z".to_string(),
+        );
         let (c, events) = c.add_note(note.clone(), "2026-01-02T00:00:00Z".to_string());
         assert_eq!(events, vec![ContractEvent::NoteAdded]);
         assert_eq!(c.notes().len(), 1);
@@ -569,7 +610,10 @@ mod tests {
         };
         let (c, events) = c.update(&params, "2026-01-02T00:00:00Z".to_string());
         assert_eq!(events, vec![ContractEvent::Updated]);
-        assert_eq!(c.metadata(), Some(&serde_json::json!({"a": 1, "b": 3, "c": 4})));
+        assert_eq!(
+            c.metadata(),
+            Some(&serde_json::json!({"a": 1, "b": 3, "c": 4}))
+        );
     }
 
     // --- apply_array_update ---

@@ -2,9 +2,12 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
+use sqlx::postgres::{PgPool, PgPoolOptions};
 
+use crate::application::port::{
+    AuthenticationPort, ProjectQueryPort, TaskQueryPort, UserQueryPort,
+};
 use crate::domain::contract::{
     Contract, ContractNote, ContractRepository, CreateContractParams, UpdateContractArrayParams,
     UpdateContractParams,
@@ -14,8 +17,6 @@ use crate::domain::metadata_field::{
     CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
 };
 use crate::domain::project::{CreateProjectParams, Project};
-use crate::application::port::{AuthenticationPort, ProjectQueryPort, TaskQueryPort, UserQueryPort};
-use crate::domain::{ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
     self, CreateTaskParams, DodItem, ListTasksFilter, MetadataUpdate, Priority, Task, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams, shallow_merge_metadata,
@@ -23,6 +24,10 @@ use crate::domain::task::{
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
     Role, UpdateUserParams, User,
+};
+use crate::domain::{
+    ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository,
+    TaskRepository, UserRepository,
 };
 
 pub struct PostgresBackend {
@@ -130,26 +135,21 @@ async fn run_migrations(pool: &PgPool) -> Result<()> {
             for statement in m.sql.split(';') {
                 let trimmed = statement.trim();
                 if !trimmed.is_empty() {
-                    sqlx::query(trimmed)
-                        .execute(pool)
-                        .await
-                        .with_context(|| {
-                            format!(
-                                "migration v{} ({}) failed: {}",
-                                m.version,
-                                m.description,
-                                &trimmed[..trimmed.len().min(80)]
-                            )
-                        })?;
+                    sqlx::query(trimmed).execute(pool).await.with_context(|| {
+                        format!(
+                            "migration v{} ({}) failed: {}",
+                            m.version,
+                            m.description,
+                            &trimmed[..trimmed.len().min(80)]
+                        )
+                    })?;
                 }
             }
-            sqlx::query(
-                "INSERT INTO _sqlx_migrations (version, description) VALUES ($1, $2)",
-            )
-            .bind(m.version)
-            .bind(m.description)
-            .execute(pool)
-            .await?;
+            sqlx::query("INSERT INTO _sqlx_migrations (version, description) VALUES ($1, $2)")
+                .bind(m.version)
+                .bind(m.description)
+                .execute(pool)
+                .await?;
         }
     }
 
@@ -209,14 +209,13 @@ async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
             .map(|r| r.get("content"))
             .collect();
 
-    let tags: Vec<String> =
-        sqlx::query("SELECT tag FROM task_tags WHERE task_id = $1 ORDER BY id")
-            .bind(id)
-            .fetch_all(pool)
-            .await?
-            .into_iter()
-            .map(|r| r.get("tag"))
-            .collect();
+    let tags: Vec<String> = sqlx::query("SELECT tag FROM task_tags WHERE task_id = $1 ORDER BY id")
+        .bind(id)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|r| r.get("tag"))
+        .collect();
 
     // Fetch dependency task_numbers (not internal IDs)
     let dependencies: Vec<i64> = sqlx::query(
@@ -316,12 +315,11 @@ impl ProjectRepository for PostgresBackend {
 
     async fn get_project_by_name(&self, name: &str) -> Result<Project> {
         let pool = self.pool().await?;
-        let row =
-            sqlx::query("SELECT id, description, created_at FROM projects WHERE name = $1")
-                .bind(name)
-                .fetch_optional(pool)
-                .await?
-                .ok_or(DomainError::ProjectNotFound)?;
+        let row = sqlx::query("SELECT id, description, created_at FROM projects WHERE name = $1")
+            .bind(name)
+            .fetch_optional(pool)
+            .await?
+            .ok_or(DomainError::ProjectNotFound)?;
         Ok(Project::new(
             row.get("id"),
             name.to_string(),
@@ -370,17 +368,14 @@ impl ProjectMemberRepository for PostgresBackend {
 
     async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()> {
         let pool = self.pool().await?;
-        let result = sqlx::query(
-            "DELETE FROM project_members WHERE project_id = $1 AND user_id = $2",
-        )
-        .bind(project_id)
-        .bind(user_id)
-        .execute(pool)
-        .await?;
+        let result =
+            sqlx::query("DELETE FROM project_members WHERE project_id = $1 AND user_id = $2")
+                .bind(project_id)
+                .bind(user_id)
+                .execute(pool)
+                .await?;
         if result.rows_affected() == 0 {
-            anyhow::bail!(
-                "project member not found: project_id={project_id}, user_id={user_id}"
-            );
+            anyhow::bail!("project member not found: project_id={project_id}, user_id={user_id}");
         }
         Ok(())
     }
@@ -447,9 +442,7 @@ impl ProjectMemberRepository for PostgresBackend {
         .execute(pool)
         .await?;
         if result.rows_affected() == 0 {
-            anyhow::bail!(
-                "project member not found: project_id={project_id}, user_id={user_id}"
-            );
+            anyhow::bail!("project member not found: project_id={project_id}, user_id={user_id}");
         }
         self.get_project_member(project_id, user_id).await
     }
@@ -598,22 +591,25 @@ impl UserRepository for PostgresBackend {
 
 #[async_trait]
 impl AuthenticationPort for PostgresBackend {
-    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<crate::application::port::ApiKeyAuthResult> {
+    async fn get_user_by_api_key(
+        &self,
+        key_hash: &str,
+    ) -> Result<crate::application::port::ApiKeyAuthResult> {
         let pool = self.pool().await?;
 
-        sqlx::query(
-            "UPDATE api_keys SET last_used_at = $2 WHERE key_hash = $1",
+        sqlx::query("UPDATE api_keys SET last_used_at = $2 WHERE key_hash = $1")
+            .bind(&key_hash)
+            .bind(now_utc())
+            .execute(pool)
+            .await?;
+
+        let row = sqlx::query(
+            "SELECT user_id, created_at, last_used_at FROM api_keys WHERE key_hash = $1",
         )
         .bind(&key_hash)
-        .bind(now_utc())
-        .execute(pool)
-        .await?;
-
-        let row = sqlx::query("SELECT user_id, created_at, last_used_at FROM api_keys WHERE key_hash = $1")
-            .bind(&key_hash)
-            .fetch_optional(pool)
-            .await?
-            .context("invalid api key")?;
+        .fetch_optional(pool)
+        .await?
+        .context("invalid api key")?;
         let user_id: i64 = row.get("user_id");
         let key_created_at: String = row.get("created_at");
         let key_last_used_at: Option<String> = row.get("last_used_at");
@@ -628,7 +624,13 @@ impl AuthenticationPort for PostgresBackend {
 
 #[async_trait]
 impl ApiKeyRepository for PostgresBackend {
-    async fn create_api_key(&self, user_id: i64, name: &str, device_name: Option<&str>, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
+    async fn create_api_key(
+        &self,
+        user_id: i64,
+        name: &str,
+        device_name: Option<&str>,
+        new_key: &NewApiKey,
+    ) -> Result<ApiKeyWithSecret> {
         let pool = self.pool().await?;
         // Verify user exists
         self.get_user(user_id).await?;
@@ -704,12 +706,14 @@ impl ProjectQueryPort for PostgresBackend {
                 .await?;
         Ok(rows
             .into_iter()
-            .map(|r| Project::new(
-                r.get("id"),
-                r.get("name"),
-                r.get("description"),
-                r.get("created_at"),
-            ))
+            .map(|r| {
+                Project::new(
+                    r.get("id"),
+                    r.get("name"),
+                    r.get("description"),
+                    r.get("created_at"),
+                )
+            })
             .collect())
     }
 }
@@ -718,20 +722,23 @@ impl ProjectQueryPort for PostgresBackend {
 impl UserQueryPort for PostgresBackend {
     async fn list_users(&self) -> Result<Vec<User>> {
         let pool = self.pool().await?;
-        let rows =
-            sqlx::query("SELECT id, username, sub, display_name, email, created_at FROM users ORDER BY id")
-                .fetch_all(pool)
-                .await?;
+        let rows = sqlx::query(
+            "SELECT id, username, sub, display_name, email, created_at FROM users ORDER BY id",
+        )
+        .fetch_all(pool)
+        .await?;
         Ok(rows
             .into_iter()
-            .map(|r| User::new(
-                r.get("id"),
-                r.get("username"),
-                r.get("sub"),
-                r.get("display_name"),
-                r.get("email"),
-                r.get("created_at"),
-            ))
+            .map(|r| {
+                User::new(
+                    r.get("id"),
+                    r.get("username"),
+                    r.get("sub"),
+                    r.get("display_name"),
+                    r.get("email"),
+                    r.get("created_at"),
+                )
+            })
             .collect())
     }
 
@@ -745,15 +752,17 @@ impl UserQueryPort for PostgresBackend {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|r| ApiKey::new(
-                r.get("id"),
-                r.get("user_id"),
-                r.get("key_prefix"),
-                r.get("name"),
-                r.get("device_name"),
-                r.get("created_at"),
-                r.get("last_used_at"),
-            ))
+            .map(|r| {
+                ApiKey::new(
+                    r.get("id"),
+                    r.get("user_id"),
+                    r.get("key_prefix"),
+                    r.get("name"),
+                    r.get("device_name"),
+                    r.get("created_at"),
+                    r.get("last_used_at"),
+                )
+            })
             .collect())
     }
 }
@@ -810,13 +819,11 @@ impl TaskRepository for PostgresBackend {
         }
 
         for item in &params.definition_of_done {
-            sqlx::query(
-                "INSERT INTO task_definition_of_done (task_id, content) VALUES ($1, $2)",
-            )
-            .bind(task_id)
-            .bind(item)
-            .execute(&mut *tx)
-            .await?;
+            sqlx::query("INSERT INTO task_definition_of_done (task_id, content) VALUES ($1, $2)")
+                .bind(task_id)
+                .bind(item)
+                .execute(&mut *tx)
+                .await?;
         }
         for item in &params.in_scope {
             sqlx::query("INSERT INTO task_in_scope (task_id, content) VALUES ($1, $2)")
@@ -840,7 +847,8 @@ impl TaskRepository for PostgresBackend {
                 .await?;
         }
         for &dep_task_number in &params.dependencies {
-            let dep_internal_id = resolve_task_number(&mut *tx, project_id, dep_task_number).await?;
+            let dep_internal_id =
+                resolve_task_number(&mut *tx, project_id, dep_task_number).await?;
             sqlx::query(
                 "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2)",
             )
@@ -912,14 +920,12 @@ impl TaskRepository for PostgresBackend {
                 .await?;
         }
         if let Some(ref assignee) = params.assignee_session_id {
-            sqlx::query(
-                "UPDATE tasks SET assignee_session_id = $1, updated_at = $2 WHERE id = $3",
-            )
-            .bind(assignee)
-            .bind(now_utc())
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+            sqlx::query("UPDATE tasks SET assignee_session_id = $1, updated_at = $2 WHERE id = $3")
+                .bind(assignee)
+                .bind(now_utc())
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
         }
         if let Some(ref assignee_user_id) = params.assignee_user_id {
             sqlx::query("UPDATE tasks SET assignee_user_id = $1, updated_at = $2 WHERE id = $3")
@@ -990,10 +996,11 @@ impl TaskRepository for PostgresBackend {
                 MetadataUpdate::Clear => None,
                 MetadataUpdate::Replace(v) => Some(v.clone()),
                 MetadataUpdate::Merge(patch) => {
-                    let existing_str: Option<String> = sqlx::query_scalar("SELECT metadata FROM tasks WHERE id = $1")
-                        .bind(id)
-                        .fetch_one(&mut *tx)
-                        .await?;
+                    let existing_str: Option<String> =
+                        sqlx::query_scalar("SELECT metadata FROM tasks WHERE id = $1")
+                            .bind(id)
+                            .fetch_one(&mut *tx)
+                            .await?;
                     let existing: Option<serde_json::Value> = existing_str
                         .as_deref()
                         .map(serde_json::from_str)
@@ -1135,12 +1142,11 @@ impl TaskRepository for PostgresBackend {
         let internal_id = resolve_task_number(pool, project_id, task_id).await?;
         get_task_by_id(pool, internal_id).await?;
 
-        let rows = sqlx::query(
-            "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = $1",
-        )
-        .bind(internal_id)
-        .fetch_all(pool)
-        .await?;
+        let rows =
+            sqlx::query("SELECT depends_on_task_id FROM task_dependencies WHERE task_id = $1")
+                .bind(internal_id)
+                .fetch_all(pool)
+                .await?;
 
         let mut tasks = Vec::with_capacity(rows.len());
         for row in rows {
@@ -1214,7 +1220,8 @@ impl TaskRepository for PostgresBackend {
             .execute(&mut *tx)
             .await?;
         for &dep_task_number in task.dependencies() {
-            let dep_internal_id = resolve_task_number(&mut *tx, task.project_id(), dep_task_number).await?;
+            let dep_internal_id =
+                resolve_task_number(&mut *tx, task.project_id(), dep_task_number).await?;
             sqlx::query(
                 "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2)",
             )
@@ -1231,11 +1238,7 @@ impl TaskRepository for PostgresBackend {
 
 #[async_trait]
 impl TaskQueryPort for PostgresBackend {
-    async fn list_tasks(
-        &self,
-        project_id: i64,
-        filter: &ListTasksFilter,
-    ) -> Result<Vec<Task>> {
+    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
         let pool = self.pool().await?;
 
         let mut conditions: Vec<String> = Vec::new();
@@ -1309,7 +1312,9 @@ impl TaskQueryPort for PostgresBackend {
 
         if let Some(uid) = filter.assignee_user_id {
             if filter.include_unassigned {
-                conditions.push(format!("(t.assignee_user_id = ${param_idx} OR t.assignee_user_id IS NULL)"));
+                conditions.push(format!(
+                    "(t.assignee_user_id = ${param_idx} OR t.assignee_user_id IS NULL)"
+                ));
             } else {
                 conditions.push(format!("t.assignee_user_id = ${param_idx}"));
             }
@@ -1318,16 +1323,20 @@ impl TaskQueryPort for PostgresBackend {
         }
 
         if !filter.metadata.is_empty() {
-            let json_str = serde_json::to_string(
-                &serde_json::Value::Object(
-                    filter.metadata.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-                ),
-            )
+            let json_str = serde_json::to_string(&serde_json::Value::Object(
+                filter
+                    .metadata
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+            ))
             .context("failed to serialize metadata filter")?;
             conditions.push(format!("t.metadata::jsonb @> ${param_idx}::jsonb"));
             binds.push(BindVal::Str(json_str));
             #[allow(unused_assignments)]
-            { param_idx += 1; }
+            {
+                param_idx += 1;
+            }
         }
 
         let where_clause = if conditions.is_empty() {
@@ -1357,10 +1366,17 @@ impl TaskQueryPort for PostgresBackend {
     }
 
     /// SQL-optimized implementation of [`crate::domain::task::select_next`].
-    async fn next_task(&self, project_id: i64, user_id: Option<i64>, include_unassigned: bool) -> Result<Option<Task>> {
+    async fn next_task(
+        &self,
+        project_id: i64,
+        user_id: Option<i64>,
+        include_unassigned: bool,
+    ) -> Result<Option<Task>> {
         let pool = self.pool().await?;
         let assignee_clause = match user_id {
-            Some(_) if include_unassigned => " AND (t.assignee_user_id = $2 OR t.assignee_user_id IS NULL)",
+            Some(_) if include_unassigned => {
+                " AND (t.assignee_user_id = $2 OR t.assignee_user_id IS NULL)"
+            }
             Some(_) => " AND t.assignee_user_id = $2",
             None => "",
         };
@@ -1523,11 +1539,7 @@ impl MetadataFieldRepository for PostgresBackend {
         }
     }
 
-    async fn get_metadata_field(
-        &self,
-        project_id: i64,
-        field_id: i64,
-    ) -> Result<MetadataField> {
+    async fn get_metadata_field(&self, project_id: i64, field_id: i64) -> Result<MetadataField> {
         let pool = self.pool().await?;
         let row = sqlx::query(
             "SELECT id, project_id, name, field_type, required_on_complete, description, created_at
@@ -1616,13 +1628,11 @@ impl MetadataFieldRepository for PostgresBackend {
 
     async fn delete_metadata_field(&self, project_id: i64, field_id: i64) -> Result<()> {
         let pool = self.pool().await?;
-        let result = sqlx::query(
-            "DELETE FROM metadata_fields WHERE id = $1 AND project_id = $2",
-        )
-        .bind(field_id)
-        .bind(project_id)
-        .execute(pool)
-        .await?;
+        let result = sqlx::query("DELETE FROM metadata_fields WHERE id = $1 AND project_id = $2")
+            .bind(field_id)
+            .bind(project_id)
+            .execute(pool)
+            .await?;
         if result.rows_affected() == 0 {
             return Err(DomainError::MetadataFieldNotFound.into());
         }
@@ -1656,15 +1666,14 @@ async fn get_contract_by_id(pool: &PgPool, id: i64) -> Result<Contract> {
     .map(|r| DodItem::new(r.get("content"), r.get::<i32, _>("checked") != 0))
     .collect();
 
-    let tags: Vec<String> = sqlx::query(
-        "SELECT tag FROM contract_tags WHERE contract_id = $1 ORDER BY id",
-    )
-    .bind(id)
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .map(|r| r.get("tag"))
-    .collect();
+    let tags: Vec<String> =
+        sqlx::query("SELECT tag FROM contract_tags WHERE contract_id = $1 ORDER BY id")
+            .bind(id)
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .map(|r| r.get("tag"))
+            .collect();
 
     let notes: Vec<ContractNote> = sqlx::query(
         "SELECT content, source_task_id, created_at FROM contract_notes WHERE contract_id = $1 ORDER BY id",
@@ -1742,15 +1751,14 @@ impl ContractRepository for PostgresBackend {
 
     async fn list_contracts(&self, project_id: i64) -> Result<Vec<Contract>> {
         let pool = self.pool().await?;
-        let ids: Vec<i64> = sqlx::query(
-            "SELECT id FROM contracts WHERE project_id = $1 ORDER BY id",
-        )
-        .bind(project_id)
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .map(|r| r.get("id"))
-        .collect();
+        let ids: Vec<i64> =
+            sqlx::query("SELECT id FROM contracts WHERE project_id = $1 ORDER BY id")
+                .bind(project_id)
+                .fetch_all(pool)
+                .await?
+                .into_iter()
+                .map(|r| r.get("id"))
+                .collect();
 
         let mut result = Vec::with_capacity(ids.len());
         for id in ids {
@@ -1904,11 +1912,7 @@ impl ContractRepository for PostgresBackend {
         Ok(())
     }
 
-    async fn add_note(
-        &self,
-        contract_id: i64,
-        note: &ContractNote,
-    ) -> Result<ContractNote> {
+    async fn add_note(&self, contract_id: i64, note: &ContractNote) -> Result<ContractNote> {
         let pool = self.pool().await?;
         let _existing = get_contract_by_id(pool, contract_id).await?;
 
@@ -2004,33 +2008,88 @@ mod tests {
         let pool = backend.pool().await.unwrap();
 
         // Clean all data for test isolation (reverse FK order)
-        sqlx::query("DELETE FROM metadata_fields").execute(pool).await.unwrap();
-        sqlx::query("DELETE FROM task_dependencies").execute(pool).await.unwrap();
-        sqlx::query("DELETE FROM task_definition_of_done").execute(pool).await.unwrap();
-        sqlx::query("DELETE FROM task_in_scope").execute(pool).await.unwrap();
-        sqlx::query("DELETE FROM task_out_of_scope").execute(pool).await.unwrap();
-        sqlx::query("DELETE FROM task_tags").execute(pool).await.unwrap();
-        sqlx::query("DELETE FROM api_keys").execute(pool).await.unwrap();
-        sqlx::query("DELETE FROM project_members").execute(pool).await.unwrap();
-        sqlx::query("DELETE FROM tasks").execute(pool).await.unwrap();
-        sqlx::query("DELETE FROM users").execute(pool).await.unwrap();
-        sqlx::query("DELETE FROM projects").execute(pool).await.unwrap();
+        sqlx::query("DELETE FROM metadata_fields")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM task_dependencies")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM task_definition_of_done")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM task_in_scope")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM task_out_of_scope")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM task_tags")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM api_keys")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM project_members")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM tasks")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM users")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM projects")
+            .execute(pool)
+            .await
+            .unwrap();
 
         // Re-seed defaults
-        sqlx::query("INSERT INTO projects (id, name, description) VALUES (1, 'default', 'Default project')")
-            .execute(pool).await.unwrap();
-        sqlx::query("INSERT INTO users (id, username, display_name) VALUES (1, 'default', 'Default User')")
-            .execute(pool).await.unwrap();
-        sqlx::query("INSERT INTO project_members (project_id, user_id, role) VALUES (1, 1, 'owner')")
-            .execute(pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO projects (id, name, description) VALUES (1, 'default', 'Default project')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO users (id, username, display_name) VALUES (1, 'default', 'Default User')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO project_members (project_id, user_id, role) VALUES (1, 1, 'owner')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         // Reset sequences
-        sqlx::query("SELECT setval('projects_id_seq', GREATEST((SELECT MAX(id) FROM projects), 1))")
-            .execute(pool).await.unwrap();
+        sqlx::query(
+            "SELECT setval('projects_id_seq', GREATEST((SELECT MAX(id) FROM projects), 1))",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
         sqlx::query("SELECT setval('users_id_seq', GREATEST((SELECT MAX(id) FROM users), 1))")
-            .execute(pool).await.unwrap();
-        sqlx::query("SELECT setval('tasks_id_seq', GREATEST((SELECT COALESCE(MAX(id), 0) FROM tasks), 1))")
-            .execute(pool).await.unwrap();
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "SELECT setval('tasks_id_seq', GREATEST((SELECT COALESCE(MAX(id), 0) FROM tasks), 1))",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         backend
     }
@@ -2077,7 +2136,10 @@ mod tests {
         }
         let backend = setup().await;
 
-        let task = backend.create_task(1, &params("Lifecycle test")).await.unwrap();
+        let task = backend
+            .create_task(1, &params("Lifecycle test"))
+            .await
+            .unwrap();
         assert_eq!(task.status(), TaskStatus::Draft);
 
         // Draft → Todo
@@ -2176,7 +2238,10 @@ mod tests {
         let next = backend.next_task(1, None, false).await.unwrap();
         assert!(next.is_none());
 
-        let t1 = backend.create_task(1, &params("High priority")).await.unwrap();
+        let t1 = backend
+            .create_task(1, &params("High priority"))
+            .await
+            .unwrap();
         let (t1, _) = t1.ready(now_utc()).unwrap();
         backend.save(&t1).await.unwrap();
 
@@ -2478,8 +2543,12 @@ mod tests {
     #[tokio::test]
     async fn test_migrations_on_embedded_postgres() {
         let mut pg = postgresql_embedded::PostgreSQL::default();
-        pg.setup().await.expect("failed to setup embedded PostgreSQL");
-        pg.start().await.expect("failed to start embedded PostgreSQL");
+        pg.setup()
+            .await
+            .expect("failed to setup embedded PostgreSQL");
+        pg.start()
+            .await
+            .expect("failed to start embedded PostgreSQL");
 
         let db_name = "senko_migration_test";
         pg.create_database(db_name)
@@ -2494,12 +2563,11 @@ mod tests {
             .expect("all migrations should succeed on a clean database");
 
         let pool = backend.pool().await.unwrap();
-        let version: i64 =
-            sqlx::query("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
-                .fetch_one(pool)
-                .await
-                .unwrap()
-                .get(0);
+        let version: i64 = sqlx::query("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .get(0);
         assert_eq!(
             version,
             MIGRATIONS.last().unwrap().version,
@@ -2558,7 +2626,9 @@ mod tests {
                 &UpdateContractParams {
                     title: Some("Renamed".to_string()),
                     description: None,
-                    metadata: Some(MetadataUpdate::Merge(serde_json::json!({"stage": "review"}))),
+                    metadata: Some(MetadataUpdate::Merge(
+                        serde_json::json!({"stage": "review"}),
+                    )),
                 },
                 &UpdateContractArrayParams {
                     add_tags: vec!["backend".to_string()],
@@ -2592,10 +2662,13 @@ mod tests {
             .create_contract(1, &contract_params("Delete"))
             .await
             .unwrap();
-        backend.add_note(
-            c.id(),
-            &ContractNote::new("n".to_string(), None, "2026-04-17T00:00:00Z".to_string()),
-        ).await.unwrap();
+        backend
+            .add_note(
+                c.id(),
+                &ContractNote::new("n".to_string(), None, "2026-04-17T00:00:00Z".to_string()),
+            )
+            .await
+            .unwrap();
 
         backend.delete_contract(c.id()).await.unwrap();
         assert!(backend.get_contract(c.id()).await.is_err());
@@ -2630,7 +2703,10 @@ mod tests {
             .create_contract(1, &contract_params("linked"))
             .await
             .unwrap();
-        let task = backend.create_task(1, &params("linked task")).await.unwrap();
+        let task = backend
+            .create_task(1, &params("linked task"))
+            .await
+            .unwrap();
         assert_eq!(task.contract_id(), None);
 
         let updated = backend

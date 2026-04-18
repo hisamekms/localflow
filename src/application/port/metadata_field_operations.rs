@@ -18,9 +18,5 @@ pub trait MetadataFieldOperations: Send + Sync {
 
     async fn list_metadata_fields(&self, project_id: i64) -> Result<Vec<MetadataField>>;
 
-    async fn delete_metadata_field_by_name(
-        &self,
-        project_id: i64,
-        name: &str,
-    ) -> Result<()>;
+    async fn delete_metadata_field_by_name(&self, project_id: i64, name: &str) -> Result<()>;
 }

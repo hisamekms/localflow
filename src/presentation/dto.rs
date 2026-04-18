@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::application::{CompleteResult, PreviewResult};
-use crate::infra::config::Config;
 use crate::domain::contract::{Contract, ContractNote};
 use crate::domain::metadata_field::{MetadataField, MetadataFieldType};
 use crate::domain::project::Project;
 use crate::domain::task::{DodItem, Task};
 use crate::domain::user::{ApiKey, ApiKeyWithSecret, ProjectMember, User};
+use crate::infra::config::Config;
 
 // --- Project ---
 
@@ -125,7 +125,11 @@ impl From<Task> for TaskResponse {
             pr_url: t.pr_url().map(|s| s.to_owned()),
             contract_id: t.contract_id(),
             metadata: t.metadata().cloned(),
-            definition_of_done: t.definition_of_done().iter().map(DodItemResponse::from).collect(),
+            definition_of_done: t
+                .definition_of_done()
+                .iter()
+                .map(DodItemResponse::from)
+                .collect(),
             in_scope: t.in_scope().to_vec(),
             out_of_scope: t.out_of_scope().to_vec(),
             tags: t.tags().to_vec(),
@@ -516,19 +520,21 @@ impl ConfigResponse {
 
     fn mask_at_path(value: &mut serde_json::Value, path: &[&str]) {
         if path.len() == 1 {
-            if let Some(obj) = value.as_object_mut() {
-                if let Some(field) = obj.get(path[0]) {
-                    if !field.is_null() {
-                        obj.insert(path[0].to_string(), serde_json::Value::String(MASKED.to_string()));
-                    }
-                }
+            if let Some(obj) = value.as_object_mut()
+                && let Some(field) = obj.get(path[0])
+                && !field.is_null()
+            {
+                obj.insert(
+                    path[0].to_string(),
+                    serde_json::Value::String(MASKED.to_string()),
+                );
             }
             return;
         }
-        if let Some(obj) = value.as_object_mut() {
-            if let Some(child) = obj.get_mut(path[0]) {
-                Self::mask_at_path(child, &path[1..]);
-            }
+        if let Some(obj) = value.as_object_mut()
+            && let Some(child) = obj.get_mut(path[0])
+        {
+            Self::mask_at_path(child, &path[1..]);
         }
     }
 }
@@ -676,32 +682,32 @@ mod tests {
         use crate::domain::task::{Priority, Task, TaskStatus};
 
         let task = Task::new(
-            1,                                  // id
-            1,                                  // task_number
-            1,                                  // project_id
-            "title".into(),                     // title
-            None,                               // background
-            None,                               // description
-            None,                               // plan
+            1,              // id
+            1,              // task_number
+            1,              // project_id
+            "title".into(), // title
+            None,           // background
+            None,           // description
+            None,           // plan
             Priority::P2,
             TaskStatus::Draft,
-            None,                               // assignee_session_id
-            None,                               // assignee_user_id
-            "2026-04-17T00:00:00Z".into(),      // created_at
-            "2026-04-17T00:00:00Z".into(),      // updated_at
-            None,                               // started_at
-            None,                               // completed_at
-            None,                               // canceled_at
-            None,                               // cancel_reason
-            None,                               // branch
-            None,                               // pr_url
-            Some(99),                           // contract_id
-            None,                               // metadata
-            vec![],                             // definition_of_done
-            vec![],                             // in_scope
-            vec![],                             // out_of_scope
-            vec![],                             // tags
-            vec![],                             // dependencies
+            None,                          // assignee_session_id
+            None,                          // assignee_user_id
+            "2026-04-17T00:00:00Z".into(), // created_at
+            "2026-04-17T00:00:00Z".into(), // updated_at
+            None,                          // started_at
+            None,                          // completed_at
+            None,                          // canceled_at
+            None,                          // cancel_reason
+            None,                          // branch
+            None,                          // pr_url
+            Some(99),                      // contract_id
+            None,                          // metadata
+            vec![],                        // definition_of_done
+            vec![],                        // in_scope
+            vec![],                        // out_of_scope
+            vec![],                        // tags
+            vec![],                        // dependencies
         );
         let response = TaskResponse::from(task);
         let value = serde_json::to_value(&response).unwrap();

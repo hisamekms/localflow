@@ -1,26 +1,26 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
 use crate::domain::contract::{
     Contract, ContractNote, ContractRepository, CreateContractParams, UpdateContractArrayParams,
     UpdateContractParams,
 };
-use crate::infra::xdg::XdgDirs;
 use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
     CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
 };
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
-    self, AssigneeUserId, CreateTaskParams, DodItem, ListTasksFilter, MetadataUpdate,
-    Priority, Task, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams, shallow_merge_metadata,
+    self, CreateTaskParams, DodItem, ListTasksFilter, MetadataUpdate, Priority, Task, TaskStatus,
+    UpdateTaskArrayParams, UpdateTaskParams, shallow_merge_metadata,
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
     Role, UpdateUserParams, User,
 };
+use crate::infra::xdg::XdgDirs;
+use anyhow::{Context, Result};
+use rusqlite::{Connection, OptionalExtension, params};
 
 struct Migration {
     version: i64,
@@ -272,11 +272,9 @@ fn run_migrations(conn: &Connection) -> Result<()> {
     )?;
 
     let max_version: Option<i64> = conn
-        .query_row(
-            "SELECT MAX(version) FROM schema_migrations",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+            row.get(0)
+        })
         .optional()?
         .flatten();
 
@@ -298,12 +296,11 @@ fn run_migrations(conn: &Connection) -> Result<()> {
         }
     }
 
-    let current_version: i64 = conn
-        .query_row(
-            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
-            [],
-            |row| row.get(0),
-        )?;
+    let current_version: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+        [],
+        |row| row.get(0),
+    )?;
     for m in MIGRATIONS {
         if m.version > current_version {
             let tx_sql = format!("BEGIN;\n{}\nCOMMIT;", m.sql);
@@ -327,11 +324,9 @@ pub fn current_schema_version(conn: &Connection) -> Result<i64> {
         return Ok(0);
     }
     let version: Option<i64> = conn
-        .query_row(
-            "SELECT MAX(version) FROM schema_migrations",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+            row.get(0)
+        })
         .optional()?
         .flatten();
     Ok(version.unwrap_or(0))
@@ -348,22 +343,39 @@ fn xdg_data_base(xdg: &XdgDirs) -> Option<std::path::PathBuf> {
 fn xdg_project_db_path(xdg: &XdgDirs, project_root: &Path) -> Option<std::path::PathBuf> {
     let data_dir = xdg_data_base(xdg)?;
     let dir_name = project_root.file_name()?.to_string_lossy();
-    Some(data_dir.join("senko").join("projects").join(dir_name.as_ref()).join("data.db"))
+    Some(
+        data_dir
+            .join("senko")
+            .join("projects")
+            .join(dir_name.as_ref())
+            .join("data.db"),
+    )
 }
 
 /// Legacy hash-based per-project XDG database path (for migration).
 /// Returns `$XDG_DATA_HOME/senko/projects/<sha256-16chars>/data.db`.
-fn xdg_project_db_path_legacy_hash(xdg: &XdgDirs, project_root: &Path) -> Option<std::path::PathBuf> {
-    use sha2::{Sha256, Digest};
+fn xdg_project_db_path_legacy_hash(
+    xdg: &XdgDirs,
+    project_root: &Path,
+) -> Option<std::path::PathBuf> {
+    use sha2::{Digest, Sha256};
     let data_dir = xdg_data_base(xdg)?;
-    let canonical = project_root.canonicalize().ok()
+    let canonical = project_root
+        .canonicalize()
+        .ok()
         .unwrap_or_else(|| project_root.to_path_buf());
     let hash: String = Sha256::digest(canonical.to_string_lossy().as_bytes())
         .iter()
         .map(|b| format!("{:02x}", b))
         .collect();
     let short_hash = &hash[..16];
-    Some(data_dir.join("senko").join("projects").join(short_hash).join("data.db"))
+    Some(
+        data_dir
+            .join("senko")
+            .join("projects")
+            .join(short_hash)
+            .join("data.db"),
+    )
 }
 
 /// Old global XDG path (pre-per-project migration).
@@ -445,16 +457,17 @@ fn resolve_db_path(
 
     // 4. Migrate from hash-based XDG path → dir-name-based XDG path
     if let Some(hash_path) = xdg_project_db_path_legacy_hash(xdg, project_root)
-        && hash_path.exists() {
-            copy_db_files(&hash_path, &xdg_path)?;
-            eprintln!(
-                "warning: migrated database from {} to {}. \
+        && hash_path.exists()
+    {
+        copy_db_files(&hash_path, &xdg_path)?;
+        eprintln!(
+            "warning: migrated database from {} to {}. \
                  The hash-based path has been kept. You can remove it after verifying the migration.",
-                hash_path.display(),
-                xdg_path.display()
-            );
-            return Ok(xdg_path);
-        }
+            hash_path.display(),
+            xdg_path.display()
+        );
+        return Ok(xdg_path);
+    }
 
     // 5. Migrate from legacy project-local path
     let legacy_path = project_root.join(".senko").join("data.db");
@@ -471,22 +484,23 @@ fn resolve_db_path(
 
     // 6. Migrate from old global XDG path (pre-per-project layout)
     if let Some(global_path) = xdg_global_db_path(xdg)
-        && global_path.exists() {
-            copy_db_files(&global_path, &xdg_path)?;
-            eprintln!(
-                "warning: migrated database from {} to {}. \
+        && global_path.exists()
+    {
+        copy_db_files(&global_path, &xdg_path)?;
+        eprintln!(
+            "warning: migrated database from {} to {}. \
                  The global database was shared across all projects. \
                  If you have multiple projects, only the first to run gets this data. \
                  The original file has been kept.",
-                global_path.display(),
-                xdg_path.display()
-            );
-            // Remove the global file so the next project doesn't also get it
-            let _ = std::fs::remove_file(&global_path);
-            let _ = std::fs::remove_file(global_path.with_extension("db-wal"));
-            let _ = std::fs::remove_file(global_path.with_extension("db-shm"));
-            return Ok(xdg_path);
-        }
+            global_path.display(),
+            xdg_path.display()
+        );
+        // Remove the global file so the next project doesn't also get it
+        let _ = std::fs::remove_file(&global_path);
+        let _ = std::fs::remove_file(global_path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(global_path.with_extension("db-shm"));
+        return Ok(xdg_path);
+    }
 
     // 7. New installation: per-project XDG default
     Ok(xdg_path)
@@ -537,9 +551,7 @@ fn migrate_dod_checked(conn: &Connection) -> Result<()> {
 /// Only called when upgrading an existing DB that lacks schema_migrations.
 fn migrate_legacy(conn: &Connection) -> Result<()> {
     // Add branch column if it doesn't exist (for databases created before this field)
-    let has_branch: bool = conn
-        .prepare("SELECT branch FROM tasks LIMIT 0")
-        .is_ok();
+    let has_branch: bool = conn.prepare("SELECT branch FROM tasks LIMIT 0").is_ok();
     if !has_branch {
         conn.execute_batch("ALTER TABLE tasks ADD COLUMN branch TEXT")?;
     }
@@ -554,17 +566,13 @@ fn migrate_legacy(conn: &Connection) -> Result<()> {
     }
 
     // Add metadata column if it doesn't exist
-    let has_metadata: bool = conn
-        .prepare("SELECT metadata FROM tasks LIMIT 0")
-        .is_ok();
+    let has_metadata: bool = conn.prepare("SELECT metadata FROM tasks LIMIT 0").is_ok();
     if !has_metadata {
         conn.execute_batch("ALTER TABLE tasks ADD COLUMN metadata TEXT")?;
     }
 
     // Add pr_url column if it doesn't exist
-    let has_pr_url: bool = conn
-        .prepare("SELECT pr_url FROM tasks LIMIT 0")
-        .is_ok();
+    let has_pr_url: bool = conn.prepare("SELECT pr_url FROM tasks LIMIT 0").is_ok();
     if !has_pr_url {
         conn.execute_batch("ALTER TABLE tasks ADD COLUMN pr_url TEXT")?;
     }
@@ -608,7 +616,8 @@ fn get_project_by_name(conn: &Connection, name: &str) -> Result<Project> {
 }
 
 fn list_projects(conn: &Connection) -> Result<Vec<Project>> {
-    let mut stmt = conn.prepare("SELECT id, name, description, created_at FROM projects ORDER BY id")?;
+    let mut stmt =
+        conn.prepare("SELECT id, name, description, created_at FROM projects ORDER BY id")?;
     let projects = stmt
         .query_map([], |row| {
             Ok(Project::new(
@@ -636,46 +645,114 @@ fn create_user(conn: &Connection, params: &CreateUserParams) -> Result<User> {
     let effective_sub = params.sub.as_deref().unwrap_or(&params.username);
     conn.execute(
         "INSERT INTO users (username, sub, display_name, email) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![params.username, effective_sub, params.display_name, params.email],
+        rusqlite::params![
+            params.username,
+            effective_sub,
+            params.display_name,
+            params.email
+        ],
     )?;
     let id = conn.last_insert_rowid();
     get_user(conn, id)
 }
 
 fn get_user(conn: &Connection, id: i64) -> Result<User> {
-    let (username, sub, display_name, email, created_at): (String, String, Option<String>, Option<String>, String) = conn
+    let (username, sub, display_name, email, created_at): (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    ) = conn
         .query_row(
             "SELECT username, sub, display_name, email, created_at FROM users WHERE id = ?1",
             rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .optional()?
         .ok_or(DomainError::UserNotFound)?;
-    Ok(User::new(id, username, sub, display_name, email, created_at))
+    Ok(User::new(
+        id,
+        username,
+        sub,
+        display_name,
+        email,
+        created_at,
+    ))
 }
 
 fn get_user_by_username(conn: &Connection, username: &str) -> Result<User> {
-    let (id, sub, display_name, email, created_at): (i64, String, Option<String>, Option<String>, String) = conn
+    let (id, sub, display_name, email, created_at): (
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    ) = conn
         .query_row(
             "SELECT id, sub, display_name, email, created_at FROM users WHERE username = ?1",
             rusqlite::params![username],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .optional()?
         .ok_or(DomainError::UserNotFound)?;
-    Ok(User::new(id, username.to_string(), sub, display_name, email, created_at))
+    Ok(User::new(
+        id,
+        username.to_string(),
+        sub,
+        display_name,
+        email,
+        created_at,
+    ))
 }
 
 fn get_user_by_sub(conn: &Connection, sub: &str) -> Result<User> {
-    let (id, username, display_name, email, created_at): (i64, String, Option<String>, Option<String>, String) = conn
+    let (id, username, display_name, email, created_at): (
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    ) = conn
         .query_row(
             "SELECT id, username, display_name, email, created_at FROM users WHERE sub = ?1",
             rusqlite::params![sub],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .optional()?
         .ok_or(DomainError::UserNotFound)?;
-    Ok(User::new(id, username, sub.to_string(), display_name, email, created_at))
+    Ok(User::new(
+        id,
+        username,
+        sub.to_string(),
+        display_name,
+        email,
+        created_at,
+    ))
 }
 
 fn list_users(conn: &Connection) -> Result<Vec<User>> {
@@ -727,7 +804,13 @@ fn delete_user(conn: &Connection, id: i64) -> Result<()> {
 
 // --- API Key CRUD ---
 
-fn create_api_key(conn: &Connection, user_id: i64, name: &str, device_name: Option<&str>, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
+fn create_api_key(
+    conn: &Connection,
+    user_id: i64,
+    name: &str,
+    device_name: Option<&str>,
+    new_key: &NewApiKey,
+) -> Result<ApiKeyWithSecret> {
     get_user(conn, user_id)?;
 
     conn.execute(
@@ -752,7 +835,10 @@ fn create_api_key(conn: &Connection, user_id: i64, name: &str, device_name: Opti
     ))
 }
 
-fn get_user_by_api_key(conn: &Connection, key_hash: &str) -> Result<crate::application::port::ApiKeyAuthResult> {
+fn get_user_by_api_key(
+    conn: &Connection,
+    key_hash: &str,
+) -> Result<crate::application::port::ApiKeyAuthResult> {
     conn.execute(
         "UPDATE api_keys SET last_used_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE key_hash = ?1",
         params![key_hash],
@@ -836,7 +922,13 @@ fn add_project_member(
         rusqlite::params![id],
         |row| row.get(0),
     )?;
-    Ok(ProjectMember::new(id, project_id, params.user_id, params.role, created_at))
+    Ok(ProjectMember::new(
+        id,
+        project_id,
+        params.user_id,
+        params.role,
+        created_at,
+    ))
 }
 
 fn remove_project_member(conn: &Connection, project_id: i64, user_id: i64) -> Result<()> {
@@ -867,7 +959,9 @@ fn list_project_members(conn: &Connection, project_id: i64) -> Result<Vec<Projec
             let role: Role = role_str
                 .parse()
                 .map_err(|e| anyhow::anyhow!("invalid role in database: {e}"))?;
-            Ok(ProjectMember::new(id, project_id, user_id, role, created_at))
+            Ok(ProjectMember::new(
+                id, project_id, user_id, role, created_at,
+            ))
         })
         .collect()
 }
@@ -882,7 +976,9 @@ fn get_project_member(conn: &Connection, project_id: i64, user_id: i64) -> Resul
         .optional()?
         .ok_or(DomainError::ProjectMemberNotFound)?;
     let role: Role = role_str.parse()?;
-    Ok(ProjectMember::new(id, project_id, user_id, role, created_at))
+    Ok(ProjectMember::new(
+        id, project_id, user_id, role, created_at,
+    ))
 }
 
 fn update_member_role(
@@ -926,12 +1022,11 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
         .transpose()?;
 
     // Assign next task_number for this project
-    let task_number: i64 = conn
-        .query_row(
-            "SELECT COALESCE(MAX(task_number), 0) + 1 FROM tasks WHERE project_id = ?1",
-            params![project_id],
-            |row| row.get(0),
-        )?;
+    let task_number: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(task_number), 0) + 1 FROM tasks WHERE project_id = ?1",
+        params![project_id],
+        |row| row.get(0),
+    )?;
 
     conn.execute(
         "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number, assignee_user_id, contract_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
@@ -940,13 +1035,14 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
     let task_id = conn.last_insert_rowid();
 
     if let Some(ref branch) = params.branch
-        && branch.contains("${task_id}") {
-            let expanded = task::expand_branch_template(branch, task_number);
-            conn.execute(
-                "UPDATE tasks SET branch = ?1 WHERE id = ?2",
-                params![expanded, task_id],
-            )?;
-        }
+        && branch.contains("${task_id}")
+    {
+        let expanded = task::expand_branch_template(branch, task_number);
+        conn.execute(
+            "UPDATE tasks SET branch = ?1 WHERE id = ?2",
+            params![expanded, task_id],
+        )?;
+    }
 
     for item in &params.definition_of_done {
         conn.execute(
@@ -984,9 +1080,26 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
 }
 
 type TaskRow = (
-    i64, i64, String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>,
-    String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
-    Option<String>, Option<String>, Option<i64>, Option<i64>,
+    i64,
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+    i32,
+    Option<String>,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
 );
 
 fn get_task(conn: &Connection, id: i64) -> Result<Task> {
@@ -1151,10 +1264,17 @@ fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<
     }
 
     if !columns.is_empty() {
-        let set_clause: Vec<String> = columns.iter().map(|c| format!("{} = ?", c.as_str())).collect();
-        let sql = format!("UPDATE tasks SET {}, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?", set_clause.join(", "));
+        let set_clause: Vec<String> = columns
+            .iter()
+            .map(|c| format!("{} = ?", c.as_str()))
+            .collect();
+        let sql = format!(
+            "UPDATE tasks SET {}, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
+            set_clause.join(", ")
+        );
         values.push(Box::new(id));
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = values.iter().map(|v| v.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            values.iter().map(|v| v.as_ref()).collect();
         conn.execute(&sql, param_refs.as_slice())?;
     }
 
@@ -1186,11 +1306,32 @@ fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayParams
     }
 
     // definition_of_done
-    update_content_array(conn, id, ContentTable::DefinitionOfDone, &params.set_definition_of_done, &params.add_definition_of_done, &params.remove_definition_of_done)?;
+    update_content_array(
+        conn,
+        id,
+        ContentTable::DefinitionOfDone,
+        &params.set_definition_of_done,
+        &params.add_definition_of_done,
+        &params.remove_definition_of_done,
+    )?;
     // in_scope
-    update_content_array(conn, id, ContentTable::InScope, &params.set_in_scope, &params.add_in_scope, &params.remove_in_scope)?;
+    update_content_array(
+        conn,
+        id,
+        ContentTable::InScope,
+        &params.set_in_scope,
+        &params.add_in_scope,
+        &params.remove_in_scope,
+    )?;
     // out_of_scope
-    update_content_array(conn, id, ContentTable::OutOfScope, &params.set_out_of_scope, &params.add_out_of_scope, &params.remove_out_of_scope)?;
+    update_content_array(
+        conn,
+        id,
+        ContentTable::OutOfScope,
+        &params.set_out_of_scope,
+        &params.add_out_of_scope,
+        &params.remove_out_of_scope,
+    )?;
 
     // Touch updated_at
     let has_changes = params.set_tags.is_some()
@@ -1349,7 +1490,10 @@ fn update_content_array(
 ) -> Result<()> {
     let table = table.as_str();
     if let Some(values) = set {
-        conn.execute(&format!("DELETE FROM {table} WHERE task_id = ?1"), params![task_id])?;
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE task_id = ?1"),
+            params![task_id],
+        )?;
         for item in values {
             conn.execute(
                 &format!("INSERT INTO {table} (task_id, content) VALUES (?1, ?2)"),
@@ -1487,9 +1631,16 @@ fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> R
 
 /// SQL-optimized implementation of [`crate::domain::task::select_next`].
 /// Equivalence with domain logic is verified by integration tests.
-fn next_task(conn: &Connection, project_id: i64, user_id: Option<i64>, include_unassigned: bool) -> Result<Option<Task>> {
+fn next_task(
+    conn: &Connection,
+    project_id: i64,
+    user_id: Option<i64>,
+    include_unassigned: bool,
+) -> Result<Option<Task>> {
     let assignee_clause = match user_id {
-        Some(_) if include_unassigned => " AND (t.assignee_user_id = ?2 OR t.assignee_user_id IS NULL)",
+        Some(_) if include_unassigned => {
+            " AND (t.assignee_user_id = ?2 OR t.assignee_user_id IS NULL)"
+        }
         Some(_) => " AND t.assignee_user_id = ?2",
         None => "",
     };
@@ -1519,7 +1670,8 @@ fn next_task(conn: &Connection, project_id: i64, user_id: Option<i64>, include_u
 }
 
 fn task_stats(conn: &Connection, project_id: i64) -> Result<HashMap<String, i64>> {
-    let mut stmt = conn.prepare("SELECT status, COUNT(*) FROM tasks WHERE project_id = ?1 GROUP BY status")?;
+    let mut stmt =
+        conn.prepare("SELECT status, COUNT(*) FROM tasks WHERE project_id = ?1 GROUP BY status")?;
     let rows = stmt.query_map(params![project_id], |row| {
         let status: String = row.get(0)?;
         let count: i64 = row.get(1)?;
@@ -1557,8 +1709,6 @@ fn list_ready_tasks(conn: &Connection, project_id: i64) -> Result<Vec<Task>> {
     };
     list_tasks(conn, project_id, &filter)
 }
-
-
 
 fn list_dependencies(conn: &Connection, task_id: i64) -> Result<Vec<Task>> {
     get_task(conn, task_id)?;
@@ -1654,11 +1804,7 @@ fn create_metadata_field(
     get_metadata_field(conn, project_id, id)
 }
 
-fn get_metadata_field(
-    conn: &Connection,
-    project_id: i64,
-    field_id: i64,
-) -> Result<MetadataField> {
+fn get_metadata_field(conn: &Connection, project_id: i64, field_id: i64) -> Result<MetadataField> {
     let row: (i64, i64, String, String, i32, Option<String>, String) = conn
         .query_row(
             "SELECT id, project_id, name, field_type, required_on_complete, description, created_at
@@ -1712,7 +1858,13 @@ fn list_metadata_fields(conn: &Connection, project_id: i64) -> Result<Vec<Metada
         .map(|r| {
             let field_type: MetadataFieldType = r.3.parse()?;
             Ok(MetadataField::new(
-                r.0, r.1, r.2, field_type, r.4 != 0, r.5, r.6,
+                r.0,
+                r.1,
+                r.2,
+                field_type,
+                r.4 != 0,
+                r.5,
+                r.6,
             ))
         })
         .collect()
@@ -1771,7 +1923,12 @@ fn delete_metadata_field(conn: &Connection, project_id: i64, field_id: i64) -> R
 
 fn get_contract(conn: &Connection, id: i64) -> Result<Contract> {
     let (project_id, title, description, metadata_str, created_at, updated_at): (
-        i64, String, Option<String>, Option<String>, String, String,
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
     ) = conn
         .query_row(
             "SELECT project_id, title, description, metadata, created_at, updated_at \
@@ -1779,8 +1936,12 @@ fn get_contract(conn: &Connection, id: i64) -> Result<Contract> {
             params![id],
             |row| {
                 Ok((
-                    row.get(0)?, row.get(1)?, row.get(2)?,
-                    row.get(3)?, row.get(4)?, row.get(5)?,
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
                 ))
             },
         )
@@ -1803,7 +1964,8 @@ fn get_contract(conn: &Connection, id: i64) -> Result<Contract> {
     };
 
     let tags: Vec<String> = {
-        let mut stmt = conn.prepare("SELECT tag FROM contract_tags WHERE contract_id = ?1 ORDER BY id")?;
+        let mut stmt =
+            conn.prepare("SELECT tag FROM contract_tags WHERE contract_id = ?1 ORDER BY id")?;
         stmt.query_map(params![id], |row| row.get(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?
     };
@@ -1873,7 +2035,8 @@ fn create_contract(
 
 fn list_contracts(conn: &Connection, project_id: i64) -> Result<Vec<Contract>> {
     let ids: Vec<i64> = {
-        let mut stmt = conn.prepare("SELECT id FROM contracts WHERE project_id = ?1 ORDER BY id")?;
+        let mut stmt =
+            conn.prepare("SELECT id FROM contracts WHERE project_id = ?1 ORDER BY id")?;
         stmt.query_map(params![project_id], |row| row.get(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?
     };
@@ -1926,10 +2089,8 @@ fn update_contract(
                 shallow_merge_metadata(existing.as_ref(), patch)
             }
         };
-        let metadata_str: Option<String> = resolved
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()?;
+        let metadata_str: Option<String> =
+            resolved.as_ref().map(serde_json::to_string).transpose()?;
         conn.execute(
             "UPDATE contracts SET metadata = ?1 WHERE id = ?2",
             params![metadata_str, id],
@@ -1939,7 +2100,10 @@ fn update_contract(
 
     // Tags
     if let Some(ref set) = array_update.set_tags {
-        conn.execute("DELETE FROM contract_tags WHERE contract_id = ?1", params![id])?;
+        conn.execute(
+            "DELETE FROM contract_tags WHERE contract_id = ?1",
+            params![id],
+        )?;
         for tag in set {
             conn.execute(
                 "INSERT INTO contract_tags (contract_id, tag) VALUES (?1, ?2)",
@@ -2082,9 +2246,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::application::port::{AuthenticationPort, ProjectQueryPort, TaskQueryPort, UserQueryPort};
+use crate::application::port::{
+    AuthenticationPort, ProjectQueryPort, TaskQueryPort, UserQueryPort,
+};
+use crate::domain::{
+    ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository,
+    TaskRepository, UserRepository,
+};
 use crate::infra::config::Config;
-use crate::domain::{ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 
 pub struct SqliteBackend {
     conn: Arc<std::sync::Mutex<Connection>>,
@@ -2117,7 +2286,10 @@ impl SqliteBackend {
     /// Sync config.toml project/user names to the id=1 default records.
     /// Called once at backend creation time for SQLite single-mode usage.
     pub fn sync_config_defaults(&self, config: &Config) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
         if let Some(ref name) = config.project.name {
             update_project_name(&conn, 1, name)
                 .with_context(|| format!(
@@ -2138,9 +2310,12 @@ macro_rules! blocking {
     ($self:ident, $body:expr) => {{
         let conn = $self.conn.clone();
         tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            let conn = conn
+                .lock()
+                .map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
             $body(&conn)
-        }).await?
+        })
+        .await?
     }};
 }
 
@@ -2167,25 +2342,44 @@ impl ProjectRepository for SqliteBackend {
 
 #[async_trait]
 impl ProjectMemberRepository for SqliteBackend {
-    async fn add_project_member(&self, project_id: i64, params: &AddProjectMemberParams) -> Result<ProjectMember> {
+    async fn add_project_member(
+        &self,
+        project_id: i64,
+        params: &AddProjectMemberParams,
+    ) -> Result<ProjectMember> {
         let params = params.clone();
-        blocking!(self, |conn: &Connection| add_project_member(conn, project_id, &params))
+        blocking!(self, |conn: &Connection| add_project_member(
+            conn, project_id, &params
+        ))
     }
 
     async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()> {
-        blocking!(self, |conn: &Connection| remove_project_member(conn, project_id, user_id))
+        blocking!(self, |conn: &Connection| remove_project_member(
+            conn, project_id, user_id
+        ))
     }
 
     async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>> {
-        blocking!(self, |conn: &Connection| list_project_members(conn, project_id))
+        blocking!(self, |conn: &Connection| list_project_members(
+            conn, project_id
+        ))
     }
 
     async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember> {
-        blocking!(self, |conn: &Connection| get_project_member(conn, project_id, user_id))
+        blocking!(self, |conn: &Connection| get_project_member(
+            conn, project_id, user_id
+        ))
     }
 
-    async fn update_member_role(&self, project_id: i64, user_id: i64, role: Role) -> Result<ProjectMember> {
-        blocking!(self, |conn: &Connection| update_member_role(conn, project_id, user_id, role))
+    async fn update_member_role(
+        &self,
+        project_id: i64,
+        user_id: i64,
+        role: Role,
+    ) -> Result<ProjectMember> {
+        blocking!(self, |conn: &Connection| update_member_role(
+            conn, project_id, user_id, role
+        ))
     }
 }
 
@@ -2202,7 +2396,9 @@ impl UserRepository for SqliteBackend {
 
     async fn get_user_by_username(&self, username: &str) -> Result<User> {
         let username = username.to_owned();
-        blocking!(self, |conn: &Connection| get_user_by_username(conn, &username))
+        blocking!(self, |conn: &Connection| get_user_by_username(
+            conn, &username
+        ))
     }
 
     async fn get_user_by_sub(&self, sub: &str) -> Result<User> {
@@ -2222,19 +2418,36 @@ impl UserRepository for SqliteBackend {
 
 #[async_trait]
 impl AuthenticationPort for SqliteBackend {
-    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<crate::application::port::ApiKeyAuthResult> {
+    async fn get_user_by_api_key(
+        &self,
+        key_hash: &str,
+    ) -> Result<crate::application::port::ApiKeyAuthResult> {
         let key_hash = key_hash.to_owned();
-        blocking!(self, |conn: &Connection| get_user_by_api_key(conn, &key_hash))
+        blocking!(self, |conn: &Connection| get_user_by_api_key(
+            conn, &key_hash
+        ))
     }
 }
 
 #[async_trait]
 impl ApiKeyRepository for SqliteBackend {
-    async fn create_api_key(&self, user_id: i64, name: &str, device_name: Option<&str>, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
+    async fn create_api_key(
+        &self,
+        user_id: i64,
+        name: &str,
+        device_name: Option<&str>,
+        new_key: &NewApiKey,
+    ) -> Result<ApiKeyWithSecret> {
         let name = name.to_owned();
         let device_name = device_name.map(String::from);
         let new_key = new_key.clone();
-        blocking!(self, |conn: &Connection| create_api_key(conn, user_id, &name, device_name.as_deref(), &new_key))
+        blocking!(self, |conn: &Connection| create_api_key(
+            conn,
+            user_id,
+            &name,
+            device_name.as_deref(),
+            &new_key
+        ))
     }
 
     async fn delete_api_key(&self, key_id: i64) -> Result<()> {
@@ -2242,11 +2455,15 @@ impl ApiKeyRepository for SqliteBackend {
     }
 
     async fn delete_api_key_for_user(&self, key_id: i64, user_id: i64) -> Result<()> {
-        blocking!(self, |conn: &Connection| delete_api_key_for_user(conn, key_id, user_id))
+        blocking!(self, |conn: &Connection| delete_api_key_for_user(
+            conn, key_id, user_id
+        ))
     }
 
     async fn delete_all_api_keys_for_user(&self, user_id: i64) -> Result<()> {
-        blocking!(self, |conn: &Connection| delete_all_api_keys_for_user(conn, user_id))
+        blocking!(self, |conn: &Connection| delete_all_api_keys_for_user(
+            conn, user_id
+        ))
     }
 }
 
@@ -2272,7 +2489,9 @@ impl UserQueryPort for SqliteBackend {
 impl TaskRepository for SqliteBackend {
     async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
         let params = params.clone();
-        blocking!(self, |conn: &Connection| create_task(conn, project_id, &params))
+        blocking!(self, |conn: &Connection| create_task(
+            conn, project_id, &params
+        ))
     }
 
     async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
@@ -2282,7 +2501,12 @@ impl TaskRepository for SqliteBackend {
         })
     }
 
-    async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
+    async fn update_task(
+        &self,
+        project_id: i64,
+        id: i64,
+        params: &UpdateTaskParams,
+    ) -> Result<Task> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, id)?;
@@ -2290,7 +2514,12 @@ impl TaskRepository for SqliteBackend {
         })
     }
 
-    async fn update_task_arrays(&self, project_id: i64, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
+    async fn update_task_arrays(
+        &self,
+        project_id: i64,
+        id: i64,
+        params: &UpdateTaskArrayParams,
+    ) -> Result<()> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, id)?;
@@ -2322,11 +2551,23 @@ impl TaskRepository for SqliteBackend {
 impl TaskQueryPort for SqliteBackend {
     async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
         let filter = filter.clone();
-        blocking!(self, |conn: &Connection| list_tasks(conn, project_id, &filter))
+        blocking!(self, |conn: &Connection| list_tasks(
+            conn, project_id, &filter
+        ))
     }
 
-    async fn next_task(&self, project_id: i64, user_id: Option<i64>, include_unassigned: bool) -> Result<Option<Task>> {
-        blocking!(self, |conn: &Connection| next_task(conn, project_id, user_id, include_unassigned))
+    async fn next_task(
+        &self,
+        project_id: i64,
+        user_id: Option<i64>,
+        include_unassigned: bool,
+    ) -> Result<Option<Task>> {
+        blocking!(self, |conn: &Connection| next_task(
+            conn,
+            project_id,
+            user_id,
+            include_unassigned
+        ))
     }
 
     async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
@@ -2355,11 +2596,7 @@ impl MetadataFieldRepository for SqliteBackend {
         ))
     }
 
-    async fn get_metadata_field(
-        &self,
-        project_id: i64,
-        field_id: i64,
-    ) -> Result<MetadataField> {
+    async fn get_metadata_field(&self, project_id: i64, field_id: i64) -> Result<MetadataField> {
         blocking!(self, |conn: &Connection| get_metadata_field(
             conn, project_id, field_id
         ))
@@ -2398,7 +2635,9 @@ impl ContractRepository for SqliteBackend {
         params: &CreateContractParams,
     ) -> Result<Contract> {
         let params = params.clone();
-        blocking!(self, |conn: &Connection| create_contract(conn, project_id, &params))
+        blocking!(self, |conn: &Connection| create_contract(
+            conn, project_id, &params
+        ))
     }
 
     async fn get_contract(&self, id: i64) -> Result<Contract> {
@@ -2418,7 +2657,10 @@ impl ContractRepository for SqliteBackend {
         let update = update.clone();
         let array_update = array_update.clone();
         blocking!(self, |conn: &Connection| update_contract(
-            conn, id, &update, &array_update
+            conn,
+            id,
+            &update,
+            &array_update
         ))
     }
 
@@ -2428,18 +2670,28 @@ impl ContractRepository for SqliteBackend {
 
     async fn add_note(&self, contract_id: i64, note: &ContractNote) -> Result<ContractNote> {
         let note = note.clone();
-        blocking!(self, |conn: &Connection| add_contract_note(conn, contract_id, &note))
+        blocking!(self, |conn: &Connection| add_contract_note(
+            conn,
+            contract_id,
+            &note
+        ))
     }
 
     async fn check_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
         blocking!(self, |conn: &Connection| set_contract_dod_checked(
-            conn, contract_id, index, true
+            conn,
+            contract_id,
+            index,
+            true
         ))
     }
 
     async fn uncheck_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
         blocking!(self, |conn: &Connection| set_contract_dod_checked(
-            conn, contract_id, index, false
+            conn,
+            contract_id,
+            index,
+            false
         ))
     }
 }
@@ -2449,11 +2701,18 @@ crate::impl_task_transition_default!(SqliteBackend);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::task::AssigneeUserId;
 
     fn setup() -> (tempfile::TempDir, Connection) {
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("data.db");
-        let conn = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
+        let conn = open_db(
+            tmp.path(),
+            Some(db_path.as_path()),
+            None,
+            &XdgDirs::default(),
+        )
+        .unwrap();
         (tmp, conn)
     }
 
@@ -2487,17 +2746,23 @@ mod tests {
             }
             TaskStatus::InProgress => {
                 let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-                let (task, _) = task.start(None, None, "2025-01-01T00:00:00Z".to_string(), None).unwrap();
+                let (task, _) = task
+                    .start(None, None, "2025-01-01T00:00:00Z".to_string(), None)
+                    .unwrap();
                 save_task(conn, &task).unwrap();
             }
             TaskStatus::Completed => {
                 let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-                let (task, _) = task.start(None, None, "2025-01-01T00:00:00Z".to_string(), None).unwrap();
+                let (task, _) = task
+                    .start(None, None, "2025-01-01T00:00:00Z".to_string(), None)
+                    .unwrap();
                 let (task, _) = task.complete("2025-01-01T00:00:00Z".to_string()).unwrap();
                 save_task(conn, &task).unwrap();
             }
             TaskStatus::Canceled => {
-                let (task, _) = task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
+                let (task, _) = task
+                    .cancel("2025-01-01T00:00:00Z".to_string(), None)
+                    .unwrap();
                 save_task(conn, &task).unwrap();
             }
         }
@@ -2507,7 +2772,13 @@ mod tests {
     fn creates_db_at_explicit_path() {
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("custom.db");
-        let conn = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
+        let conn = open_db(
+            tmp.path(),
+            Some(db_path.as_path()),
+            None,
+            &XdgDirs::default(),
+        )
+        .unwrap();
         assert!(db_path.exists());
         drop(conn);
     }
@@ -2565,9 +2836,21 @@ mod tests {
     fn idempotent_open() {
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("data.db");
-        let _conn1 = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
+        let _conn1 = open_db(
+            tmp.path(),
+            Some(db_path.as_path()),
+            None,
+            &XdgDirs::default(),
+        )
+        .unwrap();
         drop(_conn1);
-        let _conn2 = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
+        let _conn2 = open_db(
+            tmp.path(),
+            Some(db_path.as_path()),
+            None,
+            &XdgDirs::default(),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -2680,7 +2963,14 @@ mod tests {
         assert_eq!(updated.status(), TaskStatus::Todo);
 
         // todo -> in_progress
-        let (task, _) = updated.start(Some("session-1".into()), None, "2025-01-01T00:00:00Z".to_string(), None).unwrap();
+        let (task, _) = updated
+            .start(
+                Some("session-1".into()),
+                None,
+                "2025-01-01T00:00:00Z".to_string(),
+                None,
+            )
+            .unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id()).unwrap();
         assert_eq!(updated.status(), TaskStatus::InProgress);
@@ -2688,7 +2978,9 @@ mod tests {
         assert_eq!(updated.started_at(), Some("2025-01-01T00:00:00Z"));
 
         // in_progress -> completed
-        let (task, _) = updated.complete("2025-01-01T01:00:00Z".to_string()).unwrap();
+        let (task, _) = updated
+            .complete("2025-01-01T01:00:00Z".to_string())
+            .unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id()).unwrap();
         assert_eq!(updated.status(), TaskStatus::Completed);
@@ -2702,7 +2994,9 @@ mod tests {
         // cancel from draft
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let task = get_task(&conn, t1.id()).unwrap();
-        let (task, _) = task.cancel("2025-01-01T00:00:00Z".to_string(), Some("reason1".into())).unwrap();
+        let (task, _) = task
+            .cancel("2025-01-01T00:00:00Z".to_string(), Some("reason1".into()))
+            .unwrap();
         save_task(&conn, &task).unwrap();
         let canceled = get_task(&conn, t1.id()).unwrap();
         assert_eq!(canceled.status(), TaskStatus::Canceled);
@@ -2712,7 +3006,9 @@ mod tests {
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
         transition_to(&conn, t2.id(), TaskStatus::Todo);
         let task = get_task(&conn, t2.id()).unwrap();
-        let (task, _) = task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
+        let (task, _) = task
+            .cancel("2025-01-01T00:00:00Z".to_string(), None)
+            .unwrap();
         save_task(&conn, &task).unwrap();
         let canceled = get_task(&conn, t2.id()).unwrap();
         assert_eq!(canceled.status(), TaskStatus::Canceled);
@@ -2721,7 +3017,9 @@ mod tests {
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
         transition_to(&conn, t3.id(), TaskStatus::InProgress);
         let task = get_task(&conn, t3.id()).unwrap();
-        let (task, _) = task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
+        let (task, _) = task
+            .cancel("2025-01-01T00:00:00Z".to_string(), None)
+            .unwrap();
         save_task(&conn, &task).unwrap();
         let canceled = get_task(&conn, t3.id()).unwrap();
         assert_eq!(canceled.status(), TaskStatus::Canceled);
@@ -2873,7 +3171,8 @@ mod tests {
                 dependencies: vec![dep.id()],
                 ..default_create_params("ready")
             },
-        ).unwrap();
+        )
+        .unwrap();
         transition_to(&conn, ready_t.id(), TaskStatus::Todo);
 
         // Create another dep that is NOT completed
@@ -2886,7 +3185,8 @@ mod tests {
                 dependencies: vec![dep2.id()],
                 ..default_create_params("blocked")
             },
-        ).unwrap();
+        )
+        .unwrap();
         transition_to(&conn, blocked_task.id(), TaskStatus::Todo);
 
         let result = list_tasks(
@@ -2896,7 +3196,8 @@ mod tests {
                 ready: true,
                 ..Default::default()
             },
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].title(), "ready");
@@ -3164,7 +3465,8 @@ mod tests {
                 dependencies: vec![dep.id()],
                 ..default_create_params("blocked")
             },
-        ).unwrap();
+        )
+        .unwrap();
         transition_to(&conn, task.id(), TaskStatus::Todo);
 
         assert!(next_task(&conn, 1, None, false).unwrap().is_none());
@@ -3224,7 +3526,8 @@ mod tests {
                 dependencies: vec![dep.id()],
                 ..default_create_params("ready")
             },
-        ).unwrap();
+        )
+        .unwrap();
         transition_to(&conn, task.id(), TaskStatus::Todo);
 
         let result = next_task(&conn, 1, None, false).unwrap().unwrap();
@@ -3234,17 +3537,34 @@ mod tests {
     #[test]
     fn next_task_filters_by_user_id() {
         let (_tmp, conn) = setup();
-        let user2 = create_user(&conn, &CreateUserParams {
-            username: "user2".to_string(), sub: None, display_name: None, email: None,
-        }).unwrap();
-        let t1 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(AssigneeUserId::Id(1)),
-            ..default_create_params("user1-task")
-        }).unwrap();
-        let t2 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(AssigneeUserId::Id(user2.id())),
-            ..default_create_params("user2-task")
-        }).unwrap();
+        let user2 = create_user(
+            &conn,
+            &CreateUserParams {
+                username: "user2".to_string(),
+                sub: None,
+                display_name: None,
+                email: None,
+            },
+        )
+        .unwrap();
+        let t1 = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                assignee_user_id: Some(AssigneeUserId::Id(1)),
+                ..default_create_params("user1-task")
+            },
+        )
+        .unwrap();
+        let t2 = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                assignee_user_id: Some(AssigneeUserId::Id(user2.id())),
+                ..default_create_params("user2-task")
+            },
+        )
+        .unwrap();
         transition_to(&conn, t1.id(), TaskStatus::Todo);
         transition_to(&conn, t2.id(), TaskStatus::Todo);
 
@@ -3256,17 +3576,27 @@ mod tests {
     fn next_task_includes_unassigned_when_flag_set() {
         let (_tmp, conn) = setup();
         // Lower priority (P2) assigned task
-        let t1 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(AssigneeUserId::Id(1)),
-            priority: Some(Priority::P2),
-            ..default_create_params("assigned")
-        }).unwrap();
+        let t1 = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                assignee_user_id: Some(AssigneeUserId::Id(1)),
+                priority: Some(Priority::P2),
+                ..default_create_params("assigned")
+            },
+        )
+        .unwrap();
         // Higher priority (P1) unassigned task
-        let t2 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: None,
-            priority: Some(Priority::P1),
-            ..default_create_params("unassigned")
-        }).unwrap();
+        let t2 = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                assignee_user_id: None,
+                priority: Some(Priority::P1),
+                ..default_create_params("unassigned")
+            },
+        )
+        .unwrap();
         transition_to(&conn, t1.id(), TaskStatus::Todo);
         transition_to(&conn, t2.id(), TaskStatus::Todo);
 
@@ -3277,16 +3607,26 @@ mod tests {
     #[test]
     fn next_task_excludes_unassigned_when_flag_unset() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(AssigneeUserId::Id(1)),
-            priority: Some(Priority::P2),
-            ..default_create_params("assigned")
-        }).unwrap();
-        let t2 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: None,
-            priority: Some(Priority::P1),
-            ..default_create_params("unassigned")
-        }).unwrap();
+        let t1 = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                assignee_user_id: Some(AssigneeUserId::Id(1)),
+                priority: Some(Priority::P2),
+                ..default_create_params("assigned")
+            },
+        )
+        .unwrap();
+        let t2 = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                assignee_user_id: None,
+                priority: Some(Priority::P1),
+                ..default_create_params("unassigned")
+            },
+        )
+        .unwrap();
         transition_to(&conn, t1.id(), TaskStatus::Todo);
         transition_to(&conn, t2.id(), TaskStatus::Todo);
 
@@ -3297,16 +3637,26 @@ mod tests {
     #[test]
     fn next_task_no_filter_when_user_id_none() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(AssigneeUserId::Id(1)),
-            priority: Some(Priority::P2),
-            ..default_create_params("assigned")
-        }).unwrap();
-        let t2 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: None,
-            priority: Some(Priority::P1),
-            ..default_create_params("unassigned")
-        }).unwrap();
+        let t1 = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                assignee_user_id: Some(AssigneeUserId::Id(1)),
+                priority: Some(Priority::P2),
+                ..default_create_params("assigned")
+            },
+        )
+        .unwrap();
+        let t2 = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                assignee_user_id: None,
+                priority: Some(Priority::P1),
+                ..default_create_params("unassigned")
+            },
+        )
+        .unwrap();
         transition_to(&conn, t1.id(), TaskStatus::Todo);
         transition_to(&conn, t2.id(), TaskStatus::Todo);
 
@@ -3317,31 +3667,58 @@ mod tests {
     #[test]
     fn create_task_sets_assignee_user_id() {
         let (_tmp, conn) = setup();
-        let task = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(AssigneeUserId::Id(1)),
-            ..default_create_params("with-assignee")
-        }).unwrap();
+        let task = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                assignee_user_id: Some(AssigneeUserId::Id(1)),
+                ..default_create_params("with-assignee")
+            },
+        )
+        .unwrap();
         assert_eq!(task.assignee_user_id(), Some(1));
     }
 
     #[test]
     fn list_tasks_filters_by_assignee() {
         let (_tmp, conn) = setup();
-        let user2 = create_user(&conn, &CreateUserParams {
-            username: "user2".to_string(), sub: None, display_name: None, email: None,
-        }).unwrap();
-        let _t1 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(AssigneeUserId::Id(1)),
-            ..default_create_params("user1-task")
-        }).unwrap();
-        let _t2 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: Some(AssigneeUserId::Id(user2.id())),
-            ..default_create_params("user2-task")
-        }).unwrap();
-        let _t3 = create_task(&conn, 1, &CreateTaskParams {
-            assignee_user_id: None,
-            ..default_create_params("unassigned-task")
-        }).unwrap();
+        let user2 = create_user(
+            &conn,
+            &CreateUserParams {
+                username: "user2".to_string(),
+                sub: None,
+                display_name: None,
+                email: None,
+            },
+        )
+        .unwrap();
+        let _t1 = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                assignee_user_id: Some(AssigneeUserId::Id(1)),
+                ..default_create_params("user1-task")
+            },
+        )
+        .unwrap();
+        let _t2 = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                assignee_user_id: Some(AssigneeUserId::Id(user2.id())),
+                ..default_create_params("user2-task")
+            },
+        )
+        .unwrap();
+        let _t3 = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                assignee_user_id: None,
+                ..default_create_params("unassigned-task")
+            },
+        )
+        .unwrap();
 
         // Exact match (no unassigned)
         let filter = ListTasksFilter {
@@ -3375,8 +3752,12 @@ mod tests {
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
-        let (t1, _) = t1.add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into())).unwrap();
-        let (t1, _) = t1.add_dependency(t3.id(), Some("2026-01-01T00:00:00Z".into())).unwrap();
+        let (t1, _) = t1
+            .add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into()))
+            .unwrap();
+        let (t1, _) = t1
+            .add_dependency(t3.id(), Some("2026-01-01T00:00:00Z".into()))
+            .unwrap();
         save_task(&conn, &t1).unwrap();
 
         let loaded = get_task(&conn, t1.id()).unwrap();
@@ -3392,10 +3773,14 @@ mod tests {
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
-        let (t1, _) = t1.add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into())).unwrap();
+        let (t1, _) = t1
+            .add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into()))
+            .unwrap();
         save_task(&conn, &t1).unwrap();
 
-        let (t1, _) = t1.set_dependencies(&[t3.id()], Some("2026-01-01T00:00:01Z".into())).unwrap();
+        let (t1, _) = t1
+            .set_dependencies(&[t3.id()], Some("2026-01-01T00:00:01Z".into()))
+            .unwrap();
         save_task(&conn, &t1).unwrap();
 
         let loaded = get_task(&conn, t1.id()).unwrap();
@@ -3408,10 +3793,14 @@ mod tests {
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
 
-        let (t1, _) = t1.add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into())).unwrap();
+        let (t1, _) = t1
+            .add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into()))
+            .unwrap();
         save_task(&conn, &t1).unwrap();
 
-        let (t1, _) = t1.set_dependencies(&[], Some("2026-01-01T00:00:01Z".into())).unwrap();
+        let (t1, _) = t1
+            .set_dependencies(&[], Some("2026-01-01T00:00:01Z".into()))
+            .unwrap();
         save_task(&conn, &t1).unwrap();
 
         let loaded = get_task(&conn, t1.id()).unwrap();
@@ -3425,8 +3814,12 @@ mod tests {
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
-        let (t1, _) = t1.add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into())).unwrap();
-        let (t1, _) = t1.add_dependency(t3.id(), Some("2026-01-01T00:00:00Z".into())).unwrap();
+        let (t1, _) = t1
+            .add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into()))
+            .unwrap();
+        let (t1, _) = t1
+            .add_dependency(t3.id(), Some("2026-01-01T00:00:00Z".into()))
+            .unwrap();
         save_task(&conn, &t1).unwrap();
 
         let deps = list_dependencies(&conn, t1.id()).unwrap();
@@ -3500,21 +3893,27 @@ mod tests {
 
         // Check first item via domain method + save
         let task = get_task(&conn, task.id()).unwrap();
-        let (task, _) = task.check_dod(1, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task
+            .check_dod(1, "2025-01-01T00:00:00Z".to_string())
+            .unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id()).unwrap();
         assert!(updated.definition_of_done()[0].checked());
         assert!(!updated.definition_of_done()[1].checked());
 
         // Check second item
-        let (task, _) = updated.check_dod(2, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = updated
+            .check_dod(2, "2025-01-01T00:00:00Z".to_string())
+            .unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id()).unwrap();
         assert!(updated.definition_of_done()[0].checked());
         assert!(updated.definition_of_done()[1].checked());
 
         // Uncheck first item
-        let (task, _) = updated.uncheck_dod(1, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = updated
+            .uncheck_dod(1, "2025-01-01T00:00:00Z".to_string())
+            .unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id()).unwrap();
         assert!(!updated.definition_of_done()[0].checked());
@@ -3618,14 +4017,22 @@ mod tests {
         drop(conn);
 
         // Open via open_db which runs migrations (using explicit path to the legacy location)
-        let conn = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
+        let conn = open_db(
+            tmp.path(),
+            Some(db_path.as_path()),
+            None,
+            &XdgDirs::default(),
+        )
+        .unwrap();
 
         // Version should include all migrations
         let version = current_schema_version(&conn).unwrap();
         assert_eq!(version, 10);
 
         // Legacy columns should have been migrated
-        let has_description: bool = conn.prepare("SELECT description FROM tasks LIMIT 0").is_ok();
+        let has_description: bool = conn
+            .prepare("SELECT description FROM tasks LIMIT 0")
+            .is_ok();
         assert!(has_description);
         let has_branch: bool = conn.prepare("SELECT branch FROM tasks LIMIT 0").is_ok();
         assert!(has_branch);
@@ -3640,11 +4047,9 @@ mod tests {
 
         // Legacy data should be preserved (details renamed to description)
         let desc: String = conn
-            .query_row(
-                "SELECT description FROM tasks WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT description FROM tasks WHERE id = 1", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(desc, "some details");
     }
@@ -3653,11 +4058,23 @@ mod tests {
     fn migration_idempotent() {
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("data.db");
-        let conn1 = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
+        let conn1 = open_db(
+            tmp.path(),
+            Some(db_path.as_path()),
+            None,
+            &XdgDirs::default(),
+        )
+        .unwrap();
         let v1 = current_schema_version(&conn1).unwrap();
         drop(conn1);
 
-        let conn2 = open_db(tmp.path(), Some(db_path.as_path()), None, &XdgDirs::default()).unwrap();
+        let conn2 = open_db(
+            tmp.path(),
+            Some(db_path.as_path()),
+            None,
+            &XdgDirs::default(),
+        )
+        .unwrap();
         let v2 = current_schema_version(&conn2).unwrap();
         assert_eq!(v1, v2);
 
@@ -3754,10 +4171,7 @@ mod tests {
     #[tokio::test]
     async fn inmem_task_lifecycle() {
         let backend = mem_backend();
-        let task = backend
-            .create_task(1, &params("Lifecycle"))
-            .await
-            .unwrap();
+        let task = backend.create_task(1, &params("Lifecycle")).await.unwrap();
         assert_eq!(task.status(), TaskStatus::Draft);
 
         let (task, _) = task.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
@@ -3765,14 +4179,23 @@ mod tests {
         let task_got = backend.get_task(1, task.id()).await.unwrap();
         assert_eq!(task_got.status(), TaskStatus::Todo);
 
-        let (task, _) = task_got.start(Some("sess-1".into()), None, "2026-01-01T00:00:00Z".to_string(), None).unwrap();
+        let (task, _) = task_got
+            .start(
+                Some("sess-1".into()),
+                None,
+                "2026-01-01T00:00:00Z".to_string(),
+                None,
+            )
+            .unwrap();
         backend.save(&task).await.unwrap();
         let task_got = backend.get_task(1, task.id()).await.unwrap();
         assert_eq!(task_got.status(), TaskStatus::InProgress);
         assert_eq!(task_got.assignee_session_id(), Some("sess-1"));
         assert!(task_got.started_at().is_some());
 
-        let (task, _) = task_got.complete("2026-01-02T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task_got
+            .complete("2026-01-02T00:00:00Z".to_string())
+            .unwrap();
         backend.save(&task).await.unwrap();
         let task_got = backend.get_task(1, task.id()).await.unwrap();
         assert_eq!(task_got.status(), TaskStatus::Completed);
@@ -3782,11 +4205,13 @@ mod tests {
     #[tokio::test]
     async fn inmem_task_cancel() {
         let backend = mem_backend();
-        let task = backend
-            .create_task(1, &params("Cancel me"))
-            .await
+        let task = backend.create_task(1, &params("Cancel me")).await.unwrap();
+        let (task, _) = task
+            .cancel(
+                "2026-01-01T00:00:00Z".to_string(),
+                Some("no longer needed".into()),
+            )
             .unwrap();
-        let (task, _) = task.cancel("2026-01-01T00:00:00Z".to_string(), Some("no longer needed".into())).unwrap();
         backend.save(&task).await.unwrap();
         let task_got = backend.get_task(1, task.id()).await.unwrap();
         assert_eq!(task_got.status(), TaskStatus::Canceled);
@@ -3813,7 +4238,7 @@ mod tests {
         assert_eq!(by_name.id(), proj.id());
 
         let list = backend.list_projects().await.unwrap();
-        assert!(list.len() >= 1);
+        assert!(!list.is_empty());
 
         backend.delete_project(proj.id()).await.unwrap();
         assert!(backend.get_project(proj.id()).await.is_err());
@@ -3866,7 +4291,10 @@ mod tests {
             .unwrap();
 
         let member = backend
-            .add_project_member(1, &AddProjectMemberParams::new(user.id(), Some(Role::Member)))
+            .add_project_member(
+                1,
+                &AddProjectMemberParams::new(user.id(), Some(Role::Member)),
+            )
             .await
             .unwrap();
         assert_eq!(member.role(), Role::Member);
@@ -3874,7 +4302,10 @@ mod tests {
         let got = backend.get_project_member(1, user.id()).await.unwrap();
         assert_eq!(got.user_id(), user.id());
 
-        let updated = backend.update_member_role(1, user.id(), Role::Owner).await.unwrap();
+        let updated = backend
+            .update_member_role(1, user.id(), Role::Owner)
+            .await
+            .unwrap();
         assert_eq!(updated.role(), Role::Owner);
 
         let members = backend.list_project_members(1).await.unwrap();
@@ -3888,20 +4319,16 @@ mod tests {
     #[tokio::test]
     async fn inmem_dependencies() {
         let backend = mem_backend();
-        let t1 = backend
-            .create_task(1, &params("T1"))
-            .await
-            .unwrap();
-        let t2 = backend
-            .create_task(1, &params("T2"))
-            .await
-            .unwrap();
+        let t1 = backend.create_task(1, &params("T1")).await.unwrap();
+        let t2 = backend.create_task(1, &params("T2")).await.unwrap();
         let (t1, _) = t1.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t1).await.unwrap();
         let (t2, _) = t2.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t2).await.unwrap();
 
-        let (t2, _) = t2.add_dependency(t1.id(), Some("2026-01-01T00:00:01Z".into())).unwrap();
+        let (t2, _) = t2
+            .add_dependency(t1.id(), Some("2026-01-01T00:00:01Z".into()))
+            .unwrap();
         backend.save(&t2).await.unwrap();
         let t2 = backend.get_task(1, t2.id()).await.unwrap();
         assert_eq!(t2.dependencies(), &[t1.id()]);
@@ -3913,7 +4340,9 @@ mod tests {
         let next = backend.next_task(1, None, false).await.unwrap();
         assert!(next.is_none() || next.unwrap().id() == t1.id());
 
-        let (t2, _) = t2.remove_dependency(t1.id(), Some("2026-01-01T00:00:02Z".into())).unwrap();
+        let (t2, _) = t2
+            .remove_dependency(t1.id(), Some("2026-01-01T00:00:02Z".into()))
+            .unwrap();
         backend.save(&t2).await.unwrap();
         let t2 = backend.get_task(1, t2.id()).await.unwrap();
         assert!(t2.dependencies().is_empty());
@@ -3924,26 +4353,29 @@ mod tests {
         let backend = mem_backend();
         let mut p = params("DoD test");
         p.definition_of_done = vec!["Item A".into(), "Item B".into()];
-        let task = backend
-            .create_task(1, &p)
-            .await
-            .unwrap();
+        let task = backend.create_task(1, &p).await.unwrap();
         assert!(!task.definition_of_done()[0].checked());
         assert!(!task.definition_of_done()[1].checked());
 
-        let (task, _) = task.check_dod(1, "2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task
+            .check_dod(1, "2026-01-01T00:00:00Z".to_string())
+            .unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(1, task.id()).await.unwrap();
         assert!(task.definition_of_done()[0].checked());
         assert!(!task.definition_of_done()[1].checked());
 
-        let (task, _) = task.check_dod(2, "2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task
+            .check_dod(2, "2026-01-01T00:00:00Z".to_string())
+            .unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(1, task.id()).await.unwrap();
         assert!(task.definition_of_done()[0].checked());
         assert!(task.definition_of_done()[1].checked());
 
-        let (task, _) = task.uncheck_dod(1, "2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task
+            .uncheck_dod(1, "2026-01-01T00:00:00Z".to_string())
+            .unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(1, task.id()).await.unwrap();
         assert!(!task.definition_of_done()[0].checked());
@@ -3995,10 +4427,13 @@ mod tests {
         let backend = SqliteBackend::new_in_memory().unwrap();
         // Create a second project with name "taken"
         use crate::domain::project::CreateProjectParams;
-        backend.create_project(&CreateProjectParams {
-            name: "taken".to_string(),
-            description: None,
-        }).await.unwrap();
+        backend
+            .create_project(&CreateProjectParams {
+                name: "taken".to_string(),
+                description: None,
+            })
+            .await
+            .unwrap();
 
         let mut config = Config::default();
         config.project.name = Some("taken".to_string());
@@ -4019,8 +4454,7 @@ mod tests {
         let sql_result = next_task(&conn, 1, None, false).unwrap().unwrap();
 
         let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
-        let domain_result =
-            crate::domain::task::select_next(all_tasks, &HashMap::new()).unwrap();
+        let domain_result = crate::domain::task::select_next(all_tasks, &HashMap::new()).unwrap();
 
         assert_eq!(sql_result.id(), domain_result.id());
     }
@@ -4049,16 +4483,13 @@ mod tests {
         let sql_result = next_task(&conn, 1, None, false).unwrap().unwrap();
 
         let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
-        let dep_statuses: HashMap<i64, TaskStatus> = all_tasks
-            .iter()
-            .map(|t| (t.id(), t.status()))
-            .collect();
+        let dep_statuses: HashMap<i64, TaskStatus> =
+            all_tasks.iter().map(|t| (t.id(), t.status())).collect();
         let todo_tasks: Vec<Task> = all_tasks
             .into_iter()
             .filter(|t| t.status() == TaskStatus::Todo)
             .collect();
-        let domain_result =
-            crate::domain::task::select_next(todo_tasks, &dep_statuses).unwrap();
+        let domain_result = crate::domain::task::select_next(todo_tasks, &dep_statuses).unwrap();
 
         assert_eq!(sql_result.id(), domain_result.id());
         assert_eq!(sql_result.id(), free.id());
@@ -4088,16 +4519,13 @@ mod tests {
         let sql_ready = list_ready_tasks(&conn, 1).unwrap();
 
         let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
-        let dep_statuses: HashMap<i64, TaskStatus> = all_tasks
-            .iter()
-            .map(|t| (t.id(), t.status()))
-            .collect();
+        let dep_statuses: HashMap<i64, TaskStatus> =
+            all_tasks.iter().map(|t| (t.id(), t.status())).collect();
         let todo_tasks: Vec<Task> = all_tasks
             .into_iter()
             .filter(|t| t.status() == TaskStatus::Todo)
             .collect();
-        let domain_ready =
-            crate::domain::task::filter_ready(todo_tasks, &dep_statuses);
+        let domain_ready = crate::domain::task::filter_ready(todo_tasks, &dep_statuses);
 
         let mut sql_ids: Vec<i64> = sql_ready.iter().map(|t| t.id()).collect();
         let mut domain_ids: Vec<i64> = domain_ready.iter().map(|t| t.id()).collect();
@@ -4130,10 +4558,8 @@ mod tests {
         let sql_count = ready_count(&conn, 1).unwrap();
 
         let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
-        let dep_statuses: HashMap<i64, TaskStatus> = all_tasks
-            .iter()
-            .map(|t| (t.id(), t.status()))
-            .collect();
+        let dep_statuses: HashMap<i64, TaskStatus> =
+            all_tasks.iter().map(|t| (t.id(), t.status())).collect();
         let todo_tasks: Vec<Task> = all_tasks
             .into_iter()
             .filter(|t| t.status() == TaskStatus::Todo)
@@ -4334,12 +4760,10 @@ mod tests {
         let result = create_metadata_field(&conn, 1, &params);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err
-            .downcast_ref::<DomainError>()
-            .map_or(false, |e| matches!(
-                e,
-                DomainError::MetadataFieldNameConflict { .. }
-            )));
+        assert!(
+            err.downcast_ref::<DomainError>()
+                .is_some_and(|e| matches!(e, DomainError::MetadataFieldNameConflict { .. }))
+        );
     }
 
     #[test]
@@ -4497,7 +4921,10 @@ mod tests {
         assert_eq!(created.project_id(), 1);
         assert_eq!(created.definition_of_done().len(), 2);
         assert_eq!(created.tags(), &["api".to_string()]);
-        assert_eq!(created.metadata(), Some(&serde_json::json!({"owner": "team-a"})));
+        assert_eq!(
+            created.metadata(),
+            Some(&serde_json::json!({"owner": "team-a"}))
+        );
 
         let got = backend.get_contract(created.id()).await.unwrap();
         assert_eq!(got.id(), created.id());
@@ -4509,8 +4936,14 @@ mod tests {
     #[tokio::test]
     async fn inmem_contract_list_ordered() {
         let backend = mem_backend();
-        let a = backend.create_contract(1, &make_contract_params("A")).await.unwrap();
-        let b = backend.create_contract(1, &make_contract_params("B")).await.unwrap();
+        let a = backend
+            .create_contract(1, &make_contract_params("A"))
+            .await
+            .unwrap();
+        let b = backend
+            .create_contract(1, &make_contract_params("B"))
+            .await
+            .unwrap();
 
         let list = backend.list_contracts(1).await.unwrap();
         assert_eq!(list.len(), 2);
@@ -4521,7 +4954,10 @@ mod tests {
     #[tokio::test]
     async fn inmem_contract_update_scalar_and_arrays() {
         let backend = mem_backend();
-        let c = backend.create_contract(1, &make_contract_params("Spec")).await.unwrap();
+        let c = backend
+            .create_contract(1, &make_contract_params("Spec"))
+            .await
+            .unwrap();
 
         let updated = backend
             .update_contract(
@@ -4529,7 +4965,9 @@ mod tests {
                 &UpdateContractParams {
                     title: Some("Spec v2".to_string()),
                     description: Some(None),
-                    metadata: Some(MetadataUpdate::Merge(serde_json::json!({"stage": "review"}))),
+                    metadata: Some(MetadataUpdate::Merge(
+                        serde_json::json!({"stage": "review"}),
+                    )),
                 },
                 &UpdateContractArrayParams {
                     add_tags: vec!["backend".to_string()],
@@ -4604,10 +5042,13 @@ mod tests {
             .create_contract(1, &make_contract_params("Delete me"))
             .await
             .unwrap();
-        backend.add_note(
-            c.id(),
-            &ContractNote::new("n".to_string(), None, "2026-04-17T00:00:00Z".to_string()),
-        ).await.unwrap();
+        backend
+            .add_note(
+                c.id(),
+                &ContractNote::new("n".to_string(), None, "2026-04-17T00:00:00Z".to_string()),
+            )
+            .await
+            .unwrap();
 
         backend.delete_contract(c.id()).await.unwrap();
 
@@ -4640,7 +5081,10 @@ mod tests {
             .create_contract(1, &make_contract_params("linked"))
             .await
             .unwrap();
-        let task = backend.create_task(1, &params("linked task")).await.unwrap();
+        let task = backend
+            .create_task(1, &params("linked task"))
+            .await
+            .unwrap();
 
         // Initially NULL
         assert_eq!(task.contract_id(), None);

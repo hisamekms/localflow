@@ -60,18 +60,13 @@ impl MetadataFieldOperations for RemoteMetadataFieldOperations {
         read_json_or_error(resp).await
     }
 
-    async fn delete_metadata_field_by_name(
-        &self,
-        project_id: i64,
-        name: &str,
-    ) -> Result<()> {
+    async fn delete_metadata_field_by_name(&self, project_id: i64, name: &str) -> Result<()> {
         let resp = self
             .auth(
-                self.client()
-                    .delete(self.http.project_url(
-                        project_id,
-                        &format!("/metadata-fields/{name}"),
-                    )),
+                self.client().delete(
+                    self.http
+                        .project_url(project_id, &format!("/metadata-fields/{name}")),
+                ),
             )
             .send()
             .await?;

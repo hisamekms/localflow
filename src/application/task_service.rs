@@ -15,7 +15,7 @@ use crate::domain::task::{
 use crate::domain::validator::{has_cycle_async, validate_metadata, validate_metadata_on_complete};
 
 use super::HookTrigger;
-use super::port::{CompleteResult, HookExecutor, PreviewResult, PrVerifier, TaskOperations};
+use super::port::{CompleteResult, HookExecutor, PrVerifier, PreviewResult, TaskOperations};
 
 pub struct LocalTaskOperations {
     backend: Arc<dyn TaskBackend>,
@@ -83,11 +83,7 @@ impl LocalTaskOperations {
 impl TaskOperations for LocalTaskOperations {
     // --- Task CRUD with business logic ---
 
-    async fn create_task(
-        &self,
-        project_id: i64,
-        params: &CreateTaskParams,
-    ) -> Result<Task> {
+    async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
         params.validate()?;
         if let Some(ref metadata) = params.metadata {
             validate_metadata(metadata)?;
@@ -131,14 +127,23 @@ impl TaskOperations for LocalTaskOperations {
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
         if let Some(ref sid) = session_id {
-            crate::domain::validator::validate_string_length("session_id", sid, crate::domain::validator::MAX_SESSION_ID_LEN)?;
+            crate::domain::validator::validate_string_length(
+                "session_id",
+                sid,
+                crate::domain::validator::MAX_SESSION_ID_LEN,
+            )?;
         }
         match &metadata {
-            Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => validate_metadata(v)?,
+            Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => {
+                validate_metadata(v)?
+            }
             _ => {}
         }
         let prev_status = self.backend.get_task(project_id, id).await?.status();
-        let task = self.backend.start_task(project_id, id, session_id, user_id, metadata).await?;
+        let task = self
+            .backend
+            .start_task(project_id, id, session_id, user_id, metadata)
+            .await?;
 
         self.hooks
             .fire(
@@ -161,13 +166,23 @@ impl TaskOperations for LocalTaskOperations {
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
         if let Some(ref sid) = session_id {
-            crate::domain::validator::validate_string_length("session_id", sid, crate::domain::validator::MAX_SESSION_ID_LEN)?;
+            crate::domain::validator::validate_string_length(
+                "session_id",
+                sid,
+                crate::domain::validator::MAX_SESSION_ID_LEN,
+            )?;
         }
         match &metadata {
-            Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => validate_metadata(v)?,
+            Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => {
+                validate_metadata(v)?
+            }
             _ => {}
         }
-        let task = match self.backend.next_task(project_id, user_id, include_unassigned).await? {
+        let task = match self
+            .backend
+            .next_task(project_id, user_id, include_unassigned)
+            .await?
+        {
             Some(t) => t,
             None => {
                 self.hooks
@@ -188,7 +203,15 @@ impl TaskOperations for LocalTaskOperations {
         let task = if task.status() == TaskStatus::InProgress {
             task
         } else {
-            self.backend.start_task(project_id, task.task_number(), session_id, user_id, metadata).await?
+            self.backend
+                .start_task(
+                    project_id,
+                    task.task_number(),
+                    session_id,
+                    user_id,
+                    metadata,
+                )
+                .await?
         };
 
         self.hooks
@@ -212,17 +235,20 @@ impl TaskOperations for LocalTaskOperations {
         let task = self.backend.get_task(project_id, id).await?;
 
         // PR workflow checks (domain policy decides whether to check).
-        if let Some(pr_url) = self.completion_policy.required_pr_url(&task, skip_pr_check)
+        if let Some(pr_url) = self
+            .completion_policy
+            .required_pr_url(&task, skip_pr_check)
             .map_err(|e| DomainError::CannotCompleteTask {
                 task_id: id,
                 reason: e.to_string(),
-            })? {
-            self.pr_verifier
-                .verify_pr_status(pr_url)
-                .map_err(|e| DomainError::CannotCompleteTask {
+            })?
+        {
+            self.pr_verifier.verify_pr_status(pr_url).map_err(|e| {
+                DomainError::CannotCompleteTask {
                     task_id: id,
                     reason: e.to_string(),
-                })?;
+                }
+            })?;
         }
 
         // Metadata field validation
@@ -241,10 +267,17 @@ impl TaskOperations for LocalTaskOperations {
         let prev_status = task.status();
         // TaskTransitionPort::complete_task handles both local (domain complete + save)
         // and RemoteTaskOperations (POST /complete with server-side PR verification).
-        let task = self.backend.complete_task(project_id, id, skip_pr_check).await?;
+        let task = self
+            .backend
+            .complete_task(project_id, id, skip_pr_check)
+            .await?;
 
         // Compute unblocked tasks
-        let curr_ready = self.backend.list_ready_tasks(project_id).await.unwrap_or_default();
+        let curr_ready = self
+            .backend
+            .list_ready_tasks(project_id)
+            .await
+            .unwrap_or_default();
         let unblocked = task::compute_unblocked(&curr_ready, &prev_ready_ids);
         let unblocked_opt = if unblocked.is_empty() {
             None
@@ -264,14 +297,13 @@ impl TaskOperations for LocalTaskOperations {
         Ok(CompleteResult { task, unblocked })
     }
 
-    async fn cancel_task(
-        &self,
-        project_id: i64,
-        id: i64,
-        reason: Option<String>,
-    ) -> Result<Task> {
+    async fn cancel_task(&self, project_id: i64, id: i64, reason: Option<String>) -> Result<Task> {
         if let Some(ref r) = reason {
-            crate::domain::validator::validate_string_length("reason", r, crate::domain::validator::MAX_LONG_TEXT_LEN)?;
+            crate::domain::validator::validate_string_length(
+                "reason",
+                r,
+                crate::domain::validator::MAX_LONG_TEXT_LEN,
+            )?;
         }
         let prev_status = self.backend.get_task(project_id, id).await?.status();
         let task = self.backend.cancel_task(project_id, id, reason).await?;
@@ -359,7 +391,9 @@ impl TaskOperations for LocalTaskOperations {
 
             // Check metadata field requirements
             let metadata_fields = self.backend.list_metadata_fields(project_id).await?;
-            if let Err(e) = validate_metadata_on_complete(task.metadata(), &metadata_fields, task_id) {
+            if let Err(e) =
+                validate_metadata_on_complete(task.metadata(), &metadata_fields, task_id)
+            {
                 return Ok(PreviewResult {
                     allowed: false,
                     reason: Some(e.to_string()),
@@ -381,7 +415,11 @@ impl TaskOperations for LocalTaskOperations {
         };
 
         for t in &unblocked_tasks {
-            operations.push(format!("Unblock task #{}: \"{}\"", t.task_number(), t.title()));
+            operations.push(format!(
+                "Unblock task #{}: \"{}\"",
+                t.task_number(),
+                t.title()
+            ));
         }
 
         Ok(PreviewResult {
@@ -425,11 +463,7 @@ impl TaskOperations for LocalTaskOperations {
         self.backend.get_task(project_id, id).await
     }
 
-    async fn list_tasks(
-        &self,
-        project_id: i64,
-        filter: &ListTasksFilter,
-    ) -> Result<Vec<Task>> {
+    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
         if filter.metadata.is_empty() {
             return self.backend.list_tasks(project_id, filter).await;
         }
@@ -453,22 +487,16 @@ impl TaskOperations for LocalTaskOperations {
         Ok(tags)
     }
 
-    async fn task_stats(
-        &self,
-        project_id: i64,
-    ) -> Result<std::collections::HashMap<String, i64>> {
+    async fn task_stats(&self, project_id: i64) -> Result<std::collections::HashMap<String, i64>> {
         self.backend.task_stats(project_id).await
     }
 
-    async fn edit_task(
-        &self,
-        project_id: i64,
-        id: i64,
-        params: &UpdateTaskParams,
-    ) -> Result<Task> {
+    async fn edit_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
         params.validate()?;
         match &params.metadata {
-            Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => validate_metadata(v)?,
+            Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => {
+                validate_metadata(v)?
+            }
             _ => {}
         }
         self.backend.update_task(project_id, id, params).await
@@ -481,7 +509,9 @@ impl TaskOperations for LocalTaskOperations {
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
         params.validate()?;
-        self.backend.update_task_arrays(project_id, id, params).await
+        self.backend
+            .update_task_arrays(project_id, id, params)
+            .await
     }
 
     async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
@@ -495,12 +525,7 @@ impl TaskOperations for LocalTaskOperations {
         self.backend.save(&task).await
     }
 
-    async fn check_dod(
-        &self,
-        project_id: i64,
-        task_id: i64,
-        index: usize,
-    ) -> Result<Task> {
+    async fn check_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (task, _events) = task.check_dod(index, now)?;
@@ -508,12 +533,7 @@ impl TaskOperations for LocalTaskOperations {
         Ok(task)
     }
 
-    async fn uncheck_dod(
-        &self,
-        project_id: i64,
-        task_id: i64,
-        index: usize,
-    ) -> Result<Task> {
+    async fn uncheck_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (task, _events) = task.uncheck_dod(index, now)?;
@@ -521,12 +541,7 @@ impl TaskOperations for LocalTaskOperations {
         Ok(task)
     }
 
-    async fn add_dependency(
-        &self,
-        project_id: i64,
-        task_id: i64,
-        dep_id: i64,
-    ) -> Result<Task> {
+    async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         // Verify dep exists
         let _ = self.backend.get_task(project_id, dep_id).await?;
@@ -554,12 +569,7 @@ impl TaskOperations for LocalTaskOperations {
         self.backend.get_task(project_id, task_id).await
     }
 
-    async fn remove_dependency(
-        &self,
-        project_id: i64,
-        task_id: i64,
-        dep_id: i64,
-    ) -> Result<Task> {
+    async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (task, _events) = task.remove_dependency(dep_id, Some(now))?;
@@ -605,11 +615,7 @@ impl TaskOperations for LocalTaskOperations {
         self.backend.get_task(project_id, task_id).await
     }
 
-    async fn list_dependencies(
-        &self,
-        project_id: i64,
-        task_id: i64,
-    ) -> Result<Vec<Task>> {
+    async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
         self.backend.list_dependencies(project_id, task_id).await
     }
 
@@ -631,10 +637,8 @@ pub fn resolve_metadata_filter_types(
     raw: &HashMap<String, serde_json::Value>,
     fields: &[MetadataField],
 ) -> HashMap<String, serde_json::Value> {
-    let field_types: HashMap<&str, MetadataFieldType> = fields
-        .iter()
-        .map(|f| (f.name(), f.field_type()))
-        .collect();
+    let field_types: HashMap<&str, MetadataFieldType> =
+        fields.iter().map(|f| (f.name(), f.field_type())).collect();
 
     raw.iter()
         .map(|(key, value)| {
@@ -663,4 +667,3 @@ pub fn resolve_metadata_filter_types(
         })
         .collect()
 }
-

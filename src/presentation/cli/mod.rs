@@ -9,9 +9,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::infra::config::CliOverrides;
 use crate::domain::task::Priority;
 use crate::domain::user::Role;
+use crate::infra::config::CliOverrides;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum CliPriority {
@@ -920,23 +920,26 @@ pub async fn run(cli: Cli) -> Result<()> {
             from_json,
             ref from_json_file,
             ref assignee_user_id,
-        } => handlers::cmd_add(
-            &cli,
-            title.clone(),
-            background.clone(),
-            description.clone(),
-            priority.clone(),
-            definition_of_done.clone(),
-            in_scope.clone(),
-            out_of_scope.clone(),
-            tag.clone(),
-            depends_on.clone(),
-            branch.clone(),
-            metadata.clone(),
-            from_json,
-            from_json_file.clone(),
-            assignee_user_id.clone(),
-        ).await,
+        } => {
+            handlers::cmd_add(
+                &cli,
+                title.clone(),
+                background.clone(),
+                description.clone(),
+                priority.clone(),
+                definition_of_done.clone(),
+                in_scope.clone(),
+                out_of_scope.clone(),
+                tag.clone(),
+                depends_on.clone(),
+                branch.clone(),
+                metadata.clone(),
+                from_json,
+                from_json_file.clone(),
+                assignee_user_id.clone(),
+            )
+            .await
+        }
         Command::List {
             ref status,
             ref tag,
@@ -944,11 +947,38 @@ pub async fn run(cli: Cli) -> Result<()> {
             ready,
             include_unassigned,
             ref metadata,
-        } => handlers::cmd_list(&cli, status.clone(), tag.clone(), *depends_on, ready, include_unassigned, metadata.clone()).await,
+        } => {
+            handlers::cmd_list(
+                &cli,
+                status.clone(),
+                tag.clone(),
+                *depends_on,
+                ready,
+                include_unassigned,
+                metadata.clone(),
+            )
+            .await
+        }
         Command::Get { task_id } => handlers::cmd_get(&cli, task_id).await,
-        Command::Next { ref session_id, ref metadata, include_unassigned } => handlers::cmd_next(&cli, session_id.clone(), metadata.clone(), include_unassigned).await,
+        Command::Next {
+            ref session_id,
+            ref metadata,
+            include_unassigned,
+        } => {
+            handlers::cmd_next(
+                &cli,
+                session_id.clone(),
+                metadata.clone(),
+                include_unassigned,
+            )
+            .await
+        }
         Command::Ready { id } => handlers::cmd_ready(&cli, id).await,
-        Command::Start { id, ref session_id, ref metadata } => handlers::cmd_start(&cli, id, session_id.clone(), metadata.clone()).await,
+        Command::Start {
+            id,
+            ref session_id,
+            ref metadata,
+        } => handlers::cmd_start(&cli, id, session_id.clone(), metadata.clone()).await,
         Command::Edit {
             id,
             ref title,
@@ -986,43 +1016,46 @@ pub async fn run(cli: Cli) -> Result<()> {
         } => {
             let priority_domain = priority.map(|p| p.into());
             handlers::cmd_edit(
-            &cli,
-            id,
-            title,
-            background,
-            clear_background,
-            description,
-            clear_description,
-            plan,
-            plan_file,
-            clear_plan,
-            &priority_domain,
-            branch,
-            clear_branch,
-            pr_url,
-            clear_pr_url,
-            contract,
-            clear_contract,
-            metadata,
-            replace_metadata,
-            clear_metadata,
-            assignee_user_id,
-            clear_assignee_user_id,
-            set_tags,
-            set_definition_of_done,
-            set_in_scope,
-            set_out_of_scope,
-            add_tag,
-            add_definition_of_done,
-            add_in_scope,
-            add_out_of_scope,
-            remove_tag,
-            remove_definition_of_done,
-            remove_in_scope,
-            remove_out_of_scope,
-        ).await
+                &cli,
+                id,
+                title,
+                background,
+                clear_background,
+                description,
+                clear_description,
+                plan,
+                plan_file,
+                clear_plan,
+                &priority_domain,
+                branch,
+                clear_branch,
+                pr_url,
+                clear_pr_url,
+                contract,
+                clear_contract,
+                metadata,
+                replace_metadata,
+                clear_metadata,
+                assignee_user_id,
+                clear_assignee_user_id,
+                set_tags,
+                set_definition_of_done,
+                set_in_scope,
+                set_out_of_scope,
+                add_tag,
+                add_definition_of_done,
+                add_in_scope,
+                add_out_of_scope,
+                remove_tag,
+                remove_definition_of_done,
+                remove_in_scope,
+                remove_out_of_scope,
+            )
+            .await
         }
-        Command::Complete { id, skip_pr_check } => handlers::cmd_complete(&cli, id, skip_pr_check).await,
+        Command::Complete { id, skip_pr_check } => {
+            handlers::cmd_complete(&cli, id, skip_pr_check).await
+        }
         Command::Cancel { id, ref reason } => handlers::cmd_cancel(&cli, id, reason.clone()).await,
         Command::Dod { ref command } => handlers::cmd_dod(&cli, command).await,
         Command::Deps { ref command } => handlers::cmd_deps(&cli, command).await,
@@ -1031,9 +1064,16 @@ pub async fn run(cli: Cli) -> Result<()> {
             let xdg = crate::infra::xdg::XdgDirs::from_env();
             let mut config = crate::bootstrap::load_config(&root, cli.config.as_deref(), &xdg)?;
             config.apply_cli(&CliOverrides {
-                log_dir: cli.log_dir.as_ref().map(|p| p.to_string_lossy().into_owned()),
-                db_path: cli.db_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-                port, host,
+                log_dir: cli
+                    .log_dir
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
+                db_path: cli
+                    .db_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
+                port,
+                host,
                 ..Default::default()
             });
             #[cfg(feature = "aws-secrets")]
@@ -1042,7 +1082,15 @@ pub async fn run(cli: Cli) -> Result<()> {
             let project_id = crate::bootstrap::resolve_project_id(&*project_ops, &config).await?;
             let port_is_explicit = config.web_port_is_explicit();
             let effective_port = config.web_port_or(3141);
-            crate::presentation::web::serve(root, effective_port, port_is_explicit, &config, task_ops, project_id).await?;
+            crate::presentation::web::serve(
+                root,
+                effective_port,
+                port_is_explicit,
+                &config,
+                task_ops,
+                project_id,
+            )
+            .await?;
             Ok(())
         }
         Command::Serve { port, host } => {
@@ -1050,10 +1098,17 @@ pub async fn run(cli: Cli) -> Result<()> {
             let xdg = crate::infra::xdg::XdgDirs::from_env();
             let mut config = crate::bootstrap::load_config(&root, cli.config.as_deref(), &xdg)?;
             config.apply_cli(&CliOverrides {
-                log_dir: cli.log_dir.as_ref().map(|p| p.to_string_lossy().into_owned()),
-                db_path: cli.db_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                log_dir: cli
+                    .log_dir
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
+                db_path: cli
+                    .db_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
                 postgres_url: cli.postgres_url.clone(),
-                server_port: port, server_host: host,
+                server_port: port,
+                server_host: host,
                 ..Default::default()
             });
             #[cfg(feature = "aws-secrets")]
@@ -1069,17 +1124,36 @@ pub async fn run(cli: Cli) -> Result<()> {
                     config.server.relay.url.as_ref().unwrap(),
                     config.server.relay.token.clone(),
                 );
-                crate::presentation::api::serve_proxy(root, effective_port, port_is_explicit, &config, cli.config.clone(), hook_data).await?;
+                crate::presentation::api::serve_proxy(
+                    root,
+                    effective_port,
+                    port_is_explicit,
+                    &config,
+                    cli.config.clone(),
+                    hook_data,
+                )
+                .await?;
             } else {
                 let backend = crate::bootstrap::create_backend(&root, &config)?;
                 let auth_mode = crate::bootstrap::create_auth_mode(&config, backend.clone())?;
-                crate::presentation::api::serve(root, effective_port, port_is_explicit, &config, cli.config.clone(), backend, auth_mode).await?;
+                crate::presentation::api::serve(
+                    root,
+                    effective_port,
+                    port_is_explicit,
+                    &config,
+                    cli.config.clone(),
+                    backend,
+                    auth_mode,
+                )
+                .await?;
             }
             Ok(())
         }
-        Command::SkillInstall { ref output_dir, yes, force } => {
-            skill::skill_install(&cli, output_dir.clone(), yes, force)
-        }
+        Command::SkillInstall {
+            ref output_dir,
+            yes,
+            force,
+        } => skill::skill_install(&cli, output_dir.clone(), yes, force),
         Command::Hooks { ref command } => handlers::cmd_hooks(&cli, command).await,
         Command::Doctor => handlers::cmd_doctor(&cli),
         Command::Config { init } => handlers::cmd_config(&cli, init),
@@ -1094,9 +1168,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             AuthCommand::Status => handlers::cmd_auth_status(&cli).await,
             AuthCommand::Logout => handlers::cmd_auth_logout(&cli).await,
             AuthCommand::Sessions => handlers::cmd_auth_sessions(&cli).await,
-            AuthCommand::Revoke { id, all } => {
-                handlers::cmd_auth_revoke(&cli, *id, *all).await
-            }
+            AuthCommand::Revoke { id, all } => handlers::cmd_auth_revoke(&cli, *id, *all).await,
         },
         Command::Contract { ref action } => handlers::cmd_contract(&cli, action).await,
     }
@@ -1229,8 +1301,18 @@ mod tests {
     #[test]
     fn parse_list_with_filters() {
         let cli = Cli::parse_from([
-            "senko", "list", "--status", "todo", "--status", "in_progress",
-            "--tag", "rust", "--tag", "web", "--depends-on", "3",
+            "senko",
+            "list",
+            "--status",
+            "todo",
+            "--status",
+            "in_progress",
+            "--tag",
+            "rust",
+            "--tag",
+            "web",
+            "--depends-on",
+            "3",
             "--ready",
         ]);
         match cli.command {
@@ -1288,7 +1370,13 @@ mod tests {
     #[test]
     fn parse_edit_with_scalar_args() {
         let cli = Cli::parse_from([
-            "senko", "edit", "5", "--title", "new title", "--priority", "p0",
+            "senko",
+            "edit",
+            "5",
+            "--title",
+            "new title",
+            "--priority",
+            "p0",
         ]);
         match cli.command {
             Command::Edit {
@@ -1386,7 +1474,9 @@ mod tests {
     fn parse_edit_with_plan_file() {
         let cli = Cli::parse_from(["senko", "edit", "1", "--plan-file", "/tmp/plan.md"]);
         match cli.command {
-            Command::Edit { plan, plan_file, .. } => {
+            Command::Edit {
+                plan, plan_file, ..
+            } => {
                 assert!(plan.is_none());
                 assert_eq!(plan_file, Some(PathBuf::from("/tmp/plan.md")));
             }
@@ -1397,7 +1487,13 @@ mod tests {
     #[test]
     fn parse_edit_plan_file_conflicts_with_plan() {
         let result = Cli::try_parse_from([
-            "senko", "edit", "1", "--plan", "inline", "--plan-file", "/tmp/plan.md",
+            "senko",
+            "edit",
+            "1",
+            "--plan",
+            "inline",
+            "--plan-file",
+            "/tmp/plan.md",
         ]);
         assert!(result.is_err());
     }
@@ -1455,7 +1551,9 @@ mod tests {
     fn parse_deps_add() {
         let cli = Cli::parse_from(["senko", "deps", "add", "1", "--on", "2"]);
         match cli.command {
-            Command::Deps { command: DepsCommand::Add { task_id, on } } => {
+            Command::Deps {
+                command: DepsCommand::Add { task_id, on },
+            } => {
                 assert_eq!(task_id, 1);
                 assert_eq!(on, 2);
             }
@@ -1467,7 +1565,9 @@ mod tests {
     fn parse_deps_remove() {
         let cli = Cli::parse_from(["senko", "deps", "remove", "3", "--on", "4"]);
         match cli.command {
-            Command::Deps { command: DepsCommand::Remove { task_id, on } } => {
+            Command::Deps {
+                command: DepsCommand::Remove { task_id, on },
+            } => {
                 assert_eq!(task_id, 3);
                 assert_eq!(on, 4);
             }
@@ -1479,7 +1579,9 @@ mod tests {
     fn parse_deps_set() {
         let cli = Cli::parse_from(["senko", "deps", "set", "1", "--on", "2", "3", "4"]);
         match cli.command {
-            Command::Deps { command: DepsCommand::Set { task_id, on } } => {
+            Command::Deps {
+                command: DepsCommand::Set { task_id, on },
+            } => {
                 assert_eq!(task_id, 1);
                 assert_eq!(on, vec![2, 3, 4]);
             }
@@ -1491,7 +1593,9 @@ mod tests {
     fn parse_deps_list() {
         let cli = Cli::parse_from(["senko", "deps", "list", "5"]);
         match cli.command {
-            Command::Deps { command: DepsCommand::List { task_id } } => {
+            Command::Deps {
+                command: DepsCommand::List { task_id },
+            } => {
                 assert_eq!(task_id, 5);
             }
             _ => panic!("expected Deps List"),
@@ -1508,7 +1612,11 @@ mod tests {
     fn parse_skill_install_with_output_dir() {
         let cli = Cli::parse_from(["senko", "skill-install", "--output-dir", "/tmp/out"]);
         match cli.command {
-            Command::SkillInstall { output_dir, yes, force } => {
+            Command::SkillInstall {
+                output_dir,
+                yes,
+                force,
+            } => {
                 assert_eq!(output_dir, Some(PathBuf::from("/tmp/out")));
                 assert!(!yes);
                 assert!(!force);
@@ -1521,7 +1629,11 @@ mod tests {
     fn parse_skill_install_without_output_dir() {
         let cli = Cli::parse_from(["senko", "skill-install"]);
         match cli.command {
-            Command::SkillInstall { output_dir, yes, force } => {
+            Command::SkillInstall {
+                output_dir,
+                yes,
+                force,
+            } => {
                 assert!(output_dir.is_none());
                 assert!(!yes);
                 assert!(!force);
@@ -1534,7 +1646,11 @@ mod tests {
     fn parse_skill_install_with_yes() {
         let cli = Cli::parse_from(["senko", "skill-install", "--yes"]);
         match cli.command {
-            Command::SkillInstall { output_dir, yes, force } => {
+            Command::SkillInstall {
+                output_dir,
+                yes,
+                force,
+            } => {
                 assert!(output_dir.is_none());
                 assert!(yes);
                 assert!(!force);
@@ -1547,7 +1663,11 @@ mod tests {
     fn parse_skill_install_with_force() {
         let cli = Cli::parse_from(["senko", "skill-install", "--force"]);
         match cli.command {
-            Command::SkillInstall { output_dir, yes, force } => {
+            Command::SkillInstall {
+                output_dir,
+                yes,
+                force,
+            } => {
                 assert!(output_dir.is_none());
                 assert!(!yes);
                 assert!(force);
@@ -1583,12 +1703,31 @@ mod tests {
     #[test]
     fn parse_metadata_field_add() {
         let cli = Cli::parse_from([
-            "senko", "project", "metadata-field", "add",
-            "--name", "sprint", "--type", "string",
-            "--required-on-complete", "--description", "Sprint name",
+            "senko",
+            "project",
+            "metadata-field",
+            "add",
+            "--name",
+            "sprint",
+            "--type",
+            "string",
+            "--required-on-complete",
+            "--description",
+            "Sprint name",
         ]);
         match cli.command {
-            Command::Project { action: ProjectAction::MetadataField { action: MetadataFieldAction::Add { name, field_type, required_on_complete, description } } } => {
+            Command::Project {
+                action:
+                    ProjectAction::MetadataField {
+                        action:
+                            MetadataFieldAction::Add {
+                                name,
+                                field_type,
+                                required_on_complete,
+                                description,
+                            },
+                    },
+            } => {
                 assert_eq!(name, "sprint");
                 assert_eq!(field_type, "string");
                 assert!(required_on_complete);
@@ -1601,11 +1740,28 @@ mod tests {
     #[test]
     fn parse_metadata_field_add_minimal() {
         let cli = Cli::parse_from([
-            "senko", "project", "metadata-field", "add",
-            "--name", "points", "--type", "number",
+            "senko",
+            "project",
+            "metadata-field",
+            "add",
+            "--name",
+            "points",
+            "--type",
+            "number",
         ]);
         match cli.command {
-            Command::Project { action: ProjectAction::MetadataField { action: MetadataFieldAction::Add { name, field_type, required_on_complete, description } } } => {
+            Command::Project {
+                action:
+                    ProjectAction::MetadataField {
+                        action:
+                            MetadataFieldAction::Add {
+                                name,
+                                field_type,
+                                required_on_complete,
+                                description,
+                            },
+                    },
+            } => {
                 assert_eq!(name, "points");
                 assert_eq!(field_type, "number");
                 assert!(!required_on_complete);
@@ -1620,17 +1776,31 @@ mod tests {
         let cli = Cli::parse_from(["senko", "project", "metadata-field", "list"]);
         assert!(matches!(
             cli.command,
-            Command::Project { action: ProjectAction::MetadataField { action: MetadataFieldAction::List } }
+            Command::Project {
+                action: ProjectAction::MetadataField {
+                    action: MetadataFieldAction::List
+                }
+            }
         ));
     }
 
     #[test]
     fn parse_metadata_field_remove() {
         let cli = Cli::parse_from([
-            "senko", "project", "metadata-field", "remove", "--name", "sprint",
+            "senko",
+            "project",
+            "metadata-field",
+            "remove",
+            "--name",
+            "sprint",
         ]);
         match cli.command {
-            Command::Project { action: ProjectAction::MetadataField { action: MetadataFieldAction::Remove { name } } } => {
+            Command::Project {
+                action:
+                    ProjectAction::MetadataField {
+                        action: MetadataFieldAction::Remove { name },
+                    },
+            } => {
                 assert_eq!(name, "sprint");
             }
             _ => panic!("expected Project MetadataField Remove"),
@@ -1639,9 +1809,18 @@ mod tests {
 
     #[test]
     fn parse_add_with_assignee_user_id() {
-        let cli = Cli::parse_from(["senko", "add", "--title", "test", "--assignee-user-id", "self"]);
+        let cli = Cli::parse_from([
+            "senko",
+            "add",
+            "--title",
+            "test",
+            "--assignee-user-id",
+            "self",
+        ]);
         match cli.command {
-            Command::Add { assignee_user_id, .. } => {
+            Command::Add {
+                assignee_user_id, ..
+            } => {
                 assert_eq!(assignee_user_id, Some("self".to_string()));
             }
             _ => panic!("expected Add"),
@@ -1652,7 +1831,12 @@ mod tests {
     fn parse_edit_with_assignee_user_id() {
         let cli = Cli::parse_from(["senko", "edit", "1", "--assignee-user-id", "42"]);
         match cli.command {
-            Command::Edit { id, assignee_user_id, clear_assignee_user_id, .. } => {
+            Command::Edit {
+                id,
+                assignee_user_id,
+                clear_assignee_user_id,
+                ..
+            } => {
                 assert_eq!(id, 1);
                 assert_eq!(assignee_user_id, Some("42".to_string()));
                 assert!(!clear_assignee_user_id);
@@ -1665,7 +1849,12 @@ mod tests {
     fn parse_edit_clear_assignee() {
         let cli = Cli::parse_from(["senko", "edit", "1", "--clear-assignee-user-id"]);
         match cli.command {
-            Command::Edit { id, assignee_user_id, clear_assignee_user_id, .. } => {
+            Command::Edit {
+                id,
+                assignee_user_id,
+                clear_assignee_user_id,
+                ..
+            } => {
                 assert_eq!(id, 1);
                 assert!(assignee_user_id.is_none());
                 assert!(clear_assignee_user_id);
@@ -1678,7 +1867,9 @@ mod tests {
     fn parse_next_with_include_unassigned() {
         let cli = Cli::parse_from(["senko", "next", "--include-unassigned"]);
         match cli.command {
-            Command::Next { include_unassigned, .. } => {
+            Command::Next {
+                include_unassigned, ..
+            } => {
                 assert!(include_unassigned);
             }
             _ => panic!("expected Next"),
@@ -1689,7 +1880,11 @@ mod tests {
     fn parse_list_with_include_unassigned() {
         let cli = Cli::parse_from(["senko", "list", "--ready", "--include-unassigned"]);
         match cli.command {
-            Command::List { ready, include_unassigned, .. } => {
+            Command::List {
+                ready,
+                include_unassigned,
+                ..
+            } => {
                 assert!(ready);
                 assert!(include_unassigned);
             }

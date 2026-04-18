@@ -21,9 +21,7 @@ pub fn validate_string_length(field: &str, value: &str, max_len: usize) -> Resul
     if len > max_len {
         return Err(DomainError::ValidationError {
             field: field.to_string(),
-            message: format!(
-                "{field} exceeds maximum length of {max_len} characters (got {len})"
-            ),
+            message: format!("{field} exceeds maximum length of {max_len} characters (got {len})"),
         });
     }
     Ok(())
@@ -138,9 +136,7 @@ pub const METADATA_MAX_DEPTH: u32 = 10;
 
 /// Validate metadata JSON for size and nesting depth limits.
 pub fn validate_metadata(value: &serde_json::Value) -> Result<(), DomainError> {
-    let size = serde_json::to_string(value)
-        .map(|s| s.len())
-        .unwrap_or(0);
+    let size = serde_json::to_string(value).map(|s| s.len()).unwrap_or(0);
     if size > METADATA_MAX_SIZE {
         return Err(DomainError::MetadataTooLarge {
             size,
@@ -166,10 +162,8 @@ pub fn validate_metadata_on_complete(
     fields: &[MetadataField],
     task_id: i64,
 ) -> Result<(), DomainError> {
-    let required: Vec<&MetadataField> = fields
-        .iter()
-        .filter(|f| f.required_on_complete())
-        .collect();
+    let required: Vec<&MetadataField> =
+        fields.iter().filter(|f| f.required_on_complete()).collect();
 
     if required.is_empty() {
         return Ok(());
@@ -299,14 +293,16 @@ mod tests {
     #[test]
     fn vec_count_over_limit() {
         let items: Vec<String> = (0..MAX_TAGS_COUNT + 1).map(|i| format!("t{i}")).collect();
-        let err = validate_string_vec_items("tags", &items, MAX_TAG_LEN, MAX_TAGS_COUNT).unwrap_err();
+        let err =
+            validate_string_vec_items("tags", &items, MAX_TAG_LEN, MAX_TAGS_COUNT).unwrap_err();
         assert!(err.to_string().contains("21"));
     }
 
     #[test]
     fn vec_item_too_long() {
         let items = vec!["a".repeat(MAX_TAG_LEN + 1)];
-        let err = validate_string_vec_items("tags", &items, MAX_TAG_LEN, MAX_TAGS_COUNT).unwrap_err();
+        let err =
+            validate_string_vec_items("tags", &items, MAX_TAG_LEN, MAX_TAGS_COUNT).unwrap_err();
         assert!(err.to_string().contains("tags[0]"));
     }
 
@@ -344,12 +340,7 @@ mod tests {
     #[test]
     fn diamond_no_cycle() {
         // 1 -> 2, 1 -> 3, 2 -> 4, 3 -> 4, adding 5 depends on 4
-        let edges = [
-            (4, vec![2, 3]),
-            (2, vec![1]),
-            (3, vec![1]),
-            (1, vec![]),
-        ];
+        let edges = [(4, vec![2, 3]), (2, vec![1]), (3, vec![1]), (1, vec![])];
         assert!(!has_cycle(5, 4, make_graph(&edges)));
     }
 
@@ -439,7 +430,15 @@ mod tests {
     // --- validate_metadata_on_complete tests ---
 
     fn make_field(name: &str, ft: MetadataFieldType, required: bool) -> MetadataField {
-        MetadataField::new(1, 1, name.to_string(), ft, required, None, "2026-01-01T00:00:00Z".to_string())
+        MetadataField::new(
+            1,
+            1,
+            name.to_string(),
+            ft,
+            required,
+            None,
+            "2026-01-01T00:00:00Z".to_string(),
+        )
     }
 
     #[test]
@@ -469,7 +468,10 @@ mod tests {
         let fields = vec![make_field("sprint", MetadataFieldType::String, true)];
         let err = validate_metadata_on_complete(None, &fields, 1).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("sprint"), "error should mention field name: {msg}");
+        assert!(
+            msg.contains("sprint"),
+            "error should mention field name: {msg}"
+        );
     }
 
     #[test]
@@ -478,7 +480,10 @@ mod tests {
         let meta = serde_json::json!({});
         let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("sprint"), "error should mention field name: {msg}");
+        assert!(
+            msg.contains("sprint"),
+            "error should mention field name: {msg}"
+        );
     }
 
     #[test]
@@ -500,7 +505,10 @@ mod tests {
         let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("sprint"), "should mention field name: {msg}");
-        assert!(msg.contains("string"), "should mention expected type: {msg}");
+        assert!(
+            msg.contains("string"),
+            "should mention expected type: {msg}"
+        );
     }
 
     #[test]
@@ -510,7 +518,10 @@ mod tests {
         let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("points"), "should mention field name: {msg}");
-        assert!(msg.contains("number"), "should mention expected type: {msg}");
+        assert!(
+            msg.contains("number"),
+            "should mention expected type: {msg}"
+        );
     }
 
     #[test]
@@ -520,7 +531,10 @@ mod tests {
         let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("done"), "should mention field name: {msg}");
-        assert!(msg.contains("boolean"), "should mention expected type: {msg}");
+        assert!(
+            msg.contains("boolean"),
+            "should mention expected type: {msg}"
+        );
     }
 
     #[test]
@@ -539,7 +553,10 @@ mod tests {
         let meta = serde_json::json!({"sprint": null});
         let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("sprint"), "null value should be treated as missing: {msg}");
+        assert!(
+            msg.contains("sprint"),
+            "null value should be treated as missing: {msg}"
+        );
     }
 
     #[test]
@@ -551,7 +568,13 @@ mod tests {
         let meta = serde_json::json!({"points": "not a number"});
         let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("sprint"), "should mention missing sprint: {msg}");
-        assert!(msg.contains("points"), "should mention type error for points: {msg}");
+        assert!(
+            msg.contains("sprint"),
+            "should mention missing sprint: {msg}"
+        );
+        assert!(
+            msg.contains("points"),
+            "should mention type error for points: {msg}"
+        );
     }
 }

@@ -1,42 +1,52 @@
+use anyhow::{Context, Result, bail};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use anyhow::{bail, Context, Result};
 
 use super::{
-    Cli, ContractAction, ContractDodCommand, ContractNoteCommand, DepsCommand, DodCommand,
-    DryRunOperation, HooksCommand, MemberAction, MetadataFieldAction, OutputFormat, ProjectAction,
-    UserAction, CONFIG_TEMPLATE, print_dry_run,
+    CONFIG_TEMPLATE, Cli, ContractAction, ContractDodCommand, ContractNoteCommand, DepsCommand,
+    DodCommand, DryRunOperation, HooksCommand, MemberAction, MetadataFieldAction, OutputFormat,
+    ProjectAction, UserAction, print_dry_run,
 };
 use crate::application::{ContractOperations, UserOperations};
+use crate::application::{HookTrigger, ProjectOperations};
+#[cfg(test)]
+use crate::bootstrap::DEFAULT_PROJECT_ID;
+use crate::bootstrap::hook as hooks;
+use crate::bootstrap::resolve_project_root;
 use crate::bootstrap::{
     create_backend, create_contract_service, create_hook_test_service, create_project_service,
     create_remote_contract_operations, create_remote_hook_data,
     create_remote_metadata_field_operations, create_remote_project_operations,
-    create_remote_user_operations, create_task_operations, create_user_service,
-    resolve_project_id, resolve_user_id,
+    create_remote_user_operations, create_task_operations, create_user_service, resolve_project_id,
+    resolve_user_id,
 };
-#[cfg(test)]
-use crate::bootstrap::DEFAULT_PROJECT_ID;
-use crate::bootstrap::hook as hooks;
-use crate::application::{HookTrigger, ProjectOperations};
-use crate::infra::config::{CliOverrides, Config};
-use crate::domain::contract::{CreateContractParams, UpdateContractArrayParams, UpdateContractParams};
+use crate::domain::contract::{
+    CreateContractParams, UpdateContractArrayParams, UpdateContractParams,
+};
+use crate::domain::metadata_field::{
+    CreateMetadataFieldParams, MetadataFieldType, validate_field_name,
+};
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
     AssigneeUserId, CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
-use crate::presentation::dto::{ContractNoteResponse, ContractResponse};
-use crate::domain::metadata_field::{CreateMetadataFieldParams, MetadataFieldType, validate_field_name};
 use crate::domain::user::{AddProjectMemberParams, CreateUserParams, UpdateUserParams};
-use crate::bootstrap::resolve_project_root;
+use crate::infra::config::{CliOverrides, Config};
+use crate::presentation::dto::{ContractNoteResponse, ContractResponse};
 
 fn build_cli_overrides(cli: &Cli) -> CliOverrides {
     CliOverrides {
-        log_dir: cli.log_dir.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        db_path: cli.db_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        log_dir: cli
+            .log_dir
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned()),
+        db_path: cli
+            .db_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned()),
         postgres_url: cli.postgres_url.clone(),
         project: cli.project.clone(),
         user: cli.user.clone(),
@@ -166,8 +176,8 @@ pub async fn cmd_add(
         };
         let metadata_val = match metadata {
             Some(m) => {
-                let val: serde_json::Value = serde_json::from_str(&m)
-                    .context("invalid JSON for --metadata")?;
+                let val: serde_json::Value =
+                    serde_json::from_str(&m).context("invalid JSON for --metadata")?;
                 Some(val)
             }
             None => None,
@@ -196,13 +206,13 @@ pub async fn cmd_add(
     }
 
     // In local mode, resolve SelfUser to numeric ID before passing to backend
-    if config.cli.remote.url.is_none() {
-        if let Some(AssigneeUserId::SelfUser) = &params.assignee_user_id {
-            let uid = resolve_current_user_id(&root, &config)
-                .await?
-                .context("'self' を解決できません: user.name が未設定です")?;
-            params.assignee_user_id = Some(AssigneeUserId::Id(uid));
-        }
+    if config.cli.remote.url.is_none()
+        && let Some(AssigneeUserId::SelfUser) = &params.assignee_user_id
+    {
+        let uid = resolve_current_user_id(&root, &config)
+            .await?
+            .context("'self' を解決できません: user.name が未設定です")?;
+        params.assignee_user_id = Some(AssigneeUserId::Id(uid));
     }
 
     if cli.dry_run {
@@ -220,17 +230,27 @@ pub async fn cmd_add(
             operations.push(format!("Set tags: {}", params.tags.join(", ")));
         }
         if !params.dependencies.is_empty() {
-            let deps: Vec<String> = params.dependencies.iter().map(|d| format!("#{d}")).collect();
+            let deps: Vec<String> = params
+                .dependencies
+                .iter()
+                .map(|d| format!("#{d}"))
+                .collect();
             operations.push(format!("Set dependencies: {}", deps.join(", ")));
         }
         if !params.definition_of_done.is_empty() {
-            operations.push(format!("Set definition of done: {}", params.definition_of_done.join(", ")));
+            operations.push(format!(
+                "Set definition of done: {}",
+                params.definition_of_done.join(", ")
+            ));
         }
         if !params.in_scope.is_empty() {
             operations.push(format!("Set in scope: {}", params.in_scope.join(", ")));
         }
         if !params.out_of_scope.is_empty() {
-            operations.push(format!("Set out of scope: {}", params.out_of_scope.join(", ")));
+            operations.push(format!(
+                "Set out of scope: {}",
+                params.out_of_scope.join(", ")
+            ));
         }
         if let Some(ref b) = params.branch {
             operations.push(format!("Set branch to \"{}\"", b));
@@ -238,7 +258,13 @@ pub async fn cmd_add(
         if let Some(ref m) = params.metadata {
             operations.push(format!("Set metadata to {}", m));
         }
-        return print_dry_run(&cli.output, &DryRunOperation { command: "add".into(), operations });
+        return print_dry_run(
+            &cli.output,
+            &DryRunOperation {
+                command: "add".into(),
+                operations,
+            },
+        );
     }
 
     let task = task_ops.create_task(project_id, &params).await?;
@@ -286,7 +312,10 @@ pub async fn cmd_list(
         let (key, value) = entry
             .split_once('=')
             .context("metadata filter must be in key=value format")?;
-        metadata_map.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+        metadata_map.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
     }
 
     let filter = ListTasksFilter {
@@ -309,7 +338,10 @@ pub async fn cmd_list(
             for task in &tasks {
                 println!(
                     "[{}] #{} {} ({})",
-                    task.status(), task.task_number(), task.title(), task.priority()
+                    task.status(),
+                    task.task_number(),
+                    task.title(),
+                    task.priority()
                 );
             }
         }
@@ -409,11 +441,19 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     if cli.dry_run {
-        let result = task_ops.preview_transition(project_id, id, TaskStatus::Todo).await?;
+        let result = task_ops
+            .preview_transition(project_id, id, TaskStatus::Todo)
+            .await?;
         if !result.allowed {
             anyhow::bail!("{}", result.reason.unwrap_or_default());
         }
-        return print_dry_run(&cli.output, &DryRunOperation { command: "ready".into(), operations: result.operations });
+        return print_dry_run(
+            &cli.output,
+            &DryRunOperation {
+                command: "ready".into(),
+                operations: result.operations,
+            },
+        );
     }
 
     let updated = task_ops.ready_task(project_id, id).await?;
@@ -430,7 +470,12 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     Ok(())
 }
 
-pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, metadata: Option<String>) -> Result<()> {
+pub async fn cmd_start(
+    cli: &Cli,
+    id: i64,
+    session_id: Option<String>,
+    metadata: Option<String>,
+) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
@@ -445,34 +490,55 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, metadata:
         .transpose()?;
 
     if cli.dry_run {
-        let mut result = task_ops.preview_transition(project_id, id, TaskStatus::InProgress).await?;
+        let mut result = task_ops
+            .preview_transition(project_id, id, TaskStatus::InProgress)
+            .await?;
         if !result.allowed {
             anyhow::bail!("{}", result.reason.unwrap_or_default());
         }
         if let Some(ref sid) = session_id {
-            result.operations.push(format!("Set assignee_session_id to \"{}\"", sid));
+            result
+                .operations
+                .push(format!("Set assignee_session_id to \"{}\"", sid));
         }
         if metadata.is_some() {
             result.operations.push("Merge metadata".to_string());
         }
-        return print_dry_run(&cli.output, &DryRunOperation { command: "start".into(), operations: result.operations });
+        return print_dry_run(
+            &cli.output,
+            &DryRunOperation {
+                command: "start".into(),
+                operations: result.operations,
+            },
+        );
     }
 
-    let updated = task_ops.start_task(project_id, id, session_id, user_id, metadata).await?;
+    let updated = task_ops
+        .start_task(project_id, id, session_id, user_id, metadata)
+        .await?;
 
     match cli.output {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         OutputFormat::Text => {
-            println!("Started task #{}: {}", updated.task_number(), updated.title());
+            println!(
+                "Started task #{}: {}",
+                updated.task_number(),
+                updated.title()
+            );
         }
     }
 
     Ok(())
 }
 
-pub async fn cmd_next(cli: &Cli, session_id: Option<String>, metadata: Option<String>, include_unassigned: bool) -> Result<()> {
+pub async fn cmd_next(
+    cli: &Cli,
+    session_id: Option<String>,
+    metadata: Option<String>,
+    include_unassigned: bool,
+) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
@@ -495,17 +561,35 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, metadata: Option<St
         if metadata.is_some() {
             operations.push("Merge metadata".to_string());
         }
-        return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
+        return print_dry_run(
+            &cli.output,
+            &DryRunOperation {
+                command: "next".into(),
+                operations,
+            },
+        );
     }
 
-    let updated = task_ops.next_task(project_id, session_id, user_id, include_unassigned, metadata).await?;
+    let updated = task_ops
+        .next_task(
+            project_id,
+            session_id,
+            user_id,
+            include_unassigned,
+            metadata,
+        )
+        .await?;
 
     match cli.output {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         OutputFormat::Text => {
-            println!("Started task #{}: {}", updated.task_number(), updated.title());
+            println!(
+                "Started task #{}: {}",
+                updated.task_number(),
+                updated.title()
+            );
         }
     }
 
@@ -519,21 +603,35 @@ pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()>
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     if cli.dry_run {
-        let result = task_ops.preview_transition(project_id, id, TaskStatus::Completed).await?;
+        let result = task_ops
+            .preview_transition(project_id, id, TaskStatus::Completed)
+            .await?;
         if !result.allowed {
             anyhow::bail!("{}", result.reason.unwrap_or_default());
         }
-        return print_dry_run(&cli.output, &DryRunOperation { command: "complete".into(), operations: result.operations });
+        return print_dry_run(
+            &cli.output,
+            &DryRunOperation {
+                command: "complete".into(),
+                operations: result.operations,
+            },
+        );
     }
 
-    let result = task_ops.complete_task(project_id, id, skip_pr_check).await?;
+    let result = task_ops
+        .complete_task(project_id, id, skip_pr_check)
+        .await?;
 
     match cli.output {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&result.task)?);
         }
         OutputFormat::Text => {
-            println!("Completed task #{}: {}", result.task.task_number(), result.task.title());
+            println!(
+                "Completed task #{}: {}",
+                result.task.task_number(),
+                result.task.title()
+            );
         }
     }
 
@@ -547,14 +645,24 @@ pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     if cli.dry_run {
-        let mut result = task_ops.preview_transition(project_id, id, TaskStatus::Canceled).await?;
+        let mut result = task_ops
+            .preview_transition(project_id, id, TaskStatus::Canceled)
+            .await?;
         if !result.allowed {
             anyhow::bail!("{}", result.reason.unwrap_or_default());
         }
         if let Some(ref r) = reason {
-            result.operations.push(format!("Set cancel reason: \"{}\"", r));
+            result
+                .operations
+                .push(format!("Set cancel reason: \"{}\"", r));
         }
-        return print_dry_run(&cli.output, &DryRunOperation { command: "cancel".into(), operations: result.operations });
+        return print_dry_run(
+            &cli.output,
+            &DryRunOperation {
+                command: "cancel".into(),
+                operations: result.operations,
+            },
+        );
     }
 
     let updated = task_ops.cancel_task(project_id, id, reason).await?;
@@ -564,7 +672,11 @@ pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()
             println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         OutputFormat::Text => {
-            println!("Canceled task #{}: {}", updated.task_number(), updated.title());
+            println!(
+                "Canceled task #{}: {}",
+                updated.task_number(),
+                updated.title()
+            );
             if let Some(r) = updated.cancel_reason() {
                 println!("  reason: {r}");
             }
@@ -608,10 +720,7 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
         OutputFormat::Text => {
             println!("Configuration (.senko/config.toml):");
             println!("  [workflow]");
-            println!(
-                "    merge_via: {}",
-                config.workflow.merge_via
-            );
+            println!("    merge_via: {}", config.workflow.merge_via);
             println!("    auto_merge: {}", config.workflow.auto_merge);
             println!("    branch_mode: {}", config.workflow.branch_mode);
             println!("    merge_strategy: {}", config.workflow.merge_strategy);
@@ -732,9 +841,10 @@ fn expand_tilde(path: &str) -> String {
             return format!("{home}/{rest}");
         }
     } else if path == "~"
-        && let Ok(home) = std::env::var("HOME") {
-            return home;
-        }
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return home;
+    }
     path.to_string()
 }
 
@@ -914,7 +1024,11 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = load_config(cli, &root)?;
             let log_path = hooks::log_file_path_with_dir(config.log.dir.as_deref(), &config.xdg)
-                .ok_or_else(|| anyhow::anyhow!("cannot determine log path: neither XDG_STATE_HOME nor HOME is set"))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "cannot determine log path: neither XDG_STATE_HOME nor HOME is set"
+                    )
+                })?;
 
             if *path {
                 println!("{}", log_path.display());
@@ -941,8 +1055,7 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                 return Ok(());
             }
 
-            let content = std::fs::read_to_string(&log_path)
-                .context("failed to read hook log")?;
+            let content = std::fs::read_to_string(&log_path).context("failed to read hook log")?;
             let lines: Vec<&str> = content.lines().collect();
             let start = lines.len().saturating_sub(*n);
             for line in &lines[start..] {
@@ -965,14 +1078,22 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
 
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = load_config(cli, &root)?;
-            let (hook_data, project_ops): (std::sync::Arc<dyn crate::application::port::HookDataSource>, std::sync::Arc<dyn ProjectOperations>) = if config.cli.remote.url.is_some() {
-                (create_remote_hook_data(&config), std::sync::Arc::new(create_remote_project_operations(&config)))
+            let (hook_data, project_ops): (
+                std::sync::Arc<dyn crate::application::port::HookDataSource>,
+                std::sync::Arc<dyn ProjectOperations>,
+            ) = if config.cli.remote.url.is_some() {
+                (
+                    create_remote_hook_data(&config),
+                    std::sync::Arc::new(create_remote_project_operations(&config)),
+                )
             } else {
                 let backend = create_backend(&root, &config)?;
-                let hook_data: std::sync::Arc<dyn crate::application::port::HookDataSource> = std::sync::Arc::new(
-                    crate::application::port::BackendHookData(backend.clone()),
-                );
-                (hook_data, std::sync::Arc::new(crate::bootstrap::create_project_service(backend)))
+                let hook_data: std::sync::Arc<dyn crate::application::port::HookDataSource> =
+                    std::sync::Arc::new(crate::application::port::BackendHookData(backend.clone()));
+                (
+                    hook_data,
+                    std::sync::Arc::new(crate::bootstrap::create_project_service(backend)),
+                )
             };
             let project_id = resolve_project_id(&*project_ops, &config).await?;
 
@@ -992,18 +1113,12 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                 HookTestOutput::Executed { results } => {
                     for r in &results {
                         if results.len() > 1 {
-                            eprintln!(
-                                "--- hook {}/{}: {} ---",
-                                r.index, r.total, r.command
-                            );
+                            eprintln!("--- hook {}/{}: {} ---", r.index, r.total, r.command);
                         }
                         match &r.error {
                             Some(e) => eprintln!("hook error: {e}"),
                             None => {
-                                eprintln!(
-                                    "exit code: {}",
-                                    r.exit_code.unwrap_or(-1)
-                                );
+                                eprintln!("exit code: {}", r.exit_code.unwrap_or(-1));
                             }
                         }
                     }
@@ -1029,8 +1144,7 @@ fn hooks_log_follow(log_path: &std::path::Path) -> Result<()> {
         }
     }
 
-    let mut file = std::fs::File::open(log_path)
-        .context("failed to open hook log")?;
+    let mut file = std::fs::File::open(log_path).context("failed to open hook log")?;
     // Seek to end — only show new lines
     file.seek(SeekFrom::End(0))?;
     let mut reader = BufReader::new(file);
@@ -1119,7 +1233,10 @@ pub async fn cmd_edit(
         if clear_description {
             operations.push(format!("Update task #{}: clear description", id));
         } else if let Some(desc) = description {
-            operations.push(format!("Update task #{}: set description to \"{}\"", id, desc));
+            operations.push(format!(
+                "Update task #{}: set description to \"{}\"",
+                id, desc
+            ));
         }
         if clear_plan {
             operations.push(format!("Update task #{}: clear plan", id));
@@ -1152,24 +1269,44 @@ pub async fn cmd_edit(
             operations.push(format!("Update task #{}: merge metadata with {}", id, m));
         }
         if let Some(tags) = set_tags {
-            operations.push(format!("Update task #{}: set tags to [{}]", id, tags.join(", ")));
+            operations.push(format!(
+                "Update task #{}: set tags to [{}]",
+                id,
+                tags.join(", ")
+            ));
         }
         if !add_tag.is_empty() {
-            operations.push(format!("Update task #{}: add tags [{}]", id, add_tag.join(", ")));
+            operations.push(format!(
+                "Update task #{}: add tags [{}]",
+                id,
+                add_tag.join(", ")
+            ));
         }
         if !remove_tag.is_empty() {
-            operations.push(format!("Update task #{}: remove tags [{}]", id, remove_tag.join(", ")));
+            operations.push(format!(
+                "Update task #{}: remove tags [{}]",
+                id,
+                remove_tag.join(", ")
+            ));
         }
         if operations.is_empty() {
             operations.push(format!("Update task #{}: no changes", id));
         }
-        return print_dry_run(&cli.output, &DryRunOperation { command: "edit".into(), operations });
+        return print_dry_run(
+            &cli.output,
+            &DryRunOperation {
+                command: "edit".into(),
+                operations,
+            },
+        );
     }
 
     let branch_value = if clear_branch {
         Some(None)
     } else {
-        branch.as_ref().map(|b| Some(b.replace("${task_id}", &id.to_string())))
+        branch
+            .as_ref()
+            .map(|b| Some(b.replace("${task_id}", &id.to_string())))
     };
 
     let scalar_params = UpdateTaskParams {
@@ -1197,7 +1334,9 @@ pub async fn cmd_edit(
             let parsed = parse_assignee_user_id(val)?;
             if config.cli.remote.url.is_none() {
                 // Local mode: resolve SelfUser to numeric ID
-                Some(Some(AssigneeUserId::Id(resolve_assignee(parsed, &project_root, &config).await?)))
+                Some(Some(AssigneeUserId::Id(
+                    resolve_assignee(parsed, &project_root, &config).await?,
+                )))
             } else {
                 // Remote mode: send as-is (API resolves "self")
                 Some(Some(parsed))
@@ -1223,14 +1362,14 @@ pub async fn cmd_edit(
         metadata: if clear_metadata {
             Some(MetadataUpdate::Clear)
         } else if let Some(m) = replace_metadata {
-            let val: serde_json::Value = serde_json::from_str(m)
-                .context("invalid JSON for --replace-metadata")?;
+            let val: serde_json::Value =
+                serde_json::from_str(m).context("invalid JSON for --replace-metadata")?;
             Some(MetadataUpdate::Replace(val))
         } else {
             match metadata {
                 Some(m) => {
-                    let val: serde_json::Value = serde_json::from_str(m)
-                        .context("invalid JSON for --metadata")?;
+                    let val: serde_json::Value =
+                        serde_json::from_str(m).context("invalid JSON for --metadata")?;
                     Some(MetadataUpdate::Merge(val))
                 }
                 None => None,
@@ -1254,7 +1393,9 @@ pub async fn cmd_edit(
     };
 
     task_ops.edit_task(project_id, id, &scalar_params).await?;
-    task_ops.edit_task_arrays(project_id, id, &array_params).await?;
+    task_ops
+        .edit_task_arrays(project_id, id, &array_params)
+        .await?;
     let task = task_ops.get_task(project_id, id).await?;
 
     match cli.output {
@@ -1302,8 +1443,7 @@ pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
         DodCommand::Check { task_id, index } => {
             let (task_id, index) = (*task_id, *index);
             if cli.dry_run {
-                let operations =
-                    vec![format!("Check DoD item #{index} of task #{task_id}")];
+                let operations = vec![format!("Check DoD item #{index} of task #{task_id}")];
                 return print_dry_run(
                     &cli.output,
                     &DryRunOperation {
@@ -1324,8 +1464,7 @@ pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
         DodCommand::Uncheck { task_id, index } => {
             let (task_id, index) = (*task_id, *index);
             if cli.dry_run {
-                let operations =
-                    vec![format!("Uncheck DoD item #{index} of task #{task_id}")];
+                let operations = vec![format!("Uncheck DoD item #{index} of task #{task_id}")];
                 return print_dry_run(
                     &cli.output,
                     &DryRunOperation {
@@ -1364,33 +1503,66 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
         DepsCommand::Add { task_id, on } => {
             let (task_id, on) = (*task_id, *on);
             if cli.dry_run {
-                let operations = vec![format!("Add dependency: task #{} depends on #{}", task_id, on)];
-                return print_dry_run(&cli.output, &DryRunOperation { command: "deps add".into(), operations });
+                let operations = vec![format!(
+                    "Add dependency: task #{} depends on #{}",
+                    task_id, on
+                )];
+                return print_dry_run(
+                    &cli.output,
+                    &DryRunOperation {
+                        command: "deps add".into(),
+                        operations,
+                    },
+                );
             }
             let task = task_ops.add_dependency(project_id, task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
-                OutputFormat::Text => println!("Added dependency: task #{} depends on #{}", task_id, on),
+                OutputFormat::Text => {
+                    println!("Added dependency: task #{} depends on #{}", task_id, on)
+                }
             }
         }
         DepsCommand::Remove { task_id, on } => {
             let (task_id, on) = (*task_id, *on);
             if cli.dry_run {
-                let operations = vec![format!("Remove dependency: task #{} no longer depends on #{}", task_id, on)];
-                return print_dry_run(&cli.output, &DryRunOperation { command: "deps remove".into(), operations });
+                let operations = vec![format!(
+                    "Remove dependency: task #{} no longer depends on #{}",
+                    task_id, on
+                )];
+                return print_dry_run(
+                    &cli.output,
+                    &DryRunOperation {
+                        command: "deps remove".into(),
+                        operations,
+                    },
+                );
             }
             let task = task_ops.remove_dependency(project_id, task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
-                OutputFormat::Text => println!("Removed dependency: task #{} no longer depends on #{}", task_id, on),
+                OutputFormat::Text => println!(
+                    "Removed dependency: task #{} no longer depends on #{}",
+                    task_id, on
+                ),
             }
         }
         DepsCommand::Set { task_id, on } => {
             let task_id = *task_id;
             if cli.dry_run {
                 let dep_strs: Vec<String> = on.iter().map(|d| format!("#{d}")).collect();
-                let operations = vec![format!("Set dependencies for task #{}: [{}]", task_id, dep_strs.join(", "))];
-                return print_dry_run(&cli.output, &DryRunOperation { command: "deps set".into(), operations });
+                let operations = vec![format!(
+                    "Set dependencies for task #{}: [{}]",
+                    task_id,
+                    dep_strs.join(", ")
+                )];
+                return print_dry_run(
+                    &cli.output,
+                    &DryRunOperation {
+                        command: "deps set".into(),
+                        operations,
+                    },
+                );
             }
             let task = task_ops.set_dependencies(project_id, task_id, on).await?;
             match cli.output {
@@ -1399,8 +1571,16 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                     if task.dependencies().is_empty() {
                         println!("Cleared all dependencies for task #{}", task_id);
                     } else {
-                        let dep_strs: Vec<String> = task.dependencies().iter().map(|d| format!("#{d}")).collect();
-                        println!("Set dependencies for task #{}: {}", task_id, dep_strs.join(", "));
+                        let dep_strs: Vec<String> = task
+                            .dependencies()
+                            .iter()
+                            .map(|d| format!("#{d}"))
+                            .collect();
+                        println!(
+                            "Set dependencies for task #{}: {}",
+                            task_id,
+                            dep_strs.join(", ")
+                        );
                     }
                 }
             }
@@ -1412,7 +1592,13 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&deps)?),
                 OutputFormat::Text => {
                     for task in &deps {
-                        println!("[{}] #{} {} ({})", task.status(), task.task_number(), task.title(), task.priority());
+                        println!(
+                            "[{}] #{} {} ({})",
+                            task.status(),
+                            task.task_number(),
+                            task.title(),
+                            task.priority()
+                        );
                     }
                 }
             }
@@ -1450,18 +1636,13 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                 }
                 OutputFormat::Text => {
                     for project in &projects {
-                        let desc = project
-                            .description()
-                            .unwrap_or("");
+                        let desc = project.description().unwrap_or("");
                         println!("#{} {} {}", project.id(), project.name(), desc);
                     }
                 }
             }
         }
-        ProjectAction::Create {
-            name,
-            description,
-        } => {
+        ProjectAction::Create { name, description } => {
             let params = CreateProjectParams {
                 name: name.clone(),
                 description: description.clone(),
@@ -1504,7 +1685,9 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                         required_on_complete: *required_on_complete,
                         description: description.clone(),
                     };
-                    let field = metadata_ops.create_metadata_field(project_id, &params).await?;
+                    let field = metadata_ops
+                        .create_metadata_field(project_id, &params)
+                        .await?;
                     match cli.output {
                         OutputFormat::Json => {
                             println!("{}", serde_json::to_string_pretty(&field)?);
@@ -1547,13 +1730,12 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                     }
                 }
                 MetadataFieldAction::Remove { name } => {
-                    metadata_ops.delete_metadata_field_by_name(project_id, name).await?;
+                    metadata_ops
+                        .delete_metadata_field_by_name(project_id, name)
+                        .await?;
                     match cli.output {
                         OutputFormat::Json => {
-                            println!(
-                                "{}",
-                                serde_json::json!({"deleted": name})
-                            );
+                            println!("{}", serde_json::json!({"deleted": name}));
                         }
                         OutputFormat::Text => {
                             println!("Removed metadata field: {}", name);
@@ -1585,9 +1767,7 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
                 }
                 OutputFormat::Text => {
                     for user in &users {
-                        let display = user
-                            .display_name()
-                            .unwrap_or("");
+                        let display = user.display_name().unwrap_or("");
                         println!("#{} {} {}", user.id(), user.username(), display);
                     }
                 }
@@ -1631,7 +1811,12 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
                 }
                 OutputFormat::Text => {
                     let display = user.display_name().unwrap_or("");
-                    println!("Updated user #{}: {} {}", user.id(), user.username(), display);
+                    println!(
+                        "Updated user #{}: {} {}",
+                        user.id(),
+                        user.username(),
+                        display
+                    );
                 }
             }
         }
@@ -1665,10 +1850,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
                 }
                 OutputFormat::Text => {
                     for member in &members {
-                        println!(
-                            "user #{} — role: {}",
-                            member.user_id(), member.role()
-                        );
+                        println!("user #{} — role: {}", member.user_id(), member.role());
                     }
                 }
             }
@@ -1685,7 +1867,8 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
                 OutputFormat::Text => {
                     println!(
                         "Added user #{} to project as {}",
-                        member.user_id(), member.role()
+                        member.user_id(),
+                        member.role()
                     );
                 }
             }
@@ -1696,10 +1879,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
                 .await?;
             match cli.output {
                 OutputFormat::Json => {
-                    println!(
-                        "{}",
-                        serde_json::json!({"removed_user_id": user_id})
-                    );
+                    println!("{}", serde_json::json!({"removed_user_id": user_id}));
                 }
                 OutputFormat::Text => {
                     println!("Removed user #{} from project", user_id);
@@ -1717,7 +1897,8 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
                 OutputFormat::Text => {
                     println!(
                         "Updated user #{} role to {}",
-                        member.user_id(), member.role()
+                        member.user_id(),
+                        member.role()
                     );
                 }
             }
@@ -1806,44 +1987,43 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
     super::auth_cache::cache_auth_mode(&config.xdg, api_url, auth_mode)?;
 
     match result {
-        super::oidc_login::LoginResult::Oidc { key_prefix, expires_at } => {
-            match cli.output {
-                OutputFormat::Json => {
-                    println!(
-                        "{}",
-                        serde_json::json!({
-                            "auth_mode": "oidc",
-                            "key_prefix": key_prefix,
-                            "expires_at": expires_at,
-                        })
-                    );
-                }
-                OutputFormat::Text => {
-                    eprintln!("Login successful!");
-                    eprintln!("  API key: {}...", key_prefix);
-                    if let Some(ref exp) = expires_at {
-                        eprintln!("  Expires: {exp}");
-                    }
-                    eprintln!("  Saved to OS keychain.");
-                }
+        super::oidc_login::LoginResult::Oidc {
+            key_prefix,
+            expires_at,
+        } => match cli.output {
+            OutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "auth_mode": "oidc",
+                        "key_prefix": key_prefix,
+                        "expires_at": expires_at,
+                    })
+                );
             }
-        }
-        super::oidc_login::LoginResult::TrustedHeaders => {
-            match cli.output {
-                OutputFormat::Json => {
-                    println!(
-                        "{}",
-                        serde_json::json!({
-                            "auth_mode": "trusted_headers",
-                        })
-                    );
+            OutputFormat::Text => {
+                eprintln!("Login successful!");
+                eprintln!("  API key: {}...", key_prefix);
+                if let Some(ref exp) = expires_at {
+                    eprintln!("  Expires: {exp}");
                 }
-                OutputFormat::Text => {
-                    eprintln!("Login successful!");
-                    eprintln!("  Access token saved to OS keychain.");
-                }
+                eprintln!("  Saved to OS keychain.");
             }
-        }
+        },
+        super::oidc_login::LoginResult::TrustedHeaders => match cli.output {
+            OutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "auth_mode": "trusted_headers",
+                    })
+                );
+            }
+            OutputFormat::Text => {
+                eprintln!("Login successful!");
+                eprintln!("  Access token saved to OS keychain.");
+            }
+        },
     }
     Ok(())
 }
@@ -1858,7 +2038,9 @@ fn require_api_url_and_token(cli: &Cli) -> Result<(String, String)> {
         .remote
         .url
         .as_deref()
-        .context("cli.remote.url is not configured. Set it in config to point to the senko API server.")?
+        .context(
+            "cli.remote.url is not configured. Set it in config to point to the senko API server.",
+        )?
         .to_string();
     // ensure_cli_token (called by load_config) may have already resolved the token
     if let Some(token) = config.cli.remote.token {
@@ -1887,7 +2069,9 @@ fn api_url_and_optional_token_with_xdg(
         .remote
         .url
         .as_deref()
-        .context("cli.remote.url is not configured. Set it in config to point to the senko API server.")?
+        .context(
+            "cli.remote.url is not configured. Set it in config to point to the senko API server.",
+        )?
         .to_string();
     if let Some(token) = config.cli.remote.token {
         return Ok((api_url, Some(token)));
@@ -1948,12 +2132,9 @@ async fn fetch_auth_mode(api_url: &str) -> Result<String> {
 pub async fn cmd_auth_token(cli: &Cli) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let api_url = config
-        .cli
-        .remote
-        .url
-        .as_deref()
-        .context("cli.remote.url is not configured. Set it in config to point to the senko API server.")?;
+    let api_url = config.cli.remote.url.as_deref().context(
+        "cli.remote.url is not configured. Set it in config to point to the senko API server.",
+    )?;
 
     let token = match fetch_auth_mode(api_url).await {
         Ok(auth_mode) => match auth_mode.as_str() {
@@ -1984,10 +2165,7 @@ pub async fn cmd_auth_status(cli: &Cli) -> Result<()> {
     if let Some(ref token) = token {
         req = req.bearer_auth(token);
     }
-    let resp = req
-        .send()
-        .await
-        .context("failed to connect to server")?;
+    let resp = req.send().await.context("failed to connect to server")?;
     if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
         bail!("Not logged in. Run `senko auth login` to authenticate.");
     }
@@ -2042,19 +2220,19 @@ pub async fn cmd_auth_logout(cli: &Cli) -> Result<()> {
         .bearer_auth(&token)
         .send()
         .await;
-    if let Ok(resp) = me_resp {
-        if resp.status().is_success() {
-            if let Ok(me) = resp.json::<CliMeResponse>().await {
-                if let Some(session) = me.session {
-                    let revoke_resp = client
-                        .delete(format!("{base}/auth/sessions/{}", session.id))
-                        .bearer_auth(&token)
-                        .send()
-                        .await;
-                    server_revoked = revoke_resp.map(|r| r.status().is_success()).unwrap_or(false);
-                }
-            }
-        }
+    if let Ok(resp) = me_resp
+        && resp.status().is_success()
+        && let Ok(me) = resp.json::<CliMeResponse>().await
+        && let Some(session) = me.session
+    {
+        let revoke_resp = client
+            .delete(format!("{base}/auth/sessions/{}", session.id))
+            .bearer_auth(&token)
+            .send()
+            .await;
+        server_revoked = revoke_resp
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
     }
 
     // Always delete from keychain
@@ -2115,8 +2293,8 @@ pub async fn cmd_auth_sessions(cli: &Cli) -> Result<()> {
                 eprintln!("No active sessions.");
             } else {
                 eprintln!(
-                    "{:<6} {:<14} {:<16} {:<22} {}",
-                    "ID", "KEY PREFIX", "DEVICE", "CREATED", "LAST USED"
+                    "{:<6} {:<14} {:<16} {:<22} LAST USED",
+                    "ID", "KEY PREFIX", "DEVICE", "CREATED"
                 );
                 for s in &sessions {
                     eprintln!(
@@ -2155,7 +2333,9 @@ pub async fn cmd_auth_revoke(cli: &Cli, id: Option<i64>, all: bool) -> Result<()
             OutputFormat::Json => println!("{}", serde_json::json!({"revoked": "all"})),
             OutputFormat::Text => {
                 eprintln!("All sessions revoked.");
-                eprintln!("Note: your current session has also been revoked. Run `senko auth login` to re-authenticate.");
+                eprintln!(
+                    "Note: your current session has also been revoked. Run `senko auth login` to re-authenticate."
+                );
             }
         }
     } else if let Some(session_id) = id {
@@ -2185,10 +2365,7 @@ pub async fn cmd_auth_revoke(cli: &Cli, id: Option<i64>, all: bool) -> Result<()
 
 // --- Contract commands ---
 
-fn build_contract_ops(
-    config: &Config,
-    root: &Path,
-) -> Result<Arc<dyn ContractOperations>> {
+fn build_contract_ops(config: &Config, root: &Path) -> Result<Arc<dyn ContractOperations>> {
     if config.cli.remote.url.is_some() {
         Ok(Arc::new(create_remote_contract_operations(config)))
     } else {
@@ -2206,10 +2383,10 @@ fn print_contract_text(c: &crate::domain::contract::Contract) {
     if !c.tags().is_empty() {
         println!("  tags: {}", c.tags().join(", "));
     }
-    if let Some(meta) = c.metadata() {
-        if let Ok(s) = serde_json::to_string(meta) {
-            println!("  metadata: {s}");
-        }
+    if let Some(meta) = c.metadata()
+        && let Ok(s) = serde_json::to_string(meta)
+    {
+        println!("  metadata: {s}");
     }
     if !c.definition_of_done().is_empty() {
         println!("  definition_of_done:");
@@ -2367,39 +2544,75 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                 if *clear_description {
                     operations.push(format!("Update contract #{}: clear description", id));
                 } else if let Some(d) = description {
-                    operations.push(format!("Update contract #{}: set description to \"{}\"", id, d));
+                    operations.push(format!(
+                        "Update contract #{}: set description to \"{}\"",
+                        id, d
+                    ));
                 }
                 if *clear_metadata {
                     operations.push(format!("Update contract #{}: clear metadata", id));
                 } else if let Some(m) = replace_metadata {
-                    operations.push(format!("Update contract #{}: replace metadata with {}", id, m));
+                    operations.push(format!(
+                        "Update contract #{}: replace metadata with {}",
+                        id, m
+                    ));
                 } else if let Some(m) = metadata {
-                    operations.push(format!("Update contract #{}: merge metadata with {}", id, m));
+                    operations.push(format!(
+                        "Update contract #{}: merge metadata with {}",
+                        id, m
+                    ));
                 }
                 if let Some(tags) = set_tags {
-                    operations.push(format!("Update contract #{}: set tags to [{}]", id, tags.join(", ")));
+                    operations.push(format!(
+                        "Update contract #{}: set tags to [{}]",
+                        id,
+                        tags.join(", ")
+                    ));
                 }
                 if !add_tag.is_empty() {
-                    operations.push(format!("Update contract #{}: add tags [{}]", id, add_tag.join(", ")));
+                    operations.push(format!(
+                        "Update contract #{}: add tags [{}]",
+                        id,
+                        add_tag.join(", ")
+                    ));
                 }
                 if !remove_tag.is_empty() {
-                    operations.push(format!("Update contract #{}: remove tags [{}]", id, remove_tag.join(", ")));
+                    operations.push(format!(
+                        "Update contract #{}: remove tags [{}]",
+                        id,
+                        remove_tag.join(", ")
+                    ));
                 }
                 if let Some(dod) = set_definition_of_done {
-                    operations.push(format!("Update contract #{}: set DoD to [{}]", id, dod.join(", ")));
+                    operations.push(format!(
+                        "Update contract #{}: set DoD to [{}]",
+                        id,
+                        dod.join(", ")
+                    ));
                 }
                 if !add_definition_of_done.is_empty() {
-                    operations.push(format!("Update contract #{}: add DoD [{}]", id, add_definition_of_done.join(", ")));
+                    operations.push(format!(
+                        "Update contract #{}: add DoD [{}]",
+                        id,
+                        add_definition_of_done.join(", ")
+                    ));
                 }
                 if !remove_definition_of_done.is_empty() {
-                    operations.push(format!("Update contract #{}: remove DoD [{}]", id, remove_definition_of_done.join(", ")));
+                    operations.push(format!(
+                        "Update contract #{}: remove DoD [{}]",
+                        id,
+                        remove_definition_of_done.join(", ")
+                    ));
                 }
                 if operations.is_empty() {
                     operations.push(format!("Update contract #{}: no changes", id));
                 }
                 return print_dry_run(
                     &cli.output,
-                    &DryRunOperation { command: "contract edit".into(), operations },
+                    &DryRunOperation {
+                        command: "contract edit".into(),
+                        operations,
+                    },
                 );
             }
 
@@ -2463,10 +2676,13 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
             contract_ops.delete_contract(id).await?;
             match cli.output {
                 OutputFormat::Json => {
-                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                        "deleted": true,
-                        "id": id,
-                    }))?);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "deleted": true,
+                            "id": id,
+                        }))?
+                    );
                 }
                 OutputFormat::Text => println!("Deleted contract #{}", id),
             }
@@ -2479,9 +2695,7 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                         &cli.output,
                         &DryRunOperation {
                             command: "contract dod check".into(),
-                            operations: vec![format!(
-                                "Check DoD item #{idx} of contract #{cid}"
-                            )],
+                            operations: vec![format!("Check DoD item #{idx} of contract #{cid}")],
                         },
                     );
                 }
@@ -2504,9 +2718,7 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                         &cli.output,
                         &DryRunOperation {
                             command: "contract dod uncheck".into(),
-                            operations: vec![format!(
-                                "Uncheck DoD item #{idx} of contract #{cid}"
-                            )],
+                            operations: vec![format!("Uncheck DoD item #{idx} of contract #{cid}")],
                         },
                     );
                 }
@@ -2601,8 +2813,8 @@ fn build_project_ops_pair(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::{Command, OutputFormat};
+    use super::*;
     use crate::domain::TaskRepository;
 
     #[tokio::test]
@@ -2655,7 +2867,13 @@ mod tests {
         .await
         .unwrap();
 
-        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None, &crate::infra::xdg::XdgDirs::default()).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(
+            tmp.path(),
+            Some(&tmp.path().join("data.db")),
+            None,
+            &crate::infra::xdg::XdgDirs::default(),
+        )
+        .unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title(), "test task");
         assert_eq!(task.background(), Some("bg"));
@@ -2719,7 +2937,13 @@ mod tests {
         .await
         .unwrap();
 
-        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None, &crate::infra::xdg::XdgDirs::default()).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(
+            tmp.path(),
+            Some(&tmp.path().join("data.db")),
+            None,
+            &crate::infra::xdg::XdgDirs::default(),
+        )
+        .unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title(), "file task");
         assert_eq!(task.priority(), crate::domain::task::Priority::P0);
@@ -2771,12 +2995,15 @@ mod tests {
             false,
             None,
             None,
-        ).await;
+        )
+        .await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("--title is required"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("--title is required")
+        );
     }
 
     #[tokio::test]
@@ -2828,7 +3055,13 @@ mod tests {
         )
         .await
         .unwrap();
-        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None, &crate::infra::xdg::XdgDirs::default()).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(
+            tmp.path(),
+            Some(&tmp.path().join("data.db")),
+            None,
+            &crate::infra::xdg::XdgDirs::default(),
+        )
+        .unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title(), "my task");
     }
@@ -2882,7 +3115,13 @@ mod tests {
         )
         .await
         .unwrap();
-        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None, &crate::infra::xdg::XdgDirs::default()).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(
+            tmp.path(),
+            Some(&tmp.path().join("data.db")),
+            None,
+            &crate::infra::xdg::XdgDirs::default(),
+        )
+        .unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title(), "json out");
     }
@@ -2892,12 +3131,18 @@ mod tests {
     #[test]
     fn expand_tilde_with_home() {
         let home = std::env::var("HOME").unwrap();
-        assert_eq!(super::expand_tilde("~/foo/bar.sh"), format!("{home}/foo/bar.sh"));
+        assert_eq!(
+            super::expand_tilde("~/foo/bar.sh"),
+            format!("{home}/foo/bar.sh")
+        );
     }
 
     #[test]
     fn expand_tilde_no_tilde() {
-        assert_eq!(super::expand_tilde("/usr/bin/script.sh"), "/usr/bin/script.sh");
+        assert_eq!(
+            super::expand_tilde("/usr/bin/script.sh"),
+            "/usr/bin/script.sh"
+        );
     }
 
     #[test]
@@ -2946,7 +3191,9 @@ mod tests {
 
     #[test]
     fn run_hook_checks_env_set() {
-        unsafe { std::env::set_var("SENKO_DOCTOR_TEST_VAR_OK", "1"); }
+        unsafe {
+            std::env::set_var("SENKO_DOCTOR_TEST_VAR_OK", "1");
+        }
         let entry = crate::infra::config::HookEntry {
             command: "echo test".to_string(),
             enabled: true,
@@ -2955,7 +3202,9 @@ mod tests {
         let checks = super::run_hook_checks(&entry);
         assert_eq!(checks.len(), 1);
         assert_eq!(checks[0].status, super::CheckStatus::Ok);
-        unsafe { std::env::remove_var("SENKO_DOCTOR_TEST_VAR_OK"); }
+        unsafe {
+            std::env::remove_var("SENKO_DOCTOR_TEST_VAR_OK");
+        }
     }
 
     #[test]

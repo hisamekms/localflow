@@ -19,7 +19,6 @@ pub enum MergeVia {
     Pr,
 }
 
-
 impl fmt::Display for MergeVia {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -38,7 +37,6 @@ pub enum BranchMode {
     Branch,
 }
 
-
 impl fmt::Display for BranchMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -56,7 +54,6 @@ pub enum MergeStrategy {
     Rebase,
     Squash,
 }
-
 
 impl fmt::Display for MergeStrategy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -95,8 +92,20 @@ pub struct UnblockedTask {
 }
 
 impl UnblockedTask {
-    pub fn new(id: i64, task_number: i64, title: String, priority: Priority, metadata: Option<serde_json::Value>) -> Self {
-        Self { id, task_number, title, priority, metadata }
+    pub fn new(
+        id: i64,
+        task_number: i64,
+        title: String,
+        priority: Priority,
+        metadata: Option<serde_json::Value>,
+    ) -> Self {
+        Self {
+            id,
+            task_number,
+            title,
+            priority,
+            metadata,
+        }
     }
 
     pub fn id(&self) -> i64 {
@@ -180,7 +189,10 @@ impl FromStr for TaskStatus {
             "in_progress" => Ok(TaskStatus::InProgress),
             "completed" => Ok(TaskStatus::Completed),
             "canceled" => Ok(TaskStatus::Canceled),
-            _ => Err(DomainError::InvalidTaskStatus { value: s.to_string() }.into()),
+            _ => Err(DomainError::InvalidTaskStatus {
+                value: s.to_string(),
+            }
+            .into()),
         }
     }
 }
@@ -202,7 +214,10 @@ impl TryFrom<i32> for Priority {
             1 => Ok(Priority::P1),
             2 => Ok(Priority::P2),
             3 => Ok(Priority::P3),
-            _ => Err(DomainError::InvalidPriority { value: value.to_string() }.into()),
+            _ => Err(DomainError::InvalidPriority {
+                value: value.to_string(),
+            }
+            .into()),
         }
     }
 }
@@ -234,7 +249,10 @@ impl FromStr for Priority {
             "p1" => Ok(Priority::P1),
             "p2" => Ok(Priority::P2),
             "p3" => Ok(Priority::P3),
-            _ => Err(DomainError::InvalidPriority { value: s.to_string() }.into()),
+            _ => Err(DomainError::InvalidPriority {
+                value: s.to_string(),
+            }
+            .into()),
         }
     }
 }
@@ -507,9 +525,10 @@ impl Task {
             changed = true;
         }
         if let Some(ref assignee_user_id) = params.assignee_user_id {
-            self.assignee_user_id = assignee_user_id
-                .as_ref()
-                .map(|a| a.as_id().expect("AssigneeUserId::SelfUser must be resolved before apply_update"));
+            self.assignee_user_id = assignee_user_id.as_ref().map(|a| {
+                a.as_id()
+                    .expect("AssigneeUserId::SelfUser must be resolved before apply_update")
+            });
             changed = true;
         }
         if let Some(ref started_at) = params.started_at {
@@ -656,13 +675,21 @@ impl Task {
     }
 
     /// Transition: Todo -> InProgress.
-    pub fn start(mut self, assignee_session_id: Option<String>, assignee_user_id: Option<i64>, started_at: String, metadata: Option<MetadataUpdate>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
+    pub fn start(
+        mut self,
+        assignee_session_id: Option<String>,
+        assignee_user_id: Option<i64>,
+        started_at: String,
+        metadata: Option<MetadataUpdate>,
+    ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         self.status = self.status.transition_to(TaskStatus::InProgress)?;
         self.assignee_session_id = assignee_session_id;
         if let Some(starting_uid) = assignee_user_id {
             if let Some(current_uid) = self.assignee_user_id {
                 if current_uid != starting_uid {
-                    anyhow::bail!("task is assigned to user {current_uid}, cannot be started by user {starting_uid}");
+                    anyhow::bail!(
+                        "task is assigned to user {current_uid}, cannot be started by user {starting_uid}"
+                    );
                 }
             } else {
                 self.assignee_user_id = Some(starting_uid);
@@ -690,7 +717,11 @@ impl Task {
     ///
     /// Validates that all DoD items are checked before allowing completion.
     pub fn complete(mut self, completed_at: String) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
-        let unchecked_count = self.definition_of_done.iter().filter(|d| !d.checked).count();
+        let unchecked_count = self
+            .definition_of_done
+            .iter()
+            .filter(|d| !d.checked)
+            .count();
         if unchecked_count > 0 {
             return Err(DomainError::CannotCompleteTask {
                 task_id: self.task_number,
@@ -705,7 +736,11 @@ impl Task {
     }
 
     /// Transition: active -> Canceled.
-    pub fn cancel(mut self, canceled_at: String, reason: Option<String>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
+    pub fn cancel(
+        mut self,
+        canceled_at: String,
+        reason: Option<String>,
+    ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         self.status = self.status.transition_to(TaskStatus::Canceled)?;
         self.updated_at = canceled_at.clone();
         self.canceled_at = Some(canceled_at);
@@ -714,7 +749,11 @@ impl Task {
     }
 
     /// Add a dependency, validating self-dependency. Idempotent (no event if already present).
-    pub fn add_dependency(mut self, dep_id: i64, now: Option<String>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
+    pub fn add_dependency(
+        mut self,
+        dep_id: i64,
+        now: Option<String>,
+    ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         if self.task_number == dep_id {
             return Err(DomainError::SelfDependency.into());
         }
@@ -730,7 +769,11 @@ impl Task {
     }
 
     /// Remove a dependency, validating existence.
-    pub fn remove_dependency(mut self, dep_id: i64, now: Option<String>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
+    pub fn remove_dependency(
+        mut self,
+        dep_id: i64,
+        now: Option<String>,
+    ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         let before = self.dependencies.len();
         self.dependencies.retain(|&d| d != dep_id);
         if self.dependencies.len() == before {
@@ -747,7 +790,11 @@ impl Task {
     }
 
     /// Replace all dependencies, validating no self-dependency.
-    pub fn set_dependencies(mut self, dep_ids: &[i64], now: Option<String>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
+    pub fn set_dependencies(
+        mut self,
+        dep_ids: &[i64],
+        now: Option<String>,
+    ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         for &dep_id in dep_ids {
             if dep_id == self.task_number {
                 return Err(DomainError::SelfDependency.into());
@@ -757,11 +804,20 @@ impl Task {
         if let Some(now) = now {
             self.updated_at = now;
         }
-        Ok((self, vec![TaskEvent::DependenciesSet { dep_ids: dep_ids.to_vec() }]))
+        Ok((
+            self,
+            vec![TaskEvent::DependenciesSet {
+                dep_ids: dep_ids.to_vec(),
+            }],
+        ))
     }
 
     /// Check a DoD item by 1-based index.
-    pub fn check_dod(mut self, index: usize, now: String) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
+    pub fn check_dod(
+        mut self,
+        index: usize,
+        now: String,
+    ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         if index == 0 || index > self.definition_of_done.len() {
             return Err(DomainError::DodIndexOutOfRange {
                 index,
@@ -776,7 +832,11 @@ impl Task {
     }
 
     /// Uncheck a DoD item by 1-based index.
-    pub fn uncheck_dod(mut self, index: usize, now: String) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
+    pub fn uncheck_dod(
+        mut self,
+        index: usize,
+        now: String,
+    ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         if index == 0 || index > self.definition_of_done.len() {
             return Err(DomainError::DodIndexOutOfRange {
                 index,
@@ -867,7 +927,9 @@ impl<'de> Deserialize<'de> for AssigneeUserId {
                 if v == "self" {
                     Ok(AssigneeUserId::SelfUser)
                 } else {
-                    Err(E::custom(format!("expected \"self\" or integer, got \"{v}\"")))
+                    Err(E::custom(format!(
+                        "expected \"self\" or integer, got \"{v}\""
+                    )))
                 }
             }
             fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
@@ -965,9 +1027,24 @@ impl CreateTaskParams {
         validate_optional_string_length("background", &self.background, MAX_LONG_TEXT_LEN)?;
         validate_optional_string_length("description", &self.description, MAX_LONG_TEXT_LEN)?;
         validate_string_vec_items("tags", &self.tags, MAX_TAG_LEN, MAX_TAGS_COUNT)?;
-        validate_string_vec_items("definition_of_done", &self.definition_of_done, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
-        validate_string_vec_items("in_scope", &self.in_scope, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
-        validate_string_vec_items("out_of_scope", &self.out_of_scope, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+        validate_string_vec_items(
+            "definition_of_done",
+            &self.definition_of_done,
+            MAX_SHORT_TEXT_LEN,
+            MAX_ITEMS_COUNT,
+        )?;
+        validate_string_vec_items(
+            "in_scope",
+            &self.in_scope,
+            MAX_SHORT_TEXT_LEN,
+            MAX_ITEMS_COUNT,
+        )?;
+        validate_string_vec_items(
+            "out_of_scope",
+            &self.out_of_scope,
+            MAX_SHORT_TEXT_LEN,
+            MAX_ITEMS_COUNT,
+        )?;
         validate_optional_string_length("branch", &self.branch, MAX_SHORT_TEXT_LEN)?;
         validate_optional_string_length("pr_url", &self.pr_url, MAX_SHORT_TEXT_LEN)?;
         Ok(())
@@ -999,10 +1076,22 @@ impl UpdateTaskParams {
         if let Some(ref title) = self.title {
             validate_string_length("title", title, MAX_TITLE_LEN)?;
         }
-        validate_optional_nullable_string_length("background", &self.background, MAX_LONG_TEXT_LEN)?;
-        validate_optional_nullable_string_length("description", &self.description, MAX_LONG_TEXT_LEN)?;
+        validate_optional_nullable_string_length(
+            "background",
+            &self.background,
+            MAX_LONG_TEXT_LEN,
+        )?;
+        validate_optional_nullable_string_length(
+            "description",
+            &self.description,
+            MAX_LONG_TEXT_LEN,
+        )?;
         validate_optional_nullable_string_length("plan", &self.plan, MAX_LONG_TEXT_LEN)?;
-        validate_optional_nullable_string_length("cancel_reason", &self.cancel_reason, MAX_LONG_TEXT_LEN)?;
+        validate_optional_nullable_string_length(
+            "cancel_reason",
+            &self.cancel_reason,
+            MAX_LONG_TEXT_LEN,
+        )?;
         validate_optional_nullable_string_length("branch", &self.branch, MAX_SHORT_TEXT_LEN)?;
         validate_optional_nullable_string_length("pr_url", &self.pr_url, MAX_SHORT_TEXT_LEN)?;
         if let Some(Some(ref session_id)) = self.assignee_session_id {
@@ -1012,8 +1101,7 @@ impl UpdateTaskParams {
     }
 }
 
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ListTasksFilter {
     pub statuses: Vec<TaskStatus>,
     pub tags: Vec<String>,
@@ -1048,21 +1136,45 @@ impl UpdateTaskArrayParams {
         }
         validate_string_vec_items("add_tags", &self.add_tags, MAX_TAG_LEN, MAX_TAGS_COUNT)?;
         if let Some(ref dod) = self.set_definition_of_done {
-            validate_string_vec_items("set_definition_of_done", dod, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+            validate_string_vec_items(
+                "set_definition_of_done",
+                dod,
+                MAX_SHORT_TEXT_LEN,
+                MAX_ITEMS_COUNT,
+            )?;
         }
-        validate_string_vec_items("add_definition_of_done", &self.add_definition_of_done, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+        validate_string_vec_items(
+            "add_definition_of_done",
+            &self.add_definition_of_done,
+            MAX_SHORT_TEXT_LEN,
+            MAX_ITEMS_COUNT,
+        )?;
         if let Some(ref scope) = self.set_in_scope {
             validate_string_vec_items("set_in_scope", scope, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
         }
-        validate_string_vec_items("add_in_scope", &self.add_in_scope, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+        validate_string_vec_items(
+            "add_in_scope",
+            &self.add_in_scope,
+            MAX_SHORT_TEXT_LEN,
+            MAX_ITEMS_COUNT,
+        )?;
         if let Some(ref scope) = self.set_out_of_scope {
-            validate_string_vec_items("set_out_of_scope", scope, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+            validate_string_vec_items(
+                "set_out_of_scope",
+                scope,
+                MAX_SHORT_TEXT_LEN,
+                MAX_ITEMS_COUNT,
+            )?;
         }
-        validate_string_vec_items("add_out_of_scope", &self.add_out_of_scope, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
+        validate_string_vec_items(
+            "add_out_of_scope",
+            &self.add_out_of_scope,
+            MAX_SHORT_TEXT_LEN,
+            MAX_ITEMS_COUNT,
+        )?;
         Ok(())
     }
 }
-
 
 // --- Domain functions ---
 
@@ -1082,7 +1194,15 @@ pub fn compute_unblocked(
     current_ready
         .iter()
         .filter(|t| !prev_ready_ids.contains(&t.id()))
-        .map(|t| UnblockedTask::new(t.id(), t.task_number(), t.title().to_string(), t.priority(), t.metadata().cloned()))
+        .map(|t| {
+            UnblockedTask::new(
+                t.id(),
+                t.task_number(),
+                t.title().to_string(),
+                t.priority(),
+                t.metadata().cloned(),
+            )
+        })
         .collect()
 }
 
@@ -1099,7 +1219,11 @@ impl CompletionPolicy {
     /// Returns the PR URL that must be verified, or `None` if no PR check is needed.
     ///
     /// Returns `Err` if the merge_via mode requires a PR URL but none is set on the task.
-    pub fn required_pr_url<'a>(&self, task: &'a Task, skip_pr_check: bool) -> Result<Option<&'a str>> {
+    pub fn required_pr_url<'a>(
+        &self,
+        task: &'a Task,
+        skip_pr_check: bool,
+    ) -> Result<Option<&'a str>> {
         if skip_pr_check || self.merge_via != MergeVia::Pr {
             return Ok(None);
         }
@@ -1113,6 +1237,27 @@ impl CompletionPolicy {
         })?;
         Ok(Some(pr_url))
     }
+}
+
+#[async_trait]
+pub trait TaskRepository: Send + Sync {
+    async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task>;
+    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task>;
+    async fn update_task(
+        &self,
+        project_id: i64,
+        id: i64,
+        params: &UpdateTaskParams,
+    ) -> Result<Task>;
+    async fn update_task_arrays(
+        &self,
+        project_id: i64,
+        id: i64,
+        params: &UpdateTaskArrayParams,
+    ) -> Result<()>;
+    async fn delete_task(&self, project_id: i64, id: i64) -> Result<()>;
+    async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>>;
+    async fn save(&self, task: &Task) -> Result<()>;
 }
 
 #[cfg(test)]
@@ -1202,7 +1347,10 @@ mod tests {
                 from.can_transition_to(to),
                 "{from} -> {to} should be allowed"
             );
-            assert!(from.transition_to(to).is_ok(), "{from} -> {to} should be ok");
+            assert!(
+                from.transition_to(to).is_ok(),
+                "{from} -> {to} should be ok"
+            );
         }
     }
 
@@ -1252,11 +1400,32 @@ mod tests {
 
     fn make_task(status: TaskStatus) -> Task {
         Task::new(
-            1, 1, 1, "test".to_string(), None, None, None, Priority::P2, status,
-            None, None,
-            "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "test".to_string(),
+            None,
+            None,
+            None,
+            Priority::P2,
+            status,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".to_string(),
+            "2026-01-01T00:00:00Z".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         )
     }
 
@@ -1298,7 +1467,14 @@ mod tests {
     #[test]
     fn task_start_from_todo() {
         let task = make_task(TaskStatus::Todo);
-        let (task, events) = task.start(Some("session-1".to_string()), None, "2026-01-02T00:00:00Z".to_string(), None).unwrap();
+        let (task, events) = task
+            .start(
+                Some("session-1".to_string()),
+                None,
+                "2026-01-02T00:00:00Z".to_string(),
+                None,
+            )
+            .unwrap();
         assert_eq!(events, vec![TaskEvent::Started]);
         assert_eq!(task.status(), TaskStatus::InProgress);
         assert_eq!(task.assignee_session_id(), Some("session-1"));
@@ -1310,7 +1486,14 @@ mod tests {
     fn task_start_with_metadata_replace() {
         let task = make_task(TaskStatus::Todo);
         let meta = serde_json::json!({"key": "value"});
-        let (task, _) = task.start(None, None, "2026-01-02T00:00:00Z".to_string(), Some(MetadataUpdate::Replace(meta.clone()))).unwrap();
+        let (task, _) = task
+            .start(
+                None,
+                None,
+                "2026-01-02T00:00:00Z".to_string(),
+                Some(MetadataUpdate::Replace(meta.clone())),
+            )
+            .unwrap();
         assert_eq!(task.metadata(), Some(&meta));
     }
 
@@ -1318,8 +1501,18 @@ mod tests {
     fn task_start_with_metadata_merge() {
         let mut task = make_task(TaskStatus::Todo);
         task.metadata = Some(serde_json::json!({"a": 1, "b": 2}));
-        let (task, _) = task.start(None, None, "2026-01-02T00:00:00Z".to_string(), Some(MetadataUpdate::Merge(serde_json::json!({"b": 3, "c": 4})))).unwrap();
-        assert_eq!(task.metadata(), Some(&serde_json::json!({"a": 1, "b": 3, "c": 4})));
+        let (task, _) = task
+            .start(
+                None,
+                None,
+                "2026-01-02T00:00:00Z".to_string(),
+                Some(MetadataUpdate::Merge(serde_json::json!({"b": 3, "c": 4}))),
+            )
+            .unwrap();
+        assert_eq!(
+            task.metadata(),
+            Some(&serde_json::json!({"a": 1, "b": 3, "c": 4}))
+        );
     }
 
     #[test]
@@ -1327,21 +1520,28 @@ mod tests {
         let mut task = make_task(TaskStatus::Todo);
         let existing = serde_json::json!({"existing": true});
         task.metadata = Some(existing.clone());
-        let (task, _) = task.start(None, None, "2026-01-02T00:00:00Z".to_string(), None).unwrap();
+        let (task, _) = task
+            .start(None, None, "2026-01-02T00:00:00Z".to_string(), None)
+            .unwrap();
         assert_eq!(task.metadata(), Some(&existing));
     }
 
     #[test]
     fn task_start_from_draft_fails() {
         let task = make_task(TaskStatus::Draft);
-        assert!(task.start(None, None, "2026-01-02T00:00:00Z".to_string(), None).is_err());
+        assert!(
+            task.start(None, None, "2026-01-02T00:00:00Z".to_string(), None)
+                .is_err()
+        );
     }
 
     #[test]
     fn start_unassigned_task_sets_assignee() {
         let task = make_task(TaskStatus::Todo);
         assert_eq!(task.assignee_user_id(), None);
-        let (task, _) = task.start(None, Some(5), "2026-01-02T00:00:00Z".to_string(), None).unwrap();
+        let (task, _) = task
+            .start(None, Some(5), "2026-01-02T00:00:00Z".to_string(), None)
+            .unwrap();
         assert_eq!(task.assignee_user_id(), Some(5));
     }
 
@@ -1454,32 +1654,81 @@ mod tests {
             ..default_update_params()
         };
         let task = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
-        assert_eq!(task.metadata(), Some(&serde_json::json!({"a": 1, "b": 3, "c": 4})));
+        assert_eq!(
+            task.metadata(),
+            Some(&serde_json::json!({"a": 1, "b": 3, "c": 4}))
+        );
     }
 
     #[test]
     fn start_self_assigned_task_succeeds() {
         let task = Task::new(
-            1, 1, 1, "test".to_string(), None, None, None, Priority::P2, TaskStatus::Todo,
-            None, Some(5),
-            "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "test".to_string(),
+            None,
+            None,
+            None,
+            Priority::P2,
+            TaskStatus::Todo,
+            None,
+            Some(5),
+            "2026-01-01T00:00:00Z".to_string(),
+            "2026-01-01T00:00:00Z".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
-        let (task, _) = task.start(None, Some(5), "2026-01-02T00:00:00Z".to_string(), None).unwrap();
+        let (task, _) = task
+            .start(None, Some(5), "2026-01-02T00:00:00Z".to_string(), None)
+            .unwrap();
         assert_eq!(task.assignee_user_id(), Some(5));
     }
 
     #[test]
     fn start_other_assigned_task_fails() {
         let task = Task::new(
-            1, 1, 1, "test".to_string(), None, None, None, Priority::P2, TaskStatus::Todo,
-            None, Some(5),
-            "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "test".to_string(),
+            None,
+            None,
+            None,
+            Priority::P2,
+            TaskStatus::Todo,
+            None,
+            Some(5),
+            "2026-01-01T00:00:00Z".to_string(),
+            "2026-01-01T00:00:00Z".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
-        let err = task.start(None, Some(99), "2026-01-02T00:00:00Z".to_string(), None).unwrap_err();
+        let err = task
+            .start(None, Some(99), "2026-01-02T00:00:00Z".to_string(), None)
+            .unwrap_err();
         assert!(err.to_string().contains("assigned to user 5"));
         assert!(err.to_string().contains("cannot be started by user 99"));
     }
@@ -1487,20 +1736,45 @@ mod tests {
     #[test]
     fn start_with_none_user_preserves_assignee() {
         let task = Task::new(
-            1, 1, 1, "test".to_string(), None, None, None, Priority::P2, TaskStatus::Todo,
-            None, Some(5),
-            "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            1,
+            1,
+            1,
+            "test".to_string(),
+            None,
+            None,
+            None,
+            Priority::P2,
+            TaskStatus::Todo,
+            None,
+            Some(5),
+            "2026-01-01T00:00:00Z".to_string(),
+            "2026-01-01T00:00:00Z".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
-        let (task, _) = task.start(None, None, "2026-01-02T00:00:00Z".to_string(), None).unwrap();
+        let (task, _) = task
+            .start(None, None, "2026-01-02T00:00:00Z".to_string(), None)
+            .unwrap();
         assert_eq!(task.assignee_user_id(), Some(5));
     }
 
     #[test]
     fn start_with_none_user_unassigned_stays_none() {
         let task = make_task(TaskStatus::Todo);
-        let (task, _) = task.start(None, None, "2026-01-02T00:00:00Z".to_string(), None).unwrap();
+        let (task, _) = task
+            .start(None, None, "2026-01-02T00:00:00Z".to_string(), None)
+            .unwrap();
         assert_eq!(task.assignee_user_id(), None);
     }
 
@@ -1523,15 +1797,21 @@ mod tests {
     #[test]
     fn task_complete_with_unchecked_dod_fails() {
         let task = make_task_with_dod();
-        let err = task.complete("2026-01-03T00:00:00Z".to_string()).unwrap_err();
+        let err = task
+            .complete("2026-01-03T00:00:00Z".to_string())
+            .unwrap_err();
         assert!(err.to_string().contains("unchecked DoD item(s)"));
     }
 
     #[test]
     fn task_complete_with_all_dod_checked() {
         let task = make_task_with_dod();
-        let (task, _) = task.check_dod(1, "2026-01-03T00:00:00Z".to_string()).unwrap();
-        let (task, _) = task.check_dod(2, "2026-01-03T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task
+            .check_dod(1, "2026-01-03T00:00:00Z".to_string())
+            .unwrap();
+        let (task, _) = task
+            .check_dod(2, "2026-01-03T00:00:00Z".to_string())
+            .unwrap();
         let (task, _) = task.complete("2026-01-03T00:00:00Z".to_string()).unwrap();
         assert_eq!(task.status(), TaskStatus::Completed);
     }
@@ -1539,7 +1819,12 @@ mod tests {
     #[test]
     fn task_cancel_from_draft() {
         let task = make_task(TaskStatus::Draft);
-        let (task, events) = task.cancel("2026-01-04T00:00:00Z".to_string(), Some("not needed".to_string())).unwrap();
+        let (task, events) = task
+            .cancel(
+                "2026-01-04T00:00:00Z".to_string(),
+                Some("not needed".to_string()),
+            )
+            .unwrap();
         assert_eq!(events, vec![TaskEvent::Canceled]);
         assert_eq!(task.status(), TaskStatus::Canceled);
         assert_eq!(task.canceled_at(), Some("2026-01-04T00:00:00Z"));
@@ -1550,7 +1835,9 @@ mod tests {
     #[test]
     fn task_cancel_from_in_progress() {
         let task = make_task(TaskStatus::InProgress);
-        let (task, events) = task.cancel("2026-01-04T00:00:00Z".to_string(), None).unwrap();
+        let (task, events) = task
+            .cancel("2026-01-04T00:00:00Z".to_string(), None)
+            .unwrap();
         assert_eq!(events, vec![TaskEvent::Canceled]);
         assert_eq!(task.status(), TaskStatus::Canceled);
         assert_eq!(task.updated_at(), "2026-01-04T00:00:00Z");
@@ -1559,7 +1846,10 @@ mod tests {
     #[test]
     fn task_cancel_from_completed_fails() {
         let task = make_task(TaskStatus::Completed);
-        assert!(task.cancel("2026-01-04T00:00:00Z".to_string(), None).is_err());
+        assert!(
+            task.cancel("2026-01-04T00:00:00Z".to_string(), None)
+                .is_err()
+        );
     }
 
     // --- Dependency management tests ---
@@ -1610,7 +1900,12 @@ mod tests {
         let (task, _) = task.add_dependency(2, None).unwrap();
         let (task, events) = task.set_dependencies(&[3, 4], None).unwrap();
         assert_eq!(task.dependencies(), &[3, 4]);
-        assert_eq!(events, vec![TaskEvent::DependenciesSet { dep_ids: vec![3, 4] }]);
+        assert_eq!(
+            events,
+            vec![TaskEvent::DependenciesSet {
+                dep_ids: vec![3, 4]
+            }]
+        );
     }
 
     #[test]
@@ -1623,22 +1918,44 @@ mod tests {
 
     fn make_task_with_dod() -> Task {
         Task::new(
-            1, 1, 1, "test".to_string(), None, None, None, Priority::P2, TaskStatus::InProgress,
-            None, None,
-            "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None, None,
+            1,
+            1,
+            1,
+            "test".to_string(),
+            None,
+            None,
+            None,
+            Priority::P2,
+            TaskStatus::InProgress,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".to_string(),
+            "2026-01-01T00:00:00Z".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             vec![
                 DodItem::new("Write tests".to_string(), false),
                 DodItem::new("Update docs".to_string(), false),
             ],
-            vec![], vec![], vec![], vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         )
     }
 
     #[test]
     fn task_check_dod() {
         let task = make_task_with_dod();
-        let (task, events) = task.check_dod(1, "2026-01-05T00:00:00Z".to_string()).unwrap();
+        let (task, events) = task
+            .check_dod(1, "2026-01-05T00:00:00Z".to_string())
+            .unwrap();
         assert!(task.definition_of_done()[0].checked());
         assert!(!task.definition_of_done()[1].checked());
         assert_eq!(task.updated_at(), "2026-01-05T00:00:00Z");
@@ -1648,17 +1965,39 @@ mod tests {
     #[test]
     fn task_uncheck_dod() {
         let task = Task::new(
-            1, 1, 1, "test".to_string(), None, None, None, Priority::P2, TaskStatus::InProgress,
-            None, None,
-            "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None, None,
+            1,
+            1,
+            1,
+            "test".to_string(),
+            None,
+            None,
+            None,
+            Priority::P2,
+            TaskStatus::InProgress,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".to_string(),
+            "2026-01-01T00:00:00Z".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             vec![
                 DodItem::new("Write tests".to_string(), true),
                 DodItem::new("Update docs".to_string(), false),
             ],
-            vec![], vec![], vec![], vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         );
-        let (task, events) = task.uncheck_dod(1, "2026-01-05T00:00:00Z".to_string()).unwrap();
+        let (task, events) = task
+            .uncheck_dod(1, "2026-01-05T00:00:00Z".to_string())
+            .unwrap();
         assert!(!task.definition_of_done()[0].checked());
         assert_eq!(task.updated_at(), "2026-01-05T00:00:00Z");
         assert_eq!(events, vec![TaskEvent::DodUnchecked { index: 1 }]);
@@ -1667,19 +2006,28 @@ mod tests {
     #[test]
     fn task_check_dod_index_zero() {
         let task = make_task_with_dod();
-        assert!(task.check_dod(0, "2026-01-05T00:00:00Z".to_string()).is_err());
+        assert!(
+            task.check_dod(0, "2026-01-05T00:00:00Z".to_string())
+                .is_err()
+        );
     }
 
     #[test]
     fn task_check_dod_index_out_of_range() {
         let task = make_task_with_dod();
-        assert!(task.check_dod(3, "2026-01-05T00:00:00Z".to_string()).is_err());
+        assert!(
+            task.check_dod(3, "2026-01-05T00:00:00Z".to_string())
+                .is_err()
+        );
     }
 
     #[test]
     fn task_check_dod_empty_list() {
         let task = make_task(TaskStatus::InProgress);
-        assert!(task.check_dod(1, "2026-01-05T00:00:00Z".to_string()).is_err());
+        assert!(
+            task.check_dod(1, "2026-01-05T00:00:00Z".to_string())
+                .is_err()
+        );
     }
 
     // --- expand_branch_template tests ---
@@ -1736,23 +2084,70 @@ mod tests {
 
     fn make_task_with_id(id: i64, status: TaskStatus) -> Task {
         Task::new(
-            id, id, 1, format!("task-{id}"), None, None, None, Priority::P2, status,
-            None, None,
-            "2026-01-01T00:00:00Z".to_string(), "2026-01-01T00:00:00Z".to_string(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            id,
+            id,
+            1,
+            format!("task-{id}"),
+            None,
+            None,
+            None,
+            Priority::P2,
+            status,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".to_string(),
+            "2026-01-01T00:00:00Z".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         )
     }
 
     // --- is_ready / filter_ready / select_next tests ---
 
-    fn make_task_with_opts(id: i64, priority: Priority, status: TaskStatus, created_at: &str) -> Task {
+    fn make_task_with_opts(
+        id: i64,
+        priority: Priority,
+        status: TaskStatus,
+        created_at: &str,
+    ) -> Task {
         Task::new(
-            id, id, 1, format!("task-{id}"), None, None, None, priority, status,
-            None, None,
-            created_at.to_string(), created_at.to_string(),
-            None, None, None, None, None, None, None, None,
-            vec![], vec![], vec![], vec![], vec![],
+            id,
+            id,
+            1,
+            format!("task-{id}"),
+            None,
+            None,
+            None,
+            priority,
+            status,
+            None,
+            None,
+            created_at.to_string(),
+            created_at.to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         )
     }
 
@@ -1889,7 +2284,12 @@ mod tests {
     fn select_next_skips_non_todo() {
         let tasks = vec![
             make_task_with_opts(1, Priority::P0, TaskStatus::Draft, "2026-01-01T00:00:00Z"),
-            make_task_with_opts(2, Priority::P0, TaskStatus::InProgress, "2026-01-01T00:00:00Z"),
+            make_task_with_opts(
+                2,
+                Priority::P0,
+                TaskStatus::InProgress,
+                "2026-01-01T00:00:00Z",
+            ),
             make_task_with_opts(3, Priority::P1, TaskStatus::Todo, "2026-01-01T00:00:00Z"),
         ];
         let result = super::select_next(tasks, &HashMap::new()).unwrap();
@@ -1907,15 +2307,4 @@ mod tests {
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].id(), 1);
     }
-}
-
-#[async_trait]
-pub trait TaskRepository: Send + Sync {
-    async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task>;
-    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task>;
-    async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task>;
-    async fn update_task_arrays(&self, project_id: i64, id: i64, params: &UpdateTaskArrayParams) -> Result<()>;
-    async fn delete_task(&self, project_id: i64, id: i64) -> Result<()>;
-    async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>>;
-    async fn save(&self, task: &Task) -> Result<()>;
 }

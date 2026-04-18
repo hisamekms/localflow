@@ -1,5 +1,5 @@
-use crate::application::port::auth::AuthError;
 use crate::application::port::TaskBackend;
+use crate::application::port::auth::AuthError;
 use crate::domain::user::{ProjectMember, Role};
 
 #[derive(Debug, Clone, Copy)]
@@ -33,7 +33,8 @@ pub async fn require_project_role(
     if !allowed {
         return Err(AuthError::Forbidden(format!(
             "insufficient permissions: {:?} role cannot perform {:?} operations",
-            member.role(), permission
+            member.role(),
+            permission
         )));
     }
 

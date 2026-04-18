@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
-use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::application::HookTrigger;
 use crate::application::port::task_operations::{CompleteResult, PreviewResult};
 use crate::application::port::{HookExecutor, TaskOperations};
-use crate::application::HookTrigger;
 use crate::domain::error::DomainError;
 use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority, Task, TaskEvent, TaskStatus,
@@ -66,11 +66,7 @@ struct UnblockedPreviewInfo {
 }
 
 impl RemoteTaskOperations {
-    pub fn new(
-        base_url: &str,
-        api_key: Option<String>,
-        hooks: Arc<dyn HookExecutor>,
-    ) -> Self {
+    pub fn new(base_url: &str, api_key: Option<String>, hooks: Arc<dyn HookExecutor>) -> Self {
         Self {
             http: HttpClient::new(base_url, api_key),
             hooks,
@@ -164,9 +160,15 @@ impl TaskOperations for RemoteTaskOperations {
         let mut body = json!({ "session_id": session_id, "user_id": user_id });
         if let Some(ref meta_update) = metadata {
             match meta_update {
-                MetadataUpdate::Clear => { body["clear_metadata"] = json!(true); }
-                MetadataUpdate::Merge(v) => { body["metadata"] = json!(v); }
-                MetadataUpdate::Replace(v) => { body["replace_metadata"] = json!(v); }
+                MetadataUpdate::Clear => {
+                    body["clear_metadata"] = json!(true);
+                }
+                MetadataUpdate::Merge(v) => {
+                    body["metadata"] = json!(v);
+                }
+                MetadataUpdate::Replace(v) => {
+                    body["replace_metadata"] = json!(v);
+                }
             }
         }
 
@@ -203,9 +205,15 @@ impl TaskOperations for RemoteTaskOperations {
         let mut body = json!({ "session_id": session_id, "user_id": user_id, "include_unassigned": include_unassigned });
         if let Some(ref meta_update) = metadata {
             match meta_update {
-                MetadataUpdate::Clear => { body["clear_metadata"] = json!(true); }
-                MetadataUpdate::Merge(v) => { body["metadata"] = json!(v); }
-                MetadataUpdate::Replace(v) => { body["replace_metadata"] = json!(v); }
+                MetadataUpdate::Clear => {
+                    body["clear_metadata"] = json!(true);
+                }
+                MetadataUpdate::Merge(v) => {
+                    body["metadata"] = json!(v);
+                }
+                MetadataUpdate::Replace(v) => {
+                    body["replace_metadata"] = json!(v);
+                }
             }
         }
 
@@ -287,12 +295,7 @@ impl TaskOperations for RemoteTaskOperations {
         })
     }
 
-    async fn cancel_task(
-        &self,
-        project_id: i64,
-        id: i64,
-        reason: Option<String>,
-    ) -> Result<Task> {
+    async fn cancel_task(&self, project_id: i64, id: i64, reason: Option<String>) -> Result<Task> {
         let prev_status = self.get_task(project_id, id).await?.status();
 
         let body = match reason {
@@ -352,14 +355,28 @@ impl TaskOperations for RemoteTaskOperations {
                     u.id,
                     project_id,
                     u.title,
-                    None, None, None,
+                    None,
+                    None,
+                    None,
                     priority,
                     status,
-                    None, None,
-                    String::new(), String::new(),
-                    None, None, None, None,
-                    None, None, None, None,
-                    Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+                    None,
+                    None,
+                    String::new(),
+                    String::new(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
                 ))
             })
             .collect();
@@ -421,11 +438,7 @@ impl TaskOperations for RemoteTaskOperations {
         read_json_or_error(resp).await
     }
 
-    async fn list_tasks(
-        &self,
-        project_id: i64,
-        filter: &ListTasksFilter,
-    ) -> Result<Vec<Task>> {
+    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
         let mut url = self.project_url(project_id, "/tasks");
         let mut params: Vec<String> = Vec::new();
 
@@ -433,7 +446,10 @@ impl TaskOperations for RemoteTaskOperations {
             params.push(format!("status={}", status.to_string().to_lowercase()));
         }
         for tag in &filter.tags {
-            params.push(format!("tag={}", utf8_percent_encode(tag, NON_ALPHANUMERIC)));
+            params.push(format!(
+                "tag={}",
+                utf8_percent_encode(tag, NON_ALPHANUMERIC)
+            ));
         }
         if let Some(dep) = filter.depends_on {
             params.push(format!("depends_on={dep}"));
@@ -483,10 +499,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
         let resp = self
-            .auth(
-                self.client()
-                    .get(self.project_url(project_id, "/stats")),
-            )
+            .auth(self.client().get(self.project_url(project_id, "/stats")))
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -494,12 +507,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     // --- Edit ---
 
-    async fn edit_task(
-        &self,
-        project_id: i64,
-        id: i64,
-        params: &UpdateTaskParams,
-    ) -> Result<Task> {
+    async fn edit_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
         let body = update_params_to_json(params);
         let resp = self
             .auth(
@@ -556,37 +564,21 @@ impl TaskOperations for RemoteTaskOperations {
 
     // --- Definition of Done ---
 
-    async fn check_dod(
-        &self,
-        project_id: i64,
-        task_id: i64,
-        index: usize,
-    ) -> Result<Task> {
-        let resp = self
-            .auth(
-                self.client().post(self.project_url(
-                    project_id,
-                    &format!("/tasks/{task_id}/dod/{index}/check"),
-                )),
-            )
+    async fn check_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
+        let resp =
+            self.auth(self.client().post(
+                self.project_url(project_id, &format!("/tasks/{task_id}/dod/{index}/check")),
+            ))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
-    async fn uncheck_dod(
-        &self,
-        project_id: i64,
-        task_id: i64,
-        index: usize,
-    ) -> Result<Task> {
+    async fn uncheck_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
         let resp = self
-            .auth(
-                self.client().post(self.project_url(
-                    project_id,
-                    &format!("/tasks/{task_id}/dod/{index}/uncheck"),
-                )),
-            )
+            .auth(self.client().post(
+                self.project_url(project_id, &format!("/tasks/{task_id}/dod/{index}/uncheck")),
+            ))
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -594,12 +586,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     // --- Dependencies ---
 
-    async fn add_dependency(
-        &self,
-        project_id: i64,
-        task_id: i64,
-        dep_id: i64,
-    ) -> Result<Task> {
+    async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
         let resp = self
             .auth(
                 self.client()
@@ -611,18 +598,12 @@ impl TaskOperations for RemoteTaskOperations {
         read_json_or_error(resp).await
     }
 
-    async fn remove_dependency(
-        &self,
-        project_id: i64,
-        task_id: i64,
-        dep_id: i64,
-    ) -> Result<Task> {
+    async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
         let resp = self
             .auth(
-                self.client().delete(self.project_url(
-                    project_id,
-                    &format!("/tasks/{task_id}/deps/{dep_id}"),
-                )),
+                self.client().delete(
+                    self.project_url(project_id, &format!("/tasks/{task_id}/deps/{dep_id}")),
+                ),
             )
             .send()
             .await?;
@@ -646,11 +627,7 @@ impl TaskOperations for RemoteTaskOperations {
         read_json_or_error(resp).await
     }
 
-    async fn list_dependencies(
-        &self,
-        project_id: i64,
-        task_id: i64,
-    ) -> Result<Vec<Task>> {
+    async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
         let resp = self
             .auth(
                 self.client()

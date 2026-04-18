@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// Parse a human-readable duration string into `std::time::Duration`.
 ///

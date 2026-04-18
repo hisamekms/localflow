@@ -1,27 +1,30 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use anyhow::{Context, Result, bail};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::application::port::TaskBackend;
 use crate::application::port::auth::AuthProvider;
 use crate::application::port::{HookDataSource, HookExecutor, PrVerifier};
-use crate::application::{HookTestService, LocalContractOperations, LocalTaskOperations, MetadataFieldService, ProjectOperations, ProjectService, TaskOperations, UserService};
-use crate::infra::xdg::XdgDirs;
+use crate::application::{
+    HookTestService, LocalContractOperations, LocalTaskOperations, MetadataFieldService,
+    ProjectOperations, ProjectService, TaskOperations, UserService,
+};
 use crate::domain::task::CompletionPolicy;
-use crate::application::port::TaskBackend;
+use crate::infra::auth::{ApiKeyProvider, JwtAuthProvider, TrustedHeadersAuthProvider};
 use crate::infra::config::{Config, LogConfig, LogFormat, RawConfig};
+use crate::infra::hook::executor::ShellHookExecutor;
+use crate::infra::hook::test_executor::ShellHookTestExecutor;
+use crate::infra::hook::{BackendInfo, RuntimeMode};
 use crate::infra::http::remote_contract_ops::RemoteContractOperations;
 use crate::infra::http::remote_hook_data::RemoteHookDataSource;
 use crate::infra::http::remote_metadata_field_ops::RemoteMetadataFieldOperations;
 use crate::infra::http::remote_project_ops::RemoteProjectOperations;
 use crate::infra::http::remote_task_ops::RemoteTaskOperations;
 use crate::infra::http::remote_user_ops::RemoteUserOperations;
-use crate::infra::hook::executor::ShellHookExecutor;
-use crate::infra::hook::test_executor::ShellHookTestExecutor;
-use crate::infra::hook::{RuntimeMode, BackendInfo};
-use crate::infra::auth::{ApiKeyProvider, JwtAuthProvider, TrustedHeadersAuthProvider};
 use crate::infra::pr_verifier::GhCliPrVerifier;
+use crate::infra::xdg::XdgDirs;
 
 // Re-exports for presentation layer (avoid direct infra dependency)
 pub use crate::infra::hook;
@@ -33,17 +36,17 @@ pub use crate::domain::{DEFAULT_PROJECT_ID, DEFAULT_USER_ID};
 ///
 /// Returns a local database backend (SQLite / PostgreSQL).
 /// Remote HTTP mode is handled separately via `Remote*Operations`.
-pub fn create_backend(
-    project_root: &Path,
-    config: &Config,
-) -> Result<Arc<dyn TaskBackend>> {
+pub fn create_backend(project_root: &Path, config: &Config) -> Result<Arc<dyn TaskBackend>> {
     #[cfg(feature = "postgres")]
     {
         use crate::infra::postgres::PostgresBackend;
 
         if let Some(ref pg_config) = config.backend.postgres {
             if let Some(ref database_url) = pg_config.url {
-                return Ok(Arc::new(PostgresBackend::new(database_url.clone(), pg_config.max_connections)));
+                return Ok(Arc::new(PostgresBackend::new(
+                    database_url.clone(),
+                    pg_config.max_connections,
+                )));
             }
         }
     }
@@ -66,19 +69,35 @@ pub fn should_fire_client_hooks(config: &Config) -> bool {
 /// Mirrors the priority logic of `create_backend`.
 pub fn resolve_backend_info(config: &Config, project_root: &Path) -> BackendInfo {
     if let Some(ref url) = config.cli.remote.url {
-        return BackendInfo::Http { api_url: url.clone() };
+        return BackendInfo::Http {
+            api_url: url.clone(),
+        };
     }
     if let Some(ref url) = config.server.relay.url {
-        return BackendInfo::Http { api_url: url.clone() };
+        return BackendInfo::Http {
+            api_url: url.clone(),
+        };
     }
     #[cfg(feature = "postgres")]
-    if config.backend.postgres.as_ref().and_then(|p| p.url.as_ref()).is_some() {
+    if config
+        .backend
+        .postgres
+        .as_ref()
+        .and_then(|p| p.url.as_ref())
+        .is_some()
+    {
         return BackendInfo::Postgresql;
     }
-    let db_path = crate::infra::sqlite::resolve_db_path_preview(project_root, config.backend.sqlite.db_path.as_deref(), &config.xdg)
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "<unknown>".to_string());
-    BackendInfo::Sqlite { db_file_path: db_path }
+    let db_path = crate::infra::sqlite::resolve_db_path_preview(
+        project_root,
+        config.backend.sqlite.db_path.as_deref(),
+        &config.xdg,
+    )
+    .map(|p| p.display().to_string())
+    .unwrap_or_else(|| "<unknown>".to_string());
+    BackendInfo::Sqlite {
+        db_file_path: db_path,
+    }
 }
 
 pub fn create_hook_executor(
@@ -88,7 +107,13 @@ pub fn create_hook_executor(
     hook_data: Arc<dyn HookDataSource>,
 ) -> Arc<dyn HookExecutor> {
     let should_fire = should_fire_client_hooks(&config);
-    Arc::new(ShellHookExecutor::new(config, should_fire, runtime_mode, backend_info, hook_data))
+    Arc::new(ShellHookExecutor::new(
+        config,
+        should_fire,
+        runtime_mode,
+        backend_info,
+        hook_data,
+    ))
 }
 
 pub fn create_api_hook_executor(
@@ -97,7 +122,13 @@ pub fn create_api_hook_executor(
     hook_data: Arc<dyn HookDataSource>,
 ) -> Arc<dyn HookExecutor> {
     // API server always fires hooks
-    Arc::new(ShellHookExecutor::new(config, true, RuntimeMode::Api, backend_info, hook_data))
+    Arc::new(ShellHookExecutor::new(
+        config,
+        true,
+        RuntimeMode::Api,
+        backend_info,
+        hook_data,
+    ))
 }
 
 pub fn create_pr_verifier() -> Arc<dyn crate::application::port::PrVerifier> {
@@ -187,30 +218,27 @@ pub fn create_local_task_operations(
     project_root: &Path,
 ) -> LocalTaskOperations {
     let backend_info = resolve_backend_info(config, project_root);
-    let hook_data: Arc<dyn HookDataSource> = Arc::new(crate::application::port::BackendHookData(backend.clone()));
+    let hook_data: Arc<dyn HookDataSource> =
+        Arc::new(crate::application::port::BackendHookData(backend.clone()));
     let hooks = create_hook_executor(config.clone(), RuntimeMode::Cli, backend_info, hook_data);
     let pr_verifier: Arc<dyn PrVerifier> = Arc::new(GhCliPrVerifier);
     let completion_policy = CompletionPolicy::new(config.workflow.merge_via);
     LocalTaskOperations::new(backend, hooks, pr_verifier, completion_policy)
 }
 
-pub fn create_remote_task_operations(
-    config: &Config,
-    project_root: &Path,
-) -> RemoteTaskOperations {
-    let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
+pub fn create_remote_task_operations(config: &Config, project_root: &Path) -> RemoteTaskOperations {
+    let url = config
+        .cli
+        .remote
+        .url
+        .as_ref()
+        .expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
 
-    let hook_data: Arc<dyn HookDataSource> = Arc::new(
-        RemoteHookDataSource::new(url, api_key.clone()),
-    );
+    let hook_data: Arc<dyn HookDataSource> =
+        Arc::new(RemoteHookDataSource::new(url, api_key.clone()));
     let backend_info = resolve_backend_info(config, project_root);
-    let hooks = create_hook_executor(
-        config.clone(),
-        RuntimeMode::Cli,
-        backend_info,
-        hook_data,
-    );
+    let hooks = create_hook_executor(config.clone(), RuntimeMode::Cli, backend_info, hook_data);
 
     RemoteTaskOperations::new(url, api_key, hooks)
 }
@@ -223,21 +251,19 @@ pub fn create_task_operations(
     config: &Config,
 ) -> Result<(Arc<dyn TaskOperations>, Arc<dyn ProjectOperations>)> {
     if config.cli.remote.url.is_some() {
-        let task_ops: Arc<dyn TaskOperations> = Arc::new(
-            create_remote_task_operations(config, project_root),
-        );
-        let project_ops: Arc<dyn ProjectOperations> = Arc::new(
-            create_remote_project_operations(config),
-        );
+        let task_ops: Arc<dyn TaskOperations> =
+            Arc::new(create_remote_task_operations(config, project_root));
+        let project_ops: Arc<dyn ProjectOperations> =
+            Arc::new(create_remote_project_operations(config));
         Ok((task_ops, project_ops))
     } else {
         let backend = create_backend(project_root, config)?;
-        let task_ops: Arc<dyn TaskOperations> = Arc::new(
-            create_local_task_operations(backend.clone(), config, project_root),
-        );
-        let project_ops: Arc<dyn ProjectOperations> = Arc::new(
-            ProjectService::new(backend),
-        );
+        let task_ops: Arc<dyn TaskOperations> = Arc::new(create_local_task_operations(
+            backend.clone(),
+            config,
+            project_root,
+        ));
+        let project_ops: Arc<dyn ProjectOperations> = Arc::new(ProjectService::new(backend));
         Ok((task_ops, project_ops))
     }
 }
@@ -251,13 +277,23 @@ pub fn create_user_service(backend: Arc<dyn TaskBackend>) -> UserService {
 }
 
 pub fn create_remote_user_operations(config: &Config) -> RemoteUserOperations {
-    let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
+    let url = config
+        .cli
+        .remote
+        .url
+        .as_ref()
+        .expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
     RemoteUserOperations::new(url, api_key)
 }
 
 pub fn create_remote_project_operations(config: &Config) -> RemoteProjectOperations {
-    let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
+    let url = config
+        .cli
+        .remote
+        .url
+        .as_ref()
+        .expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
     RemoteProjectOperations::new(url, api_key)
 }
@@ -282,7 +318,12 @@ pub fn create_remote_contract_operations(config: &Config) -> RemoteContractOpera
 }
 
 pub fn create_remote_hook_data(config: &Config) -> Arc<dyn HookDataSource> {
-    let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
+    let url = config
+        .cli
+        .remote
+        .url
+        .as_ref()
+        .expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
     Arc::new(RemoteHookDataSource::new(url, api_key))
 }
@@ -292,7 +333,12 @@ pub fn create_hook_data_from(url: &str, token: Option<String>) -> Arc<dyn HookDa
 }
 
 pub fn create_remote_metadata_field_operations(config: &Config) -> RemoteMetadataFieldOperations {
-    let url = config.cli.remote.url.as_ref().expect("cli.remote.url required for remote operations");
+    let url = config
+        .cli
+        .remote
+        .url
+        .as_ref()
+        .expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
     RemoteMetadataFieldOperations::new(url, api_key)
 }
@@ -347,8 +393,8 @@ pub async fn resolve_user_id(
 }
 
 pub fn init_tracing(config: &LogConfig) {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.level));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.level));
 
     let registry = tracing_subscriber::registry().with(env_filter);
 
@@ -770,8 +816,7 @@ name = "project-local"
     #[test]
     fn validate_serve_auth_with_trusted_headers_ok() {
         let mut config = Config::default();
-        config.server.auth.trusted_headers.subject_header =
-            Some("x-senko-user-sub".to_string());
+        config.server.auth.trusted_headers.subject_header = Some("x-senko-user-sub".to_string());
         validate_serve_auth(&config).unwrap();
     }
 
@@ -794,8 +839,7 @@ name = "project-local"
         let mut config = Config::default();
         config.server.auth.oidc.issuer_url = Some("https://example.com".to_string());
         config.server.auth.oidc.client_id = Some("my-client".to_string());
-        config.server.auth.trusted_headers.subject_header =
-            Some("x-senko-user-sub".to_string());
+        config.server.auth.trusted_headers.subject_header = Some("x-senko-user-sub".to_string());
         let err = validate_serve_auth(&config).unwrap_err();
         let msg = err.to_string();
         assert!(
@@ -810,8 +854,7 @@ name = "project-local"
         config.server.auth.oidc.issuer_url = Some("https://example.com".to_string());
         config.server.auth.oidc.client_id = Some("my-client".to_string());
         config.server.auth.api_key.master_key = Some("secret".to_string());
-        config.server.auth.trusted_headers.subject_header =
-            Some("x-senko-user-sub".to_string());
+        config.server.auth.trusted_headers.subject_header = Some("x-senko-user-sub".to_string());
         let err = validate_serve_auth(&config).unwrap_err();
         let msg = err.to_string();
         assert!(
@@ -825,7 +868,10 @@ name = "project-local"
         let config = Config::default();
         let err = validate_serve_auth(&config).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("api_key.master_key"), "error should mention api_key.master_key: {msg}");
+        assert!(
+            msg.contains("api_key.master_key"),
+            "error should mention api_key.master_key: {msg}"
+        );
         assert!(msg.contains("oidc"), "error should mention oidc: {msg}");
         assert!(
             msg.contains("trusted_headers"),

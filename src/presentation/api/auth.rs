@@ -1,8 +1,8 @@
-use axum::extract::FromRequestParts;
-use axum::http::request::Parts;
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
 use axum::Json;
+use axum::extract::FromRequestParts;
+use axum::http::StatusCode;
+use axum::http::request::Parts;
+use axum::response::{IntoResponse, Response};
 
 use crate::application::port::auth::AuthError;
 use crate::bootstrap::AuthMode;
@@ -21,7 +21,9 @@ pub trait HasAuth {
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub user: User,
+    #[allow(dead_code)]
     pub groups: Vec<String>,
+    #[allow(dead_code)]
     pub scopes: Vec<String>,
 }
 

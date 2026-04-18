@@ -78,18 +78,10 @@ impl<'de> Deserialize<'de> for HookDef {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "source")]
 pub enum MetadataFieldSource {
-    Env {
-        env_var: String,
-    },
-    Prompt {
-        prompt: String,
-    },
-    Value {
-        value: serde_json::Value,
-    },
-    Command {
-        command: String,
-    },
+    Env { env_var: String },
+    Prompt { prompt: String },
+    Value { value: serde_json::Value },
+    Command { command: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -305,11 +297,9 @@ impl AuthConfig {
         .count();
 
         if count > 1 {
-            Err(
-                "only one authentication mode may be configured at a time \
+            Err("only one authentication mode may be configured at a time \
                  (api_key, oidc, or trusted_headers)"
-                    .to_string(),
-            )
+                .to_string())
         } else {
             Ok(())
         }
@@ -743,128 +733,112 @@ impl RawConfig {
                 },
                 auth: RawAuthConfig {
                     api_key: RawApiKeyConfig {
-                        master_key: overlay
+                        master_key: overlay.server.auth.api_key.master_key.or(self
                             .server
                             .auth
                             .api_key
-                            .master_key
-                            .or(self.server.auth.api_key.master_key),
-                        master_key_arn: overlay
+                            .master_key),
+                        master_key_arn: overlay.server.auth.api_key.master_key_arn.or(self
                             .server
                             .auth
                             .api_key
-                            .master_key_arn
-                            .or(self.server.auth.api_key.master_key_arn),
+                            .master_key_arn),
                     },
                     trusted_headers: RawTrustedHeadersConfig {
-                        subject_header: overlay
+                        subject_header: overlay.server.auth.trusted_headers.subject_header.or(self
                             .server
                             .auth
                             .trusted_headers
-                            .subject_header
-                            .or(self.server.auth.trusted_headers.subject_header),
-                        name_header: overlay
+                            .subject_header),
+                        name_header: overlay.server.auth.trusted_headers.name_header.or(self
                             .server
                             .auth
                             .trusted_headers
-                            .name_header
-                            .or(self.server.auth.trusted_headers.name_header),
+                            .name_header),
                         display_name_header: overlay
                             .server
                             .auth
                             .trusted_headers
                             .display_name_header
                             .or(self.server.auth.trusted_headers.display_name_header),
-                        email_header: overlay
+                        email_header: overlay.server.auth.trusted_headers.email_header.or(self
                             .server
                             .auth
                             .trusted_headers
-                            .email_header
-                            .or(self.server.auth.trusted_headers.email_header),
-                        groups_header: overlay
+                            .email_header),
+                        groups_header: overlay.server.auth.trusted_headers.groups_header.or(self
                             .server
                             .auth
                             .trusted_headers
-                            .groups_header
-                            .or(self.server.auth.trusted_headers.groups_header),
-                        scope_header: overlay
+                            .groups_header),
+                        scope_header: overlay.server.auth.trusted_headers.scope_header.or(self
                             .server
                             .auth
                             .trusted_headers
-                            .scope_header
-                            .or(self.server.auth.trusted_headers.scope_header),
+                            .scope_header),
                         oidc_issuer_url: overlay
                             .server
                             .auth
                             .trusted_headers
                             .oidc_issuer_url
                             .or(self.server.auth.trusted_headers.oidc_issuer_url),
-                        oidc_client_id: overlay
+                        oidc_client_id: overlay.server.auth.trusted_headers.oidc_client_id.or(self
                             .server
                             .auth
                             .trusted_headers
-                            .oidc_client_id
-                            .or(self.server.auth.trusted_headers.oidc_client_id),
+                            .oidc_client_id),
                     },
                     oidc: RawOidcConfig {
-                        issuer_url: overlay
+                        issuer_url: overlay.server.auth.oidc.issuer_url.or(self
                             .server
                             .auth
                             .oidc
-                            .issuer_url
-                            .or(self.server.auth.oidc.issuer_url),
-                        client_id: overlay
+                            .issuer_url),
+                        client_id: overlay.server.auth.oidc.client_id.or(self
                             .server
                             .auth
                             .oidc
-                            .client_id
-                            .or(self.server.auth.oidc.client_id),
-                        username_claim: overlay
+                            .client_id),
+                        username_claim: overlay.server.auth.oidc.username_claim.or(self
                             .server
                             .auth
                             .oidc
-                            .username_claim
-                            .or(self.server.auth.oidc.username_claim),
+                            .username_claim),
                         scopes: overlay
                             .server
                             .auth
                             .oidc
                             .scopes
                             .or(self.server.auth.oidc.scopes),
-                        required_claims: overlay
+                        required_claims: overlay.server.auth.oidc.required_claims.or(self
                             .server
                             .auth
                             .oidc
-                            .required_claims
-                            .or(self.server.auth.oidc.required_claims),
-                        callback_ports: overlay
+                            .required_claims),
+                        callback_ports: overlay.server.auth.oidc.callback_ports.or(self
                             .server
                             .auth
                             .oidc
-                            .callback_ports
-                            .or(self.server.auth.oidc.callback_ports),
+                            .callback_ports),
                         session: RawSessionConfig {
-                            ttl: overlay
+                            ttl: overlay.server.auth.oidc.session.ttl.or(self
                                 .server
                                 .auth
                                 .oidc
                                 .session
-                                .ttl
-                                .or(self.server.auth.oidc.session.ttl),
-                            inactive_ttl: overlay
+                                .ttl),
+                            inactive_ttl: overlay.server.auth.oidc.session.inactive_ttl.or(self
                                 .server
                                 .auth
                                 .oidc
                                 .session
-                                .inactive_ttl
-                                .or(self.server.auth.oidc.session.inactive_ttl),
-                            max_per_user: overlay
+                                .inactive_ttl),
+                            max_per_user: overlay.server.auth.oidc.session.max_per_user.or(self
                                 .server
                                 .auth
                                 .oidc
                                 .session
-                                .max_per_user
-                                .or(self.server.auth.oidc.session.max_per_user),
+                                .max_per_user),
                         },
                     },
                 },
@@ -940,18 +914,8 @@ impl RawConfig {
                             .oidc
                             .scopes
                             .unwrap_or_else(default_oidc_scopes),
-                        required_claims: self
-                            .server
-                            .auth
-                            .oidc
-                            .required_claims
-                            .unwrap_or_default(),
-                        callback_ports: self
-                            .server
-                            .auth
-                            .oidc
-                            .callback_ports
-                            .unwrap_or_default(),
+                        required_claims: self.server.auth.oidc.required_claims.unwrap_or_default(),
+                        callback_ports: self.server.auth.oidc.callback_ports.unwrap_or_default(),
                         session: SessionConfig {
                             ttl: self.server.auth.oidc.session.ttl,
                             inactive_ttl: self.server.auth.oidc.session.inactive_ttl,
@@ -1030,23 +994,25 @@ impl Config {
     pub fn apply_env(&mut self) {
         // Workflow settings
         // Check SENKO_MERGE_VIA first, then fallback to deprecated SENKO_COMPLETION_MODE
-        let merge_via_env = std::env::var("SENKO_MERGE_VIA")
-            .ok()
-            .or_else(|| {
-                std::env::var("SENKO_COMPLETION_MODE").ok().inspect(|_| {
-                    eprintln!("warning: SENKO_COMPLETION_MODE is deprecated, use SENKO_MERGE_VIA");
-                })
-            });
+        let merge_via_env = std::env::var("SENKO_MERGE_VIA").ok().or_else(|| {
+            std::env::var("SENKO_COMPLETION_MODE").ok().inspect(|_| {
+                eprintln!("warning: SENKO_COMPLETION_MODE is deprecated, use SENKO_MERGE_VIA");
+            })
+        });
         if let Some(val) = merge_via_env {
             match val.as_str() {
                 "direct" => self.workflow.merge_via = MergeVia::Direct,
                 "pr" => self.workflow.merge_via = MergeVia::Pr,
                 "merge_then_complete" => {
-                    eprintln!("warning: merge_via value \"merge_then_complete\" is deprecated, use \"direct\"");
+                    eprintln!(
+                        "warning: merge_via value \"merge_then_complete\" is deprecated, use \"direct\""
+                    );
                     self.workflow.merge_via = MergeVia::Direct;
                 }
                 "pr_then_complete" => {
-                    eprintln!("warning: merge_via value \"pr_then_complete\" is deprecated, use \"pr\"");
+                    eprintln!(
+                        "warning: merge_via value \"pr_then_complete\" is deprecated, use \"pr\""
+                    );
                     self.workflow.merge_via = MergeVia::Pr;
                 }
                 other => eprintln!("warning: unknown SENKO_MERGE_VIA={other}, ignoring"),
@@ -1076,23 +1042,27 @@ impl Config {
 
         // Server relay settings
         if let Ok(val) = std::env::var("SENKO_SERVER_RELAY_URL")
-            && !val.is_empty() {
-                self.server.relay.url = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.relay.url = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_SERVER_RELAY_TOKEN")
-            && !val.is_empty() {
-                self.server.relay.token = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.relay.token = Some(val);
+        }
 
         // CLI remote settings
         if let Ok(val) = std::env::var("SENKO_CLI_REMOTE_URL")
-            && !val.is_empty() {
-                self.cli.remote.url = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.cli.remote.url = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_CLI_REMOTE_TOKEN")
-            && !val.is_empty() {
-                self.cli.remote.token = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.cli.remote.token = Some(val);
+        }
 
         // CLI hooks
         if let Ok(val) = std::env::var("SENKO_HOOKS_ENABLED") {
@@ -1105,90 +1075,108 @@ impl Config {
 
         // Server auth settings
         if let Ok(val) = std::env::var("SENKO_AUTH_API_KEY_MASTER_KEY")
-            && !val.is_empty() {
-                self.server.auth.api_key.master_key = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.api_key.master_key = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_AUTH_API_KEY_MASTER_KEY_ARN")
-            && !val.is_empty() {
-                self.server.auth.api_key.master_key_arn = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.api_key.master_key_arn = Some(val);
+        }
 
         // Server OIDC settings
         if let Ok(val) = std::env::var("SENKO_OIDC_ISSUER_URL")
-            && !val.is_empty() {
-                self.server.auth.oidc.issuer_url = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.oidc.issuer_url = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_OIDC_CLIENT_ID")
-            && !val.is_empty() {
-                self.server.auth.oidc.client_id = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.oidc.client_id = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_OIDC_USERNAME_CLAIM")
-            && !val.is_empty() {
-                self.server.auth.oidc.username_claim = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.oidc.username_claim = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_OIDC_CALLBACK_PORTS")
-            && !val.is_empty() {
-                self.server.auth.oidc.callback_ports = val
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.oidc.callback_ports = val
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
 
         // Server trusted headers settings
         if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_SUBJECT_HEADER")
-            && !val.is_empty() {
-                self.server.auth.trusted_headers.subject_header = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.trusted_headers.subject_header = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_NAME_HEADER")
-            && !val.is_empty() {
-                self.server.auth.trusted_headers.name_header = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.trusted_headers.name_header = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_EMAIL_HEADER")
-            && !val.is_empty() {
-                self.server.auth.trusted_headers.email_header = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.trusted_headers.email_header = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_GROUPS_HEADER")
-            && !val.is_empty() {
-                self.server.auth.trusted_headers.groups_header = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.trusted_headers.groups_header = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_SCOPE_HEADER")
-            && !val.is_empty() {
-                self.server.auth.trusted_headers.scope_header = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.trusted_headers.scope_header = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_OIDC_ISSUER_URL")
-            && !val.is_empty() {
-                self.server.auth.trusted_headers.oidc_issuer_url = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.trusted_headers.oidc_issuer_url = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_OIDC_CLIENT_ID")
-            && !val.is_empty() {
-                self.server.auth.trusted_headers.oidc_client_id = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.trusted_headers.oidc_client_id = Some(val);
+        }
 
         // Server OIDC session settings
         if let Ok(val) = std::env::var("SENKO_AUTH_OIDC_SESSION_TTL")
-            && !val.is_empty() {
-                self.server.auth.oidc.session.ttl = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.oidc.session.ttl = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_AUTH_OIDC_SESSION_INACTIVE_TTL")
-            && !val.is_empty() {
-                self.server.auth.oidc.session.inactive_ttl = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.auth.oidc.session.inactive_ttl = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_AUTH_OIDC_SESSION_MAX_PER_USER")
             && !val.is_empty()
-            && let Ok(n) = val.parse::<u32>() {
-                self.server.auth.oidc.session.max_per_user = Some(n);
-            }
+            && let Ok(n) = val.parse::<u32>()
+        {
+            self.server.auth.oidc.session.max_per_user = Some(n);
+        }
 
         // Server host/port
         if let Ok(val) = std::env::var("SENKO_SERVER_HOST")
-            && !val.is_empty() {
-                self.server.host = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.host = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_SERVER_PORT")
-            && let Ok(port) = val.parse::<u16>() {
-                self.server.port = Some(port);
-            }
+            && let Ok(port) = val.parse::<u16>()
+        {
+            self.server.port = Some(port);
+        }
 
         // PostgreSQL settings (feature-gated)
         #[cfg(feature = "postgres")]
@@ -1249,57 +1237,68 @@ impl Config {
             );
         }
         if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_ADDED")
-            && !val.is_empty() {
-                insert_env_hook(&mut self.hooks.on_task_added, val);
-            }
+            && !val.is_empty()
+        {
+            insert_env_hook(&mut self.hooks.on_task_added, val);
+        }
         if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_READY")
-            && !val.is_empty() {
-                insert_env_hook(&mut self.hooks.on_task_ready, val);
-            }
+            && !val.is_empty()
+        {
+            insert_env_hook(&mut self.hooks.on_task_ready, val);
+        }
         if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_STARTED")
-            && !val.is_empty() {
-                insert_env_hook(&mut self.hooks.on_task_started, val);
-            }
+            && !val.is_empty()
+        {
+            insert_env_hook(&mut self.hooks.on_task_started, val);
+        }
         if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_COMPLETED")
-            && !val.is_empty() {
-                insert_env_hook(&mut self.hooks.on_task_completed, val);
-            }
+            && !val.is_empty()
+        {
+            insert_env_hook(&mut self.hooks.on_task_completed, val);
+        }
         if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_CANCELED")
-            && !val.is_empty() {
-                insert_env_hook(&mut self.hooks.on_task_canceled, val);
-            }
+            && !val.is_empty()
+        {
+            insert_env_hook(&mut self.hooks.on_task_canceled, val);
+        }
         if let Ok(val) = std::env::var("SENKO_HOOK_ON_NO_ELIGIBLE_TASK")
-            && !val.is_empty() {
-                insert_env_hook(&mut self.hooks.on_no_eligible_task, val);
-            }
+            && !val.is_empty()
+        {
+            insert_env_hook(&mut self.hooks.on_no_eligible_task, val);
+        }
 
         // User settings
         if let Ok(val) = std::env::var("SENKO_USER")
-            && !val.is_empty() {
-                self.user.name = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.user.name = Some(val);
+        }
 
         // Project settings
         if let Ok(val) = std::env::var("SENKO_PROJECT")
-            && !val.is_empty() {
-                self.project.name = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.project.name = Some(val);
+        }
 
         // Backend SQLite settings
         if let Ok(val) = std::env::var("SENKO_DB_PATH")
-            && !val.is_empty() {
-                self.backend.sqlite.db_path = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.backend.sqlite.db_path = Some(val);
+        }
 
         // Log settings
         if let Ok(val) = std::env::var("SENKO_LOG_DIR")
-            && !val.is_empty() {
-                self.log.dir = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.log.dir = Some(val);
+        }
         if let Ok(val) = std::env::var("SENKO_LOG_LEVEL")
-            && !val.is_empty() {
-                self.log.level = val;
-            }
+            && !val.is_empty()
+        {
+            self.log.level = val;
+        }
         if let Ok(val) = std::env::var("SENKO_LOG_FORMAT") {
             match val.to_lowercase().as_str() {
                 "json" => self.log.format = LogFormat::Json,
@@ -1318,23 +1317,27 @@ impl Config {
 
         // Web settings
         if let Ok(val) = std::env::var("SENKO_PORT")
-            && let Ok(port) = val.parse::<u16>() {
-                self.web.port = Some(port);
-            }
+            && let Ok(port) = val.parse::<u16>()
+        {
+            self.web.port = Some(port);
+        }
         if let Ok(val) = std::env::var("SENKO_HOST")
-            && !val.is_empty() {
-                self.web.host = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.web.host = Some(val);
+        }
 
         // Server settings (same env vars apply to both web and server)
         if let Ok(val) = std::env::var("SENKO_PORT")
-            && let Ok(port) = val.parse::<u16>() {
-                self.server.port = Some(port);
-            }
+            && let Ok(port) = val.parse::<u16>()
+        {
+            self.server.port = Some(port);
+        }
         if let Ok(val) = std::env::var("SENKO_HOST")
-            && !val.is_empty() {
-                self.server.host = Some(val);
-            }
+            && !val.is_empty()
+        {
+            self.server.host = Some(val);
+        }
     }
 
     /// Apply CLI argument overrides. Call after `apply_env()`.
@@ -1456,7 +1459,7 @@ impl Config {
 
 #[cfg(all(feature = "postgres", feature = "aws-secrets"))]
 fn build_rds_url(json_str: &str, sslrootcert: Option<&str>) -> anyhow::Result<String> {
-    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
     #[derive(serde::Deserialize)]
     struct RdsSecret {
@@ -1593,15 +1596,18 @@ mod resolve_secrets_tests {
             let mut config = Config::default();
             pg_config(&mut config).rds_secrets_arn = Some("arn:rds".to_string());
 
-            let client = make_client(HashMap::from([
-                ("arn:rds".to_string(), rds_json.to_string()),
-            ]));
+            let client = make_client(HashMap::from([(
+                "arn:rds".to_string(),
+                rds_json.to_string(),
+            )]));
 
             config.resolve_secrets_with(&client).await.unwrap();
 
             assert_eq!(
                 config.backend.postgres.as_ref().unwrap().url.as_deref(),
-                Some("postgres://admin:s3cret@mydb.cluster-abc.us-east-1.rds.amazonaws.com:5432/myapp")
+                Some(
+                    "postgres://admin:s3cret@mydb.cluster-abc.us-east-1.rds.amazonaws.com:5432/myapp"
+                )
             );
         }
 
@@ -1611,9 +1617,10 @@ mod resolve_secrets_tests {
             let mut config = Config::default();
             pg_config(&mut config).rds_secrets_arn = Some("arn:rds".to_string());
 
-            let client = make_client(HashMap::from([
-                ("arn:rds".to_string(), rds_json.to_string()),
-            ]));
+            let client = make_client(HashMap::from([(
+                "arn:rds".to_string(),
+                rds_json.to_string(),
+            )]));
 
             config.resolve_secrets_with(&client).await.unwrap();
 
@@ -1625,8 +1632,7 @@ mod resolve_secrets_tests {
 
         #[tokio::test]
         async fn rds_secrets_arn_takes_priority_over_url_arn() {
-            let rds_json =
-                r#"{"username":"u","password":"p","host":"rds.example.com"}"#;
+            let rds_json = r#"{"username":"u","password":"p","host":"rds.example.com"}"#;
             let mut config = Config::default();
             let pg = pg_config(&mut config);
             pg.rds_secrets_arn = Some("arn:rds".to_string());
@@ -1682,15 +1688,18 @@ mod resolve_secrets_tests {
             pg.rds_secrets_arn = Some("arn:rds".to_string());
             pg.sslrootcert = Some("/etc/ssl/rds-ca.pem".to_string());
 
-            let client = make_client(HashMap::from([
-                ("arn:rds".to_string(), rds_json.to_string()),
-            ]));
+            let client = make_client(HashMap::from([(
+                "arn:rds".to_string(),
+                rds_json.to_string(),
+            )]));
 
             config.resolve_secrets_with(&client).await.unwrap();
 
             assert_eq!(
                 config.backend.postgres.as_ref().unwrap().url.as_deref(),
-                Some("postgres://u:p@db.example.com:5432/app?sslmode=verify-full&sslrootcert=/etc/ssl/rds-ca.pem")
+                Some(
+                    "postgres://u:p@db.example.com:5432/app?sslmode=verify-full&sslrootcert=/etc/ssl/rds-ca.pem"
+                )
             );
         }
 
@@ -1719,9 +1728,10 @@ mod resolve_secrets_tests {
             let mut config = Config::default();
             pg_config(&mut config).rds_secrets_arn = Some("arn:rds".to_string());
 
-            let client = make_client(HashMap::from([
-                ("arn:rds".to_string(), rds_json.to_string()),
-            ]));
+            let client = make_client(HashMap::from([(
+                "arn:rds".to_string(),
+                rds_json.to_string(),
+            )]));
 
             config.resolve_secrets_with(&client).await.unwrap();
 
@@ -1855,7 +1865,10 @@ mod tests {
         let field: MetadataField = serde_json::from_str(json).unwrap();
         assert_eq!(field.key, "sprint");
         assert!(field.required);
-        assert_eq!(field.default, Some(serde_json::Value::String("Q1".to_string())));
+        assert_eq!(
+            field.default,
+            Some(serde_json::Value::String("Q1".to_string()))
+        );
     }
 
     #[test]
@@ -1906,10 +1919,7 @@ mod tests {
             prompt = "Estimated time?"
         "#;
         let config: WorkflowPlanConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(
-            config.required_sections,
-            vec!["Context", "Verification"]
-        );
+        assert_eq!(config.required_sections, vec!["Context", "Verification"]);
         assert_eq!(config.metadata_fields.len(), 1);
         assert_eq!(config.metadata_fields[0].key, "estimate");
     }
@@ -1954,10 +1964,7 @@ mod tests {
         assert!(config.auto_merge);
         assert_eq!(config.branch_mode, BranchMode::Worktree);
         assert_eq!(config.merge_strategy, MergeStrategy::Rebase);
-        assert_eq!(
-            config.branch_template.as_deref(),
-            Some("feat/{id}-{slug}")
-        );
+        assert_eq!(config.branch_template.as_deref(), Some("feat/{id}-{slug}"));
         assert_eq!(config.add.default_dod, vec!["Tests"]);
         assert_eq!(config.start.instructions, vec!["Review task"]);
         assert_eq!(config.plan.required_sections, vec!["Context"]);
@@ -2166,10 +2173,7 @@ mod tests {
             db_path = "/data/senko.db"
         "#;
         let config: BackendConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(
-            config.sqlite.db_path.as_deref(),
-            Some("/data/senko.db")
-        );
+        assert_eq!(config.sqlite.db_path.as_deref(), Some("/data/senko.db"));
     }
 
     #[test]
@@ -2214,10 +2218,7 @@ mod tests {
         let config: ServerConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.host.as_deref(), Some("127.0.0.1"));
         assert_eq!(config.port, Some(3142));
-        assert_eq!(
-            config.auth.api_key.master_key.as_deref(),
-            Some("sk_master")
-        );
+        assert_eq!(config.auth.api_key.master_key.as_deref(), Some("sk_master"));
         assert_eq!(
             config.auth.oidc.issuer_url.as_deref(),
             Some("https://auth.example.com")
@@ -2333,14 +2334,8 @@ mod tests {
         config.server.port = Some(3142);
         config.server.auth.api_key.master_key = Some("env_key".to_string());
 
-        assert_eq!(
-            config.backend.sqlite.db_path.as_deref(),
-            Some("/env/db.db")
-        );
-        assert_eq!(
-            config.cli.remote.url.as_deref(),
-            Some("http://env:3141")
-        );
+        assert_eq!(config.backend.sqlite.db_path.as_deref(), Some("/env/db.db"));
+        assert_eq!(config.cli.remote.url.as_deref(), Some("http://env:3141"));
         assert_eq!(config.cli.remote.token.as_deref(), Some("env_token"));
         assert_eq!(config.web.host.as_deref(), Some("0.0.0.0"));
         assert_eq!(config.web.port, Some(9090));

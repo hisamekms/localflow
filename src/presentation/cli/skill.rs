@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use super::{Cli, DryRunOperation, print_dry_run};
 use crate::bootstrap::resolve_project_root;
@@ -52,7 +52,10 @@ pub fn should_write_file(path: &std::path::Path, content: &str, yes: bool) -> Re
 /// Returns true if any installable file already exists under `base_dir`.
 fn any_install_target_exists(base_dir: &Path) -> bool {
     INSTALLABLE_FILES.iter().any(|f| {
-        let path = f.segments.iter().fold(base_dir.to_path_buf(), |p, s| p.join(s));
+        let path = f
+            .segments
+            .iter()
+            .fold(base_dir.to_path_buf(), |p, s| p.join(s));
         path.exists()
     })
 }
@@ -69,7 +72,9 @@ fn any_install_target_exists_flat(dir: &Path) -> bool {
 fn clean_install_targets(base_dir: &Path) -> Result<()> {
     // Remove senko-owned directories
     for segments in CLEAN_INSTALL_DIRS {
-        let dir = segments.iter().fold(base_dir.to_path_buf(), |p, s| p.join(s));
+        let dir = segments
+            .iter()
+            .fold(base_dir.to_path_buf(), |p, s| p.join(s));
         if dir.exists() {
             fs::remove_dir_all(&dir)
                 .with_context(|| format!("failed to remove directory: {}", dir.display()))?;
@@ -78,13 +83,15 @@ fn clean_install_targets(base_dir: &Path) -> Result<()> {
     }
     // Remove individual files not covered by CLEAN_INSTALL_DIRS
     for file in INSTALLABLE_FILES {
-        let path = file.segments.iter().fold(base_dir.to_path_buf(), |p, s| p.join(s));
+        let path = file
+            .segments
+            .iter()
+            .fold(base_dir.to_path_buf(), |p, s| p.join(s));
         if !path.exists() {
             continue;
         }
         let covered = CLEAN_INSTALL_DIRS.iter().any(|dir_segs| {
-            file.segments.len() > dir_segs.len()
-                && file.segments[..dir_segs.len()] == **dir_segs
+            file.segments.len() > dir_segs.len() && file.segments[..dir_segs.len()] == **dir_segs
         });
         if !covered {
             fs::remove_file(&path)
@@ -140,13 +147,20 @@ pub fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool, force: b
                 })
                 .collect()
         };
-        return print_dry_run(&cli.output, &DryRunOperation { command: "skill-install".into(), operations });
+        return print_dry_run(
+            &cli.output,
+            &DryRunOperation {
+                command: "skill-install".into(),
+                operations,
+            },
+        );
     }
 
     if let Some(dir) = output_dir {
         // Clean install for --output-dir mode
         if any_install_target_exists_flat(&dir)
-            && (force || confirm("Existing files found. Clean install? [y/N] ")?) {
+            && (force || confirm("Existing files found. Clean install? [y/N] ")?)
+        {
             clean_install_targets_flat(&dir)?;
         }
         for file in INSTALLABLE_FILES {
@@ -164,22 +178,30 @@ pub fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool, force: b
     let claude_dir = project_root.join(".claude");
     let created_claude_dir = !claude_dir.exists();
 
-    if created_claude_dir && !yes && !force
+    if created_claude_dir
+        && !yes
+        && !force
         && !confirm(&format!(
             ".claude/ directory does not exist. Create it at {}? [y/N] ",
             claude_dir.display()
-        ))? {
-            bail!("aborted");
-        }
+        ))?
+    {
+        bail!("aborted");
+    }
 
     // Clean install when targets already exist
-    if !created_claude_dir && any_install_target_exists(&claude_dir)
-        && (force || confirm("Existing files found. Clean install? [y/N] ")?) {
+    if !created_claude_dir
+        && any_install_target_exists(&claude_dir)
+        && (force || confirm("Existing files found. Clean install? [y/N] ")?)
+    {
         clean_install_targets(&claude_dir)?;
     }
 
     for file in INSTALLABLE_FILES {
-        let path = file.segments.iter().fold(claude_dir.clone(), |p, s| p.join(s));
+        let path = file
+            .segments
+            .iter()
+            .fold(claude_dir.clone(), |p, s| p.join(s));
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create directory: {}", parent.display()))?;
@@ -199,8 +221,8 @@ pub fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool, force: b
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::{Command, OutputFormat};
+    use super::*;
 
     fn make_cli(tmp: &tempfile::TempDir) -> Cli {
         Cli {
@@ -236,8 +258,7 @@ mod tests {
 
         let content = std::fs::read_to_string(dir.path().join("SKILL.md")).unwrap();
         assert_eq!(content, SKILL_MD_CONTENT);
-        let agent_content =
-            std::fs::read_to_string(dir.path().join("dod-verifier.md")).unwrap();
+        let agent_content = std::fs::read_to_string(dir.path().join("dod-verifier.md")).unwrap();
         assert_eq!(agent_content, DOD_VERIFIER_AGENT_CONTENT);
         // Verify workflow and other files are present (flat mode uses last segment as filename)
         assert!(dir.path().join("cli-reference.md").exists());

@@ -137,7 +137,9 @@ pub fn validate_field_name(name: &str) -> Result<(), DomainError> {
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
     {
         return Err(DomainError::InvalidMetadataFieldName {
-            reason: "field name must contain only lowercase letters, digits, underscores, and hyphens".to_string(),
+            reason:
+                "field name must contain only lowercase letters, digits, underscores, and hyphens"
+                    .to_string(),
         });
     }
     Ok(())
@@ -170,16 +172,9 @@ pub trait MetadataFieldRepository: Send + Sync {
         params: &CreateMetadataFieldParams,
     ) -> Result<MetadataField>;
 
-    async fn get_metadata_field(
-        &self,
-        project_id: i64,
-        field_id: i64,
-    ) -> Result<MetadataField>;
+    async fn get_metadata_field(&self, project_id: i64, field_id: i64) -> Result<MetadataField>;
 
-    async fn list_metadata_fields(
-        &self,
-        project_id: i64,
-    ) -> Result<Vec<MetadataField>>;
+    async fn list_metadata_fields(&self, project_id: i64) -> Result<Vec<MetadataField>>;
 
     async fn update_metadata_field(
         &self,
@@ -188,11 +183,7 @@ pub trait MetadataFieldRepository: Send + Sync {
         params: &UpdateMetadataFieldParams,
     ) -> Result<MetadataField>;
 
-    async fn delete_metadata_field(
-        &self,
-        project_id: i64,
-        field_id: i64,
-    ) -> Result<()>;
+    async fn delete_metadata_field(&self, project_id: i64, field_id: i64) -> Result<()>;
 }
 
 // --- Tests ---

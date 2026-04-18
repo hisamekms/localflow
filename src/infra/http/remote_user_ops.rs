@@ -4,9 +4,7 @@ use serde_json::json;
 
 use crate::application::port::UserOperations;
 use crate::application::user_service::is_key_expired;
-use crate::domain::user::{
-    ApiKey, ApiKeyWithSecret, CreateUserParams, UpdateUserParams, User,
-};
+use crate::domain::user::{ApiKey, ApiKeyWithSecret, CreateUserParams, UpdateUserParams, User};
 use crate::infra::config::SessionConfig;
 
 use super::client::HttpClient;
@@ -62,10 +60,7 @@ impl UserOperations for RemoteUserOperations {
 
     async fn get_user(&self, id: i64) -> Result<User> {
         let resp = self
-            .auth(
-                self.client()
-                    .get(self.url(&format!("/api/v1/users/{id}"))),
-            )
+            .auth(self.client().get(self.url(&format!("/api/v1/users/{id}"))))
             .send()
             .await?;
         read_json_or_error(resp).await

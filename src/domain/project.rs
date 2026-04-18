@@ -17,7 +17,12 @@ pub struct Project {
 
 impl Project {
     pub fn new(id: i64, name: String, description: Option<String>, created_at: String) -> Self {
-        Self { id, name, description, created_at }
+        Self {
+            id,
+            name,
+            description,
+            created_at,
+        }
     }
 
     pub fn id(&self) -> i64 {
@@ -57,7 +62,11 @@ impl CreateProjectParams {
     pub fn validate(&self) -> Result<(), DomainError> {
         use super::validator::*;
         validate_string_length("name", &self.name, MAX_PROJECT_NAME_LEN)?;
-        validate_optional_string_length("description", &self.description, MAX_PROJECT_DESCRIPTION_LEN)?;
+        validate_optional_string_length(
+            "description",
+            &self.description,
+            MAX_PROJECT_DESCRIPTION_LEN,
+        )?;
         Ok(())
     }
 }
@@ -74,9 +83,18 @@ use super::user::{AddProjectMemberParams, ProjectMember, Role};
 
 #[async_trait]
 pub trait ProjectMemberRepository: Send + Sync {
-    async fn add_project_member(&self, project_id: i64, params: &AddProjectMemberParams) -> Result<ProjectMember>;
+    async fn add_project_member(
+        &self,
+        project_id: i64,
+        params: &AddProjectMemberParams,
+    ) -> Result<ProjectMember>;
     async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()>;
     async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>>;
     async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember>;
-    async fn update_member_role(&self, project_id: i64, user_id: i64, role: Role) -> Result<ProjectMember>;
+    async fn update_member_role(
+        &self,
+        project_id: i64,
+        user_id: i64,
+        role: Role,
+    ) -> Result<ProjectMember>;
 }

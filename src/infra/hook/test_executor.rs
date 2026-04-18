@@ -8,8 +8,8 @@ use crate::domain::task::Task;
 use crate::infra::config::Config;
 
 use super::{
-    build_event, execute_hook_sync, get_commands_for_event, resolve_envelope_context,
-    BackendInfo, HookEnvelope, NoEligibleTaskEvent, RuntimeMode,
+    BackendInfo, HookEnvelope, NoEligibleTaskEvent, RuntimeMode, build_event, execute_hook_sync,
+    get_commands_for_event, resolve_envelope_context,
 };
 
 /// Shell-based implementation of [`HookTestPort`].

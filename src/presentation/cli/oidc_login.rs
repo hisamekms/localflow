@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use oauth2::basic::BasicClient;
 use oauth2::{
     AuthUrl, AuthorizationCode, ClientId, CsrfToken, PkceCodeChallenge, RedirectUrl, Scope,
@@ -131,9 +131,7 @@ pub async fn perform_login(
 
     // Step 8: Exchange JWT for senko API key (oidc mode)
     let token_url = format!("{}/auth/token", api_url.trim_end_matches('/'));
-    let mut req = http_client
-        .post(&token_url)
-        .bearer_auth(&jwt);
+    let mut req = http_client.post(&token_url).bearer_auth(&jwt);
     if let Some(name) = device_name {
         req = req.json(&serde_json::json!({ "device_name": name }));
     }
@@ -211,7 +209,10 @@ async fn bind_callback_listener(ports: &[u16]) -> Result<TcpListener> {
 }
 
 async fn receive_callback(listener: &TcpListener) -> Result<(String, String)> {
-    let (mut stream, _) = listener.accept().await.context("failed to accept callback connection")?;
+    let (mut stream, _) = listener
+        .accept()
+        .await
+        .context("failed to accept callback connection")?;
 
     let mut buf = vec![0u8; 4096];
     let n = stream.read(&mut buf).await?;
@@ -222,10 +223,8 @@ async fn receive_callback(listener: &TcpListener) -> Result<(String, String)> {
     let path = request_line.split_whitespace().nth(1).unwrap_or("");
 
     let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
-    let params: std::collections::HashMap<&str, &str> = query
-        .split('&')
-        .filter_map(|p| p.split_once('='))
-        .collect();
+    let params: std::collections::HashMap<&str, &str> =
+        query.split('&').filter_map(|p| p.split_once('=')).collect();
 
     // Check for error response
     if let Some(error) = params.get("error") {
@@ -264,4 +263,3 @@ async fn receive_callback(listener: &TcpListener) -> Result<(String, String)> {
 
     Ok((code, state))
 }
-
