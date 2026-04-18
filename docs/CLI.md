@@ -295,51 +295,66 @@ Without a volume mount, all data is lost when the container stops.
 
 ## Hooks – Automatic actions on task state changes
 
-Hooks are shell commands that run automatically when CLI commands change task state. They fire inline (no daemon required) as fire-and-forget child processes, so they never block the CLI.
+Hooks are shell commands that run automatically when CLI / server commands change task state. They fire inline (no daemon required), so they never block the CLI by default. Each hook is a named entry and its behavior (sync vs async, pre vs post, abort vs warn on failure, required env vars, selection-result filter) is declared on the definition itself. See the full schema in [Configuration Reference → Hooks](CONFIGURATION.md#hooks).
 
 ### Configuration
+
+Hooks live under a runtime-specific section matching the binary you run:
+
+- `[cli.<action>.hooks.<name>]` — local CLI (not `senko serve` / `senko serve --proxy`)
+- `[server.remote.<action>.hooks.<name>]` — direct server (`senko serve`)
+- `[server.relay.<action>.hooks.<name>]` — relay server (`senko serve --proxy`)
+- `[workflow.<stage>.hooks.<name>]` — workflow stages driven by the Claude Code skill
+
+The action set for the CLI / server runtimes is fixed: `task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` / `task_select`.
 
 Create `.senko/config.toml` to define hooks:
 
 ```toml
-[hooks]
-[hooks.on_task_added.notify]
+[cli.task_add.hooks.notify]
 command = "echo 'New task' | notify-send -"
 
-[hooks.on_task_ready.webhook]
+[cli.task_ready.hooks.webhook]
 command = "curl -X POST https://example.com/ready"
 
-[hooks.on_task_started.slack]
+[cli.task_start.hooks.slack]
 command = "slack-notify started"
 
-[hooks.on_task_completed.webhook]
+[cli.task_complete.hooks.webhook]
 command = "curl -X POST https://example.com/webhook"
 
-[hooks.on_task_canceled.log]
+[cli.task_cancel.hooks.log]
 command = "echo canceled"
 ```
 
-Multiple hooks per event use separate named entries. Each entry supports `enabled` and `requires_env` fields:
+Multiple hooks per action use separate named entries. Each entry supports `enabled`, `when`, `mode`, `on_failure`, and `env_vars`:
 
 ```toml
-[hooks.on_task_completed.notify]
+[cli.task_complete.hooks.notify]
 command = "notify-send 'Done'"
 
-[hooks.on_task_completed.webhook]
+[cli.task_complete.hooks.webhook]
 command = "curl https://example.com/done"
-requires_env = ["WEBHOOK_URL"]
+
+[[cli.task_complete.hooks.webhook.env_vars]]
+name = "WEBHOOK_URL"
+required = true
 ```
 
-| Hook | Trigger |
-|------|---------|
-| `on_task_added` | `senko task add` creates a new task |
-| `on_task_ready` | `senko task ready` transitions a task from draft to todo |
-| `on_task_started` | `senko task start` or `senko task next` starts a task |
-| `on_task_completed` | `senko task complete` completes a task |
-| `on_task_canceled` | `senko task cancel` cancels a task |
-| `on_no_eligible_task` | `senko task next` finds no eligible task |
+| Action | Trigger |
+|--------|---------|
+| `task_add` | `senko task add` creates a new task |
+| `task_ready` | `senko task ready` transitions a task from draft to todo |
+| `task_start` | `senko task start` or `senko task next` starts a task |
+| `task_complete` | `senko task complete` completes a task |
+| `task_cancel` | `senko task cancel` cancels a task |
+| `task_select` | `senko task next` selects a task or finds none. Filter via `on_result = "selected"` / `"none"` / `"any"` (`"any"` is the default). `on_result = "none"` replaces the old `on_no_eligible_task` event. |
 
 Hooks receive the full event payload as JSON on **stdin** and are executed via `sh -c`.
+
+### Testing hooks
+
+Use `senko hooks test <event_name> [task_id]` to fire a single hook synchronously using a real or sample task payload. Valid event names: `task_add`, `task_ready`, `task_start`, `task_complete`, `task_cancel`, `task_select`.
 
 ### Event Payload
 
@@ -362,7 +377,7 @@ The JSON object passed to hooks on stdin (the "hook envelope"):
   },
   "event": {
     "event_id": "550e8400-e29b-41d4-a716-446655440000",
-    "event": "task_completed",
+    "event": "task_complete",
     "timestamp": "2026-03-24T12:00:00Z",
     "from_status": "in_progress",
     "task": {
@@ -405,7 +420,7 @@ The JSON object passed to hooks on stdin (the "hook envelope"):
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `runtime` | string | `"cli"` or `"api"` |
+| `runtime` | string | `"cli"`, `"server.relay"`, or `"server.remote"` |
 | `backend` | object | Backend info (`type`, and backend-specific fields) |
 | `project` | object | Project context: `id` (integer) and `name` (string) |
 | `user` | object | User context: `id` (integer) and `name` (string) |
@@ -418,13 +433,13 @@ The `project` and `user` fields reflect the current config. When `[project] name
 | Field | Type | Description |
 |-------|------|-------------|
 | `event_id` | string | UUID v4 unique identifier |
-| `event` | string | Event name (e.g. `"task_added"`, `"task_completed"`) |
+| `event` | string | Event name (e.g. `"task_add"`, `"task_complete"`, `"task_select"`) |
 | `timestamp` | string | ISO 8601 (RFC 3339) timestamp |
 | `from_status` | string \| null | Previous status before the transition |
 | `task` | object | Full task object (same schema as `senko task get` — see below) |
 | `stats` | object | Task count by status (`{"todo": 3, "completed": 5, ...}`) |
 | `ready_count` | integer | Number of `todo` tasks with all dependencies met |
-| `unblocked_tasks` | array \| null | Tasks newly unblocked by this event (only on `task_completed`) |
+| `unblocked_tasks` | array \| null | Tasks newly unblocked by this event (only on `task_complete`) |
 
 #### `task` object
 
@@ -466,7 +481,7 @@ Each item in `definition_of_done`:
 
 #### `unblocked_tasks` items
 
-Present only in `task_completed` events when completing a task unblocks other tasks.
+Present only in `task_complete` events when completing a task unblocks other tasks.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -522,29 +537,18 @@ All settings follow the precedence: **CLI flag > environment variable > config.t
 
 ### Hooks
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SENKO_HOOKS_ENABLED` | Enable or disable hook execution on this process | `true` |
-
-| Variable | Description |
-|----------|-------------|
-| `SENKO_HOOK_ON_TASK_ADDED` | Shell command to run when a task is created |
-| `SENKO_HOOK_ON_TASK_READY` | Shell command to run when a task becomes ready |
-| `SENKO_HOOK_ON_TASK_STARTED` | Shell command to run when a task is started |
-| `SENKO_HOOK_ON_TASK_COMPLETED` | Shell command to run when a task is completed |
-| `SENKO_HOOK_ON_TASK_CANCELED` | Shell command to run when a task is canceled |
-| `SENKO_HOOK_ON_NO_ELIGIBLE_TASK` | Shell command to run when no eligible task is found |
-
-Hook environment variables override the corresponding `[hooks]` section in `config.toml`.
+Hook definitions are not configurable via environment variables. Define them in `.senko/config.toml` under the runtime-specific section (`[cli.<action>.hooks.<name>]`, `[server.remote.<action>.hooks.<name>]`, `[server.relay.<action>.hooks.<name>]`, or `[workflow.<stage>.hooks.<name>]`). See [Configuration Reference → Hooks](CONFIGURATION.md#hooks) for the full schema.
 
 ### Example: Docker deployment
 
 ```bash
 docker run -e SENKO_PORT=8080 \
   -e SENKO_HOST=0.0.0.0 \
-  -e SENKO_HOOK_ON_TASK_COMPLETED="curl -X POST https://example.com/webhook" \
+  -v "$(pwd)/.senko:/root/.senko" \
   senko serve
 ```
+
+Mount the project's `.senko` directory so `config.toml`, including any `[server.remote.*.hooks.*]` definitions, is picked up by the server.
 
 ## Status Transitions
 

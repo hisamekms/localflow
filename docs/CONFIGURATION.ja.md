@@ -41,26 +41,35 @@ senko config --init
 
 ### ワークフローステージ
 
-ステージ: `workflow.add`, `workflow.start`, `workflow.branch`, `workflow.plan`, `workflow.implement`, `workflow.merge`, `workflow.pr`, `workflow.complete`, `workflow.branch_cleanup`
+ステージは `[workflow.<stage>]` 配下に定義します。skill が消費する組み込みステージ名は次の通り:
 
-各ステージ共通:
+```
+task_add         task_ready       task_start       task_complete
+task_cancel      task_select      branch_set       branch_cleanup
+branch_merge     pr_create        pr_update        plan
+implement
+```
+
+ユーザー独自のステージ名も許容されます。未知のステージ名は `senko config` の出力にそのまま残り、外部スクリプトから利用できます。skill は上記の組み込み名のみで発火します。
+
+各ステージ共通のキー:
 
 | キー | 型 | デフォルト | 説明 |
 |------|------|----------|------|
 | `instructions` | string[] | `[]` | このステージでのエージェント向けテキスト指示。 |
-| `pre_hooks` | hook[] | `[]` | ステージ前に実行するフック。文字列（シェルコマンド）または `{command, prompt, on_failure}`。 |
-| `post_hooks` | hook[] | `[]` | ステージ後に実行するフック。`pre_hooks` と同じ形式。 |
+| `hooks` | map<string, HookDef> | `{}` | `[workflow.<stage>.hooks.<name>]` で定義する名前付き hook。各 hook の `when` / `mode` / `on_failure` で pre/post と sync/async を制御（下記 [Hooks](#hooks) 参照）。 |
+| `metadata_fields` | field[] | `[]` | このステージで収集するメタデータフィールド。値はタスクの metadata にシャローマージされる。 |
 
-ステージ固有のキー:
+ステージ固有のキー（未知のキーは pass-through として保持される）:
 
 | ステージ | キー | 型 | 説明 |
 |---------|------|------|------|
-| `workflow.add` | `default_dod` | string[] | 新規タスクのデフォルト完了定義。 |
-| `workflow.add` | `default_tags` | string[] | 新規タスクのデフォルトタグ。 |
-| `workflow.add` | `default_priority` | string | 新規タスクのデフォルト優先度。 |
-| `workflow.start` | `metadata_fields` | field[] | タスク開始時に収集するメタデータフィールド。値は既存メタデータにシャローマージされる。 |
+| `workflow.task_add` | `default_dod` | string[] | 新規タスクのデフォルト完了定義。 |
+| `workflow.task_add` | `default_tags` | string[] | 新規タスクのデフォルトタグ。 |
+| `workflow.task_add` | `default_priority` | string | 新規タスクのデフォルト優先度。 |
 | `workflow.plan` | `required_sections` | string[] | 実装計画の必須セクション。 |
-| `workflow.complete` | `metadata_fields` | field[] | タスク完了時に収集するメタデータフィールド。値は既存メタデータにシャローマージされる。 |
+
+> **補足**: 旧スキーマの `pre_hooks` / `post_hooks` 配列は廃止されました。各 hook 定義に `when = "pre"` / `when = "post"` を指定して制御してください。
 
 ### `[backend.sqlite]`
 
@@ -130,16 +139,30 @@ senko config --init
 
 ### `[server.relay]`
 
+バイナリがリレーサーバー（`senko serve --proxy`）として起動しているときに適用。このセクション配下の hook はこの runtime でのみ発火する。
+
 | キー | 型 | デフォルト | 説明 |
 |------|------|----------|------|
 | `url` | string | `null` | 上流リレーサーバーURL。設定するとサーバーはリレーモードで動作し、このURLにリクエストを転送。 |
 | `token` | string | `null` | 上流リレーサーバー認証用APIトークン。 |
 
+タスクアクションの hook — `[server.relay.task_add.hooks.<name>]` / `[server.relay.task_ready.hooks.<name>]` / `[server.relay.task_start.hooks.<name>]` / `[server.relay.task_complete.hooks.<name>]` / `[server.relay.task_cancel.hooks.<name>]` / `[server.relay.task_select.hooks.<name>]`。詳細は [Hooks](#hooks)。
+
+### `[server.remote]`
+
+バイナリが直接（非リレー）サーバー（`senko serve`）として起動しているときに適用。このセクション配下の hook はこの runtime でのみ発火する。
+
+タスクアクションの hook — `[server.remote.task_add.hooks.<name>]` / `[server.remote.task_ready.hooks.<name>]` / `[server.remote.task_start.hooks.<name>]` / `[server.remote.task_complete.hooks.<name>]` / `[server.remote.task_cancel.hooks.<name>]` / `[server.remote.task_select.hooks.<name>]`。詳細は [Hooks](#hooks)。
+
 ### `[cli]`
+
+バイナリがローカル CLI（`senko serve` / `senko serve --proxy` 以外）として起動しているときに適用。このセクション配下の hook はこの runtime でのみ発火する。
 
 | キー | 型 | デフォルト | 説明 |
 |------|------|----------|------|
 | `browser` | bool | `true` | OIDCログイン時にブラウザを自動起動。 |
+
+タスクアクションの hook — `[cli.task_add.hooks.<name>]` / `[cli.task_ready.hooks.<name>]` / `[cli.task_start.hooks.<name>]` / `[cli.task_complete.hooks.<name>]` / `[cli.task_cancel.hooks.<name>]` / `[cli.task_select.hooks.<name>]`。詳細は [Hooks](#hooks)。
 
 ### `[cli.remote]`
 
@@ -162,6 +185,7 @@ senko config --init
 | `dir` | string | 自動 | ログファイルのディレクトリ。デフォルト: `$XDG_STATE_HOME/senko` |
 | `level` | string | `"info"` | 最小ログレベル: `trace`, `debug`, `info`, `warn`, `error`。 |
 | `format` | string | `"json"` | ログ出力形式: `"json"` または `"pretty"`。 |
+| `hook_output` | string | `"file"` | hook の stdout/stderr の出力先: `"file"`, `"stdout"`, `"both"` のいずれか。 |
 
 ### `[project]`
 
@@ -175,37 +199,126 @@ senko config --init
 |------|------|----------|------|
 | `name` | string | `null` | タスク割り当て用のユーザー名。未設定時は自動検出。 |
 
-### `[hooks]`
+## Hooks
 
-| キー | 型 | デフォルト | 説明 |
-|------|------|----------|------|
-| `enabled` | bool | `true` | このプロセス（CLI）でフックを発火するか。APIサーバーはこの設定に関わらず常にフックを発火。 |
+Hook は runtime ごと・アクションごとに名前付きで定義するシェルコマンドです。キー構造はすべての runtime で統一されています:
 
-フックイベントは各イベントキー配下の名前付きエントリとして設定:
-
-```toml
-[hooks.on_task_completed.webhook]
-command = "curl -X POST https://example.com/webhook"
-enabled = true
-requires_env = ["WEBHOOK_URL"]
+```
+<runtime>.<aggregate>_<action>.hooks.<name>
 ```
 
-| イベント | トリガー |
-|---------|---------|
-| `on_task_added` | 新しいタスクが作成された。 |
-| `on_task_ready` | タスクが `todo` ステータスに遷移した。 |
-| `on_task_started` | タスクが `in_progress` に遷移した。 |
-| `on_task_completed` | タスクが完了した。 |
-| `on_task_canceled` | タスクがキャンセルされた。 |
-| `on_no_eligible_task` | `senko task next` で実行可能なタスクが見つからなかった。 |
+### Runtime
 
-各フックエントリのフィールド:
+| Runtime | 有効な場面 | セクションのプレフィックス |
+|---------|-----------|----------------|
+| `cli` | ローカル CLI バイナリ（`senko serve` / `senko serve --proxy` 以外） | `[cli.<action>.hooks.<name>]` |
+| `server.relay` | リレーサーバー（`senko serve --proxy`） | `[server.relay.<action>.hooks.<name>]` |
+| `server.remote` | 直接サーバー（`senko serve`） | `[server.remote.<action>.hooks.<name>]` |
+| `workflow` | Claude Code skill が消費するワークフローステージ | `[workflow.<stage>.hooks.<name>]` |
+
+### アクション
+
+`cli` / `server.relay` / `server.remote` の各 runtime は **固定** のタスクアクションのみを公開します:
+
+| アクション | 発火するタイミング |
+|-----------|-------------------|
+| `task_add` | `senko task add` がタスクを作成したとき |
+| `task_ready` | `senko task ready` が draft → todo に遷移させたとき |
+| `task_start` | `senko task start` または `senko task next` がタスクを開始したとき |
+| `task_complete` | `senko task complete` がタスクを完了させたとき |
+| `task_cancel` | `senko task cancel` がタスクをキャンセルしたとき |
+| `task_select` | `senko task next` がタスクを選定した / 該当タスクを見つけられなかったとき（`on_result` で絞り込む） |
+
+`workflow` runtime は **任意** のステージ名を受け付けます。skill が発火対象とする組み込みステージ名については [ワークフローステージ](#ワークフローステージ) を参照。
+
+### `HookDef` フィールド
+
+`<runtime>.<aggregate>_<action>.hooks.<name>` 配下に定義する hook は `HookDef` 型です:
 
 | フィールド | 型 | デフォルト | 説明 |
 |-----------|------|----------|------|
-| `command` | string | _（必須）_ | 実行するシェルコマンド（`sh -c` 経由）。 |
-| `enabled` | bool | `true` | `false` で一時的に無効化。 |
-| `requires_env` | string[] | `[]` | 指定した環境変数がすべて設定されている場合のみ実行。 |
+| `command` | string | _(必須)_ | `sh -c` 経由で実行するシェルコマンド。イベント envelope が JSON として stdin に渡される。 |
+| `when` | `"pre"` / `"post"` | `"post"` | 状態遷移の前後どちらで発火するか。 |
+| `mode` | `"sync"` / `"async"` | `"async"` | `sync` は完了を待つ、`async` は spawn して detach する。 |
+| `on_failure` | `"abort"` / `"warn"` / `"ignore"` | `"abort"` | 非 0 終了したときの挙動。**`abort` は `sync`+`pre` の hook でのみ有効** — `sync`+`post` や `async` では warn と同等（ログのみ）。 |
+| `enabled` | bool | `true` | `false` で定義を残したまま一時的に無効化。 |
+| `env_vars` | `EnvVarSpec[]` | `[]` | 検証 / 注入する環境変数のスペック（下記）。 |
+| `on_result` | `"selected"` / `"none"` / `"any"` | `"any"` | `task_select` hook でのみ有効。`selected` = 選定成功時のみ / `none` = 該当タスクなし時のみ / `any` = どちらでも発火。 |
+
+### `EnvVarSpec` フィールド
+
+`env_vars` の各要素は `EnvVarSpec` 型です:
+
+| フィールド | 型 | デフォルト | 説明 |
+|-----------|------|----------|------|
+| `name` | string | _(必須)_ | 環境変数名。 |
+| `required` | bool | `true` | `true` で、発火時に未設定かつ `default` も無い場合、hook は **スキップ** され warn ログが出る。 |
+| `default` | string | `null` | 設定されていれば、未設定時にこの値が注入される。 |
+| `description` | string | `null` | 設定ファイル読者向けの備考。 |
+
+### 発火時の挙動
+
+- **Runtime フィルタ**: 起動中のプロセスに一致する runtime 配下の hook のみが発火。他 runtime 配下の hook は無視され、プロセス起動時に一度だけ警告ログ（`hooks configured under runtime sections that do not match the active runtime; they will not fire`）が出るため、設定ミスに気付きやすい。
+- **`when` フィルタ**: `when = "pre"` は状態遷移の前、`when = "post"` は後に発火。workflow stage とタスクアクションのどちらも pre/post 双方で hook を発火させる。
+- **`mode`**: `sync` はコマンド終了までブロック、`async` はプロセスを起動して即座に return する。
+- **`on_failure = "abort"` のセマンティクス**: 失敗した hook が `sync` かつ `when = "pre"` のときに限り、状態遷移が `DomainError::HookAborted` で中止される。それ以外の組み合わせでは `abort` は warn ログに縮退する。fire-and-forget で明示的にログだけ残したい場合は `warn` / `ignore` を使うこと。
+
+### Load-time バリデーション
+
+起動時に config をスキャンして以下の警告を出します（該当 hook は load 自体は成功しますが、`abort` / `on_result` 指定は実質無視されます）:
+
+- `pre` + `async` + `on_failure = "abort"` — async hook は abort できないため、`abort` は実質 `warn` と同等。
+- `task_select` 以外の hook に `on_result` が指定されている — `on_result` は `task_select` のみで意味を持ち、他では無視される。
+
+### 例: タスク完了時の通知
+
+```toml
+[cli.task_complete.hooks.notify]
+command = "curl -X POST -d @- $WEBHOOK_URL"
+mode = "async"
+
+[[cli.task_complete.hooks.notify.env_vars]]
+name = "WEBHOOK_URL"
+required = true
+```
+
+### 例: `on_result` を使った task_select
+
+旧 `on_no_eligible_task` の代替 — `senko task next` が該当タスクを見つけられなかった場合にのみ発火:
+
+```toml
+[cli.task_select.hooks.prompt_for_add]
+command = "echo 'no eligible task — consider adding one'"
+on_result = "none"
+```
+
+選定成功時に発火:
+
+```toml
+[cli.task_select.hooks.log_selection]
+command = "logger -t senko 'task selected'"
+on_result = "selected"
+```
+
+### 例: sync+pre+abort によるゲート
+
+`sync`+`pre`+`abort` な hook は非 0 終了時に状態遷移を中止できるため、完了時のローカルチェックのゲートに使えます:
+
+```toml
+[workflow.branch_merge.hooks.mise_check]
+command = "mise check"
+when = "pre"
+mode = "sync"
+on_failure = "abort"
+```
+
+### 例: サーバー側の hook
+
+```toml
+[server.remote.task_ready.hooks.metrics]
+command = "emit-metric task_ready"
+mode = "async"
+```
 
 ## 環境変数
 
@@ -275,17 +388,9 @@ requires_env = ["WEBHOOK_URL"]
 | `SENKO_POSTGRES_SSLROOTCERT` | `backend.postgres.sslrootcert` |
 | `SENKO_POSTGRES_MAX_CONNECTIONS` | `backend.postgres.max_connections`（u32としてパース） |
 
-### フック
+### Hooks
 
-| 変数 | 対応する設定キー |
-|------|-----------------|
-| `SENKO_HOOKS_ENABLED` | `hooks.enabled` |
-| `SENKO_HOOK_ON_TASK_ADDED` | `hooks.on_task_added`（シェルコマンド） |
-| `SENKO_HOOK_ON_TASK_READY` | `hooks.on_task_ready`（シェルコマンド） |
-| `SENKO_HOOK_ON_TASK_STARTED` | `hooks.on_task_started`（シェルコマンド） |
-| `SENKO_HOOK_ON_TASK_COMPLETED` | `hooks.on_task_completed`（シェルコマンド） |
-| `SENKO_HOOK_ON_TASK_CANCELED` | `hooks.on_task_canceled`（シェルコマンド） |
-| `SENKO_HOOK_ON_NO_ELIGIBLE_TASK` | `hooks.on_no_eligible_task`（シェルコマンド） |
+Hook 定義は環境変数では設定 **できません**。`.senko/config.toml` の runtime 別セクション（`[cli.<action>.hooks.<name>]`、`[server.relay.<action>.hooks.<name>]`、`[server.remote.<action>.hooks.<name>]`、`[workflow.<stage>.hooks.<name>]`）で定義してください。
 
 ### その他
 
@@ -299,11 +404,28 @@ requires_env = ["WEBHOOK_URL"]
 | `SENKO_CONFIG` | _（CLIレベル）_ | 設定ファイルのパス |
 | `SENKO_PROJECT_ROOT` | _（CLIレベル）_ | プロジェクトルートディレクトリ |
 
-## 後方互換性
+## 破壊的変更
 
-以下の非推奨名称が後方互換性のためにサポートされています:
+hooks 設定スキーマが全面刷新されました。旧スキーマは後方互換なしに **読み込まれません** — 旧 `[hooks]` セクションおよび関連する環境変数は互換シム無しで削除されました。（旧 scalar / array 形式の略記は load 時に拒否され、入れ子の旧 `[hooks]` テーブルは警告は出ますが hook としては発火しません。）
 
-### TOMLキー
+| 旧 | 新 | 備考 |
+|-----|-----|------|
+| `[hooks]`（top-level） | `[cli.<action>.hooks.<name>]` / `[server.relay.<action>.hooks.<name>]` / `[server.remote.<action>.hooks.<name>]` | どの runtime で発火するかを section で選択 |
+| `[hooks].enabled` マスタースイッチ | _（廃止）_ | 個別 hook の `enabled = false` で無効化する |
+| `on_task_added` | `task_add` | |
+| `on_task_ready` | `task_ready` | |
+| `on_task_started` | `task_start` | |
+| `on_task_completed` | `task_complete` | |
+| `on_task_canceled` | `task_cancel` | |
+| `on_no_eligible_task` | `task_select` + `on_result = "none"` | 単一の `task_select` アクションに統合 |
+| `requires_env = [...]` | `env_vars = [{ name = "...", required = true }]` | 型付きスペック + デフォルト値対応 |
+| `[workflow.<stage>] pre_hooks = [...]` / `post_hooks = [...]` | `[workflow.<stage>.hooks.<name>]` + `when = "pre" \| "post"` | hook 形状を統一 |
+| `SENKO_HOOKS_ENABLED` 環境変数 | _（廃止）_ | hooks のマスタースイッチは廃止 |
+| `SENKO_HOOK_ON_TASK_*` 環境変数 | _（廃止）_ | hook は `config.toml` でのみ定義する |
+| `SENKO_HOOK_ON_NO_ELIGIBLE_TASK` 環境変数 | _（廃止）_ | `[cli.task_select.hooks.*] on_result = "none"` を使う |
+| 旧 workflow ステージ名（`add`, `start`, `plan`, `complete`, `branch`, `merge`, `pr`） | `task_add`, `task_start`, `plan`, `task_complete`, `branch_set`, `branch_merge`, `pr_create` | skill は新名でのみ発火する |
+
+### 他の TOML エイリアス（維持）
 
 | 非推奨 | 現在 | 備考 |
 |--------|------|------|
@@ -311,7 +433,7 @@ requires_env = ["WEBHOOK_URL"]
 | `merge_then_complete`（値） | `direct` | `merge_via` の値として受け付け |
 | `pr_then_complete`（値） | `pr` | `merge_via` の値として受け付け |
 
-### 環境変数
+### 他の環境変数エイリアス（維持）
 
 | 非推奨 | 現在 | 備考 |
 |--------|------|------|
