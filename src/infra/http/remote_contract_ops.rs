@@ -157,12 +157,7 @@ impl ContractOperations for RemoteContractOperations {
         check_success(resp).await
     }
 
-    async fn check_dod(
-        &self,
-        project_id: i64,
-        contract_id: i64,
-        index: usize,
-    ) -> Result<Contract> {
+    async fn check_dod(&self, project_id: i64, contract_id: i64, index: usize) -> Result<Contract> {
         let url = self.project_url(
             project_id,
             &format!("/contracts/{contract_id}/dod/{index}/check"),

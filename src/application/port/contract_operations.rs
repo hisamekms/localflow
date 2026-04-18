@@ -36,12 +36,7 @@ pub trait ContractOperations: Send + Sync {
 
     // --- Definition of Done ---
 
-    async fn check_dod(
-        &self,
-        project_id: i64,
-        contract_id: i64,
-        index: usize,
-    ) -> Result<Contract>;
+    async fn check_dod(&self, project_id: i64, contract_id: i64, index: usize) -> Result<Contract>;
     async fn uncheck_dod(
         &self,
         project_id: i64,
