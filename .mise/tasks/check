@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Run fmt check, clippy, and unit tests"
+set -euo pipefail
+
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test

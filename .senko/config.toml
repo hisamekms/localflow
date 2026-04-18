@@ -8,6 +8,9 @@
 [project]
 name = "senko"
 
+[workflow.merge]
+pre_hooks = ["mise check"]
+
 # [workflow]
 # merge_via = "direct"
 # auto_merge = true
