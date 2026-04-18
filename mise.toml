@@ -5,15 +5,11 @@ _.file = ".env"
 [tools]
 rust = "latest"
 gh = "latest"
-"github:hisamekms/senko" = "0.21.0"
+"github:hisamekms/senko" = "0.33.0"
 
 [tasks.build]
 description = "Build senko binary"
 run = "cargo build -q --bin senko"
-
-[tasks.senko]
-description = "Run senko CLI"
-run = "senko"
 
 [tasks.test]
 description = "Run unit tests"
@@ -37,7 +33,7 @@ run = "bash tests/e2e/run.sh --backend=postgres"
 description = "Run e2e tests with all backends"
 depends = ["e2e:sqlite", "e2e:postgres"]
 
-[tasks.senko-dev]
+[tasks.dev]
 description = "Run locally built senko binary"
 depends = ["build"]
 run = "./target/debug/senko"

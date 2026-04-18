@@ -44,16 +44,18 @@ git log <last-tag>..HEAD --oneline
 
 **メジャーバージョンアップの場合は AskUserQuestion でユーザーに確認を取る。** 確認なしにメジャーバージョンを上げてはいけない。
 
-### Step 3: Cargo.toml のバージョン更新
+### Step 3: Cargo.toml と mise.toml のバージョン更新
 
 `Cargo.toml` の `version = "..."` 行を新しいバージョンに更新する。Edit ツールを使うこと。
+
+あわせて `mise.toml` の `[tools]` セクションにある `"github:hisamekms/senko"` を同じ新バージョンに書き換える。これにより `mise tools` 経由で配布される senko バイナリがリリース後に更新されるようになる。Edit ツールを使うこと。
 
 ### Step 4: コミットとタグ作成
 
 ```bash
 # バージョン更新をコミット（Cargo.lock も同期する）
 cargo check --quiet
-git add Cargo.toml Cargo.lock
+git add Cargo.toml Cargo.lock mise.toml
 git commit -m "chore: bump version to <version>"
 
 # タグ作成
