@@ -39,12 +39,12 @@
 | PostgreSQL | データ永続層 | (DB 内部) |
 | OIDC IdP (任意) | SSO 認証 | (IdP 側) |
 
-認証方式は 3 択:
+認証方式 (ユーザ用):
 
-| 方式 | 向き | 詳細 |
+| 方式 | 位置づけ | 詳細 |
 |---|---|---|
-| API キー | CI、bot、少人数チーム | [guides/server-remote/auth-api-key.md](../guides/server-remote/auth-api-key.md) |
-| OIDC (OAuth PKCE) | SSO 配下のチーム | [guides/server-remote/auth-oidc.md](../guides/server-remote/auth-oidc.md) |
+| **OIDC (OAuth PKCE)** | **本番の人間ユーザ認証の推奨方式** | [guides/server-remote/auth-oidc.md](../guides/server-remote/auth-oidc.md) |
+| API キー | CI / bot / 試用用。人間のログインには OIDC を推奨 | [guides/server-remote/auth-api-key.md](../guides/server-remote/auth-api-key.md) |
 | 信頼ヘッダ | API Gateway 配下 | [guides/server-remote/auth-trusted-headers.md](../guides/server-remote/auth-trusted-headers.md) |
 
 ## セットアップ手順 (OIDC 構成の例)

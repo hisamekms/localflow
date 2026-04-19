@@ -58,15 +58,17 @@ rds_secrets_arn = "arn:aws:secretsmanager:..."   # username/password/host を含
 
 ## 3. 認証を有効化する
 
-認証方式は 3 択 (**同時に 1 つだけ**):
+認証方式は 3 択 (**ユーザ認証としては同時に 1 つだけ**):
 
-| 方式 | 使いどころ | 詳細 |
+| 方式 | 位置づけ | 詳細 |
 |---|---|---|
-| API キー | CI/CD、bot、シンプルな個人利用 | [auth-api-key.md](../guides/server-remote/auth-api-key.md) |
-| OIDC | SSO 配下のチーム | [auth-oidc.md](../guides/server-remote/auth-oidc.md) |
-| 信頼ヘッダ | API Gateway / Lambda 配下 | [auth-trusted-headers.md](../guides/server-remote/auth-trusted-headers.md) |
+| **OIDC** | **本番の人間ユーザ認証の推奨手段** | [auth-oidc.md](../guides/server-remote/auth-oidc.md) |
+| 信頼ヘッダ | API Gateway / Lambda 配下で JWT 検証を前段に逃がす構成 | [auth-trusted-headers.md](../guides/server-remote/auth-trusted-headers.md) |
+| API キー | **試用 / CI / bot 用**。人間のログインには OIDC を推奨 | [auth-api-key.md](../guides/server-remote/auth-api-key.md) |
 
-最小の API キー構成:
+> `master_key` は OIDC / 信頼ヘッダと **併用可能**。ユーザ発行などの bootstrap 用途のみに使い、日常の API 呼び出しには OIDC セッション or 個人 API キーを使う運用が標準です。
+
+試用・初期動作確認用の最小構成 (API キーのみ):
 
 ```bash
 # master key を発行

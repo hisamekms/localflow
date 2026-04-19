@@ -13,7 +13,9 @@
 - DB: SQLite (試用) or PostgreSQL (本番推奨)
 - リバースプロキシ (TLS 終端、API キー配信等) — 本番では必ず用意
 
-## 最小構成 (SQLite + API キー)
+## 試用構成 (SQLite + API キー)
+
+> **試用・初期動作確認用の最小構成です**。本番の人間ユーザ認証には [auth-oidc.md](auth-oidc.md) を使ってください。
 
 ```bash
 # 1. 任意のディレクトリで DB を持つ

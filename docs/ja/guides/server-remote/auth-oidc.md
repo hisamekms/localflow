@@ -2,6 +2,8 @@
 
 OAuth 2.0 Authorization Code + PKCE フローによるログイン。社内 SSO や Google / Cognito / Keycloak / Auth0 等の IdP 配下で使う想定。
 
+> **本番の人間ユーザ認証としての推奨方式** です。CI / bot からは [API キー認証](auth-api-key.md) を併用してください (`master_key` の有無に関わらず OIDC と API キーは共存可)。
+
 ## どう動くか
 
 ```
