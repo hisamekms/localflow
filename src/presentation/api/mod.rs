@@ -1715,7 +1715,15 @@ async fn delete_user(
     auth: OptionalAuthUser,
     Path(user_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    require_auth_user(&auth, state.auth_enabled())?;
+    let caller = require_auth_user(&auth, state.auth_enabled())?;
+    if let Some(caller) = caller
+        && caller.id() != user_id
+        && caller.id() != 0
+    {
+        return Err(ApiError::Forbidden(
+            "can only delete your own account".into(),
+        ));
+    }
     state
         .user_service
         .delete_user(user_id)
