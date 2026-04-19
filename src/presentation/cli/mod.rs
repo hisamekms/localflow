@@ -560,7 +560,7 @@ pub enum HooksCommand {
     },
     /// Test hooks by running them synchronously
     Test {
-        /// Event name (task_add, task_ready, task_start, task_complete, task_cancel, task_select)
+        /// Event name (task_add, task_ready, task_start, task_complete, task_cancel, task_select, contract_add, contract_edit, contract_delete, contract_dod_check, contract_dod_uncheck, contract_note_add)
         event_name: String,
         /// Task ID to use for building the event (uses a sample task if omitted)
         task_id: Option<i64>,
@@ -792,6 +792,10 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 #
 # [cli.contract_add.hooks.log]
 # command = "echo 'contract created'"
+#
+# [cli.contract_dod_check.hooks.audit]
+# command = "jq -r '.event.contract.id' | xargs -I{} logger -t senko 'contract {} dod check'"
+# mode = "async"
 
 # --- Server: Relay mode (serve --proxy) ---
 [server]
@@ -824,6 +828,10 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 
 # [server.remote.task_ready.hooks.metrics]
 # command = "emit-metric task_ready"
+# mode = "async"
+#
+# [server.remote.contract_dod_check.hooks.audit]
+# command = "emit-metric contract_dod_check"
 # mode = "async"
 
 # --- Workflow stages ---
@@ -894,6 +902,14 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 # [workflow.task_complete.hooks.notify]
 # command = "echo 'task completed'"
 # mode = "async"
+
+# [workflow.contract_note_add]
+# instructions = ["Re-read recent notes on this contract before adding a new one"]
+#
+# [workflow.contract_note_add.hooks.review_before_note]
+# command = "true"
+# prompt = "Skip the note if the same observation already exists in earlier notes."
+# when = "pre"
 
 # [workflow.branch_cleanup]
 # instructions = ["Verify branch is fully merged"]

@@ -293,9 +293,9 @@ This mount includes:
 
 Without a volume mount, all data is lost when the container stops.
 
-## Hooks – Automatic actions on task state changes
+## Hooks – Automatic actions on task and contract state changes
 
-Hooks are shell commands that run automatically when CLI / server commands change task state. They fire inline (no daemon required), so they never block the CLI by default. Each hook is a named entry and its behavior (sync vs async, pre vs post, abort vs warn on failure, required env vars, selection-result filter) is declared on the definition itself. See the full schema in [Configuration Reference → Hooks](CONFIGURATION.md#hooks).
+Hooks are shell commands that run automatically when CLI / server commands change task or contract state. They fire inline (no daemon required), so they never block the CLI by default. Each hook is a named entry and its behavior (sync vs async, pre vs post, abort vs warn on failure, required env vars, selection-result filter) is declared on the definition itself. See the full schema in [Configuration Reference → Hooks](CONFIGURATION.md#hooks).
 
 ### Configuration
 
@@ -306,7 +306,7 @@ Hooks live under a runtime-specific section matching the binary you run:
 - `[server.relay.<action>.hooks.<name>]` — relay server (`senko serve --proxy`)
 - `[workflow.<stage>.hooks.<name>]` — workflow stages driven by the Claude Code skill
 
-The action set for the CLI / server runtimes is fixed: `task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` / `task_select`.
+The action set for the CLI / server runtimes is fixed. Task actions: `task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` / `task_select`. Contract actions: `contract_add` / `contract_edit` / `contract_delete` / `contract_dod_check` / `contract_dod_uncheck` / `contract_note_add`. A `sync`+`pre` hook with `on_failure = "abort"` on a contract action cancels the `senko contract <verb>` command the same way it cancels a task state transition.
 
 Create `.senko/config.toml` to define hooks:
 
@@ -349,12 +349,18 @@ required = true
 | `task_complete` | `senko task complete` completes a task |
 | `task_cancel` | `senko task cancel` cancels a task |
 | `task_select` | `senko task next` selects a task or finds none. Filter via `on_result = "selected"` / `"none"` / `"any"` (`"any"` is the default). `on_result = "none"` replaces the old `on_no_eligible_task` event. |
+| `contract_add` | `senko contract add` creates a contract |
+| `contract_edit` | `senko contract edit` updates a contract |
+| `contract_delete` | `senko contract delete` removes a contract |
+| `contract_dod_check` | `senko contract dod check` marks a contract DoD item |
+| `contract_dod_uncheck` | `senko contract dod uncheck` unmarks a contract DoD item |
+| `contract_note_add` | `senko contract note add` appends a note to a contract |
 
-Hooks receive the full event payload as JSON on **stdin** and are executed via `sh -c`.
+Hooks receive the full event payload as JSON on **stdin** and are executed via `sh -c`. For contract actions, the contract id and any DoD index live inside the `event.contract` payload on stdin — they are not auto-injected as environment variables. Opt-in env vars can still be declared per hook via `env_vars`.
 
 ### Testing hooks
 
-Use `senko hooks test <event_name> [task_id]` to fire a single hook synchronously using a real or sample task payload. Valid event names: `task_add`, `task_ready`, `task_start`, `task_complete`, `task_cancel`, `task_select`.
+Use `senko hooks test <event_name> [task_id]` to fire a single hook synchronously using a real or sample payload. Valid event names: `task_add`, `task_ready`, `task_start`, `task_complete`, `task_cancel`, `task_select`, `contract_add`, `contract_edit`, `contract_delete`, `contract_dod_check`, `contract_dod_uncheck`, `contract_note_add`.
 
 ### Event Payload
 
@@ -489,6 +495,17 @@ Present only in `task_complete` events when completing a task unblocks other tas
 | `title` | string | Task title |
 | `priority` | string | `"P0"` – `"P3"` |
 | `metadata` | object \| null | Task metadata (arbitrary JSON) |
+
+#### Contract events
+
+`contract_*` events share the outer envelope (`runtime`, `backend`, `project`, `user`, `event`) but replace the inner `task` payload with a `contract` payload. The envelope omits `from_status`, `stats`, `ready_count`, and `unblocked_tasks` — those are task-aggregate-only.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `event_id` | string | UUID v4 unique identifier |
+| `event` | string | Event name (`contract_add`, `contract_edit`, `contract_delete`, `contract_dod_check`, `contract_dod_uncheck`, `contract_note_add`) |
+| `timestamp` | string | ISO 8601 (RFC 3339) timestamp |
+| `contract` | object \| null | Full contract object (same schema as `senko contract get`: `id`, `title`, `description`, `definition_of_done`, `tags`, `notes`, `is_completed`, …). `null` only on rare failure paths where the aggregate could not be re-read. |
 
 | Level | Description |
 |-------|-------------|

@@ -148,11 +148,15 @@ Applies when the binary runs as a relay server (`senko serve --proxy`). Hooks de
 
 Task action hooks — `[server.relay.task_add.hooks.<name>]` / `[server.relay.task_ready.hooks.<name>]` / `[server.relay.task_start.hooks.<name>]` / `[server.relay.task_complete.hooks.<name>]` / `[server.relay.task_cancel.hooks.<name>]` / `[server.relay.task_select.hooks.<name>]`. See [Hooks](#hooks).
 
+Contract action hooks — `[server.relay.contract_add.hooks.<name>]` / `[server.relay.contract_edit.hooks.<name>]` / `[server.relay.contract_delete.hooks.<name>]` / `[server.relay.contract_dod_check.hooks.<name>]` / `[server.relay.contract_dod_uncheck.hooks.<name>]` / `[server.relay.contract_note_add.hooks.<name>]`. See [Hooks](#hooks).
+
 ### `[server.remote]`
 
 Applies when the binary runs as the direct (non-relay) server (`senko serve`). Hooks defined under this section fire only in that runtime.
 
 Task action hooks — `[server.remote.task_add.hooks.<name>]` / `[server.remote.task_ready.hooks.<name>]` / `[server.remote.task_start.hooks.<name>]` / `[server.remote.task_complete.hooks.<name>]` / `[server.remote.task_cancel.hooks.<name>]` / `[server.remote.task_select.hooks.<name>]`. See [Hooks](#hooks).
+
+Contract action hooks — `[server.remote.contract_add.hooks.<name>]` / `[server.remote.contract_edit.hooks.<name>]` / `[server.remote.contract_delete.hooks.<name>]` / `[server.remote.contract_dod_check.hooks.<name>]` / `[server.remote.contract_dod_uncheck.hooks.<name>]` / `[server.remote.contract_note_add.hooks.<name>]`. See [Hooks](#hooks).
 
 ### `[cli]`
 
@@ -163,6 +167,8 @@ Applies when the binary runs as a local CLI (i.e., not `senko serve` / `senko se
 | `browser` | bool | `true` | Auto-open browser for OIDC login. |
 
 Task action hooks — `[cli.task_add.hooks.<name>]` / `[cli.task_ready.hooks.<name>]` / `[cli.task_start.hooks.<name>]` / `[cli.task_complete.hooks.<name>]` / `[cli.task_cancel.hooks.<name>]` / `[cli.task_select.hooks.<name>]`. See [Hooks](#hooks).
+
+Contract action hooks — `[cli.contract_add.hooks.<name>]` / `[cli.contract_edit.hooks.<name>]` / `[cli.contract_delete.hooks.<name>]` / `[cli.contract_dod_check.hooks.<name>]` / `[cli.contract_dod_uncheck.hooks.<name>]` / `[cli.contract_note_add.hooks.<name>]`. See [Hooks](#hooks).
 
 ### `[cli.remote]`
 
@@ -218,7 +224,7 @@ Hooks are named shell commands defined on a per-runtime, per-action basis. The k
 
 ### Actions
 
-The `cli` / `server.relay` / `server.remote` runtimes expose a **fixed** set of task-aggregate actions:
+The `cli` / `server.relay` / `server.remote` runtimes expose a **fixed** set of actions for each aggregate. Task-aggregate actions:
 
 | Action | Fires when |
 |--------|-----------|
@@ -228,6 +234,17 @@ The `cli` / `server.relay` / `server.remote` runtimes expose a **fixed** set of 
 | `task_complete` | `senko task complete` completes a task |
 | `task_cancel` | `senko task cancel` cancels a task |
 | `task_select` | `senko task next` selects a task or finds none (filter with `on_result`) |
+
+Contract-aggregate actions:
+
+| Action | Fires when |
+|--------|-----------|
+| `contract_add` | `senko contract add` creates a contract |
+| `contract_edit` | `senko contract edit` updates a contract |
+| `contract_delete` | `senko contract delete` removes a contract |
+| `contract_dod_check` | `senko contract dod check` marks a DoD item |
+| `contract_dod_uncheck` | `senko contract dod uncheck` unmarks a DoD item |
+| `contract_note_add` | `senko contract note add` appends a note |
 
 The `workflow` runtime accepts **any** stage name — see [Workflow Stages](#workflow-stages) for the built-in names that the skill fires on.
 
@@ -243,7 +260,8 @@ Each named hook under `<runtime>.<aggregate>_<action>.hooks.<name>` is a `HookDe
 | `on_failure` | `"abort"` / `"warn"` / `"ignore"` | `"abort"` | Behavior when the command exits non-zero. **`abort` only takes effect on `sync`+`pre` hooks** — for `sync`+`post` or `async` hooks, `abort` degrades to a log entry. |
 | `enabled` | bool | `true` | Set to `false` to temporarily disable without removing the definition. |
 | `env_vars` | `EnvVarSpec[]` | `[]` | Environment variables to validate / inject (see below). |
-| `on_result` | `"selected"` / `"none"` / `"any"` | `"any"` | Only meaningful for `task_select` hooks. `selected` = fire only on successful selection; `none` = fire only when no eligible task exists; `any` = fire in either case. |
+| `on_result` | `"selected"` / `"none"` / `"any"` | `"any"` | Only meaningful for `task_select` hooks. `selected` = fire only on successful selection; `none` = fire only when no eligible task exists; `any` = fire in either case. Ignored on every task action other than `task_select` and on every `contract_*` action. |
+| `prompt` | string | `null` | Only meaningful for `workflow.<stage>.hooks.<name>` entries — emitted by the skill as an agent instruction at that stage. Ignored by the `cli` / `server.relay` / `server.remote` runtimes. |
 
 ### `EnvVarSpec` fields
 
@@ -320,6 +338,23 @@ command = "emit-metric task_ready"
 mode = "async"
 ```
 
+### Example: contract hooks
+
+Contract hooks fire on `senko contract <verb>` commands. The envelope on stdin carries a `contract` object (full `senko contract get` schema) instead of `task`. The hook shape is otherwise identical to task hooks — `when` / `mode` / `on_failure` / `env_vars` all apply, and `sync`+`pre`+`abort` still aborts the operation.
+
+```toml
+# Server-side audit of DoD check events
+[server.remote.contract_dod_check.hooks.audit]
+command = "jq -r '.event.contract.id' | xargs -I{} logger -t senko 'contract {} dod check'"
+mode = "async"
+
+# Skill-side prompt emitted before adding a contract note
+[workflow.contract_note_add.hooks.review_before_note]
+command = "true"
+prompt = "Re-read the most recent notes on this contract before adding a new one — skip if the same observation already exists."
+when = "pre"
+```
+
 ## Environment Variables
 
 ### Workflow
@@ -390,7 +425,7 @@ mode = "async"
 
 ### Hooks
 
-Hook definitions are **not** configurable via environment variables. Define them in `.senko/config.toml` under the runtime-specific sections (`[cli.<action>.hooks.<name>]`, `[server.relay.<action>.hooks.<name>]`, `[server.remote.<action>.hooks.<name>]`, `[workflow.<stage>.hooks.<name>]`).
+Hook definitions are **not** configurable via environment variables. Define them in `.senko/config.toml` under the runtime-specific sections (`[cli.<action>.hooks.<name>]`, `[server.relay.<action>.hooks.<name>]`, `[server.remote.<action>.hooks.<name>]`, `[workflow.<stage>.hooks.<name>]`). The same section layout applies to both `task_*` and `contract_*` actions.
 
 ### Other
 
@@ -424,6 +459,7 @@ The hooks configuration schema has been fully redesigned. The old schema is **no
 | `SENKO_HOOK_ON_TASK_*` env | _(removed)_ | Define hooks only in `config.toml` |
 | `SENKO_HOOK_ON_NO_ELIGIBLE_TASK` env | _(removed)_ | Use `[cli.task_select.hooks.*] on_result = "none"` |
 | Legacy workflow stage names (`add`, `start`, `plan`, `complete`, `branch`, `merge`, `pr`) | `task_add`, `task_start`, `plan`, `task_complete`, `branch_set`, `branch_merge`, `pr_create` | The skill fires on the new names only |
+| _(none)_ | `contract_add` / `contract_edit` / `contract_delete` / `contract_dod_check` / `contract_dod_uncheck` / `contract_note_add` | **New** actions for the contract aggregate — no migration needed; they coexist with `task_*` actions under the same runtime sections |
 
 ### Other TOML aliases (retained)
 
