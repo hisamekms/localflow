@@ -1,12 +1,19 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 
-use crate::application::port::ContractOperations;
+use crate::application::HookTrigger;
+use crate::application::port::{ContractOperations, HookExecutor};
 use crate::domain::contract::{
-    Contract, ContractNote, CreateContractParams, UpdateContractArrayParams, UpdateContractParams,
+    Contract, ContractEvent, ContractNote, CreateContractParams, UpdateContractArrayParams,
+    UpdateContractParams,
 };
+use crate::domain::error::DomainError;
 use crate::domain::task::MetadataUpdate;
+use crate::infra::config::HookWhen;
+use crate::infra::hook::FireOutcome;
 
 use super::client::HttpClient;
 use super::{check_success, read_json_or_error};
@@ -14,12 +21,14 @@ use super::{check_success, read_json_or_error};
 /// HTTP client implementing `ContractOperations`.
 pub struct RemoteContractOperations {
     http: HttpClient,
+    hooks: Arc<dyn HookExecutor>,
 }
 
 impl RemoteContractOperations {
-    pub fn new(base_url: &str, api_key: Option<String>) -> Self {
+    pub fn new(base_url: &str, api_key: Option<String>, hooks: Arc<dyn HookExecutor>) -> Self {
         Self {
             http: HttpClient::new(base_url, api_key),
+            hooks,
         }
     }
 
@@ -33,6 +42,26 @@ impl RemoteContractOperations {
 
     fn client(&self) -> &reqwest::Client {
         self.http.reqwest()
+    }
+
+    async fn fire_pre(&self, trigger: &HookTrigger, contract: Option<&Contract>) -> Result<()> {
+        if self
+            .hooks
+            .fire_contract(trigger, HookWhen::Pre, contract)
+            .await
+            == FireOutcome::Abort
+        {
+            let name = trigger.event_name().unwrap_or("contract");
+            return Err(DomainError::HookAborted { event: name.into() }.into());
+        }
+        Ok(())
+    }
+
+    async fn fire_post(&self, trigger: &HookTrigger, contract: Option<&Contract>) {
+        let _ = self
+            .hooks
+            .fire_contract(trigger, HookWhen::Post, contract)
+            .await;
     }
 }
 
@@ -111,6 +140,9 @@ impl ContractOperations for RemoteContractOperations {
         project_id: i64,
         params: &CreateContractParams,
     ) -> Result<Contract> {
+        let trigger = HookTrigger::Contract(ContractEvent::Created);
+        self.fire_pre(&trigger, None).await?;
+
         let url = self.project_url(project_id, "/contracts");
         let resp = self
             .auth(
@@ -120,7 +152,10 @@ impl ContractOperations for RemoteContractOperations {
             )
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let contract: Contract = read_json_or_error(resp).await?;
+
+        self.fire_post(&trigger, Some(&contract)).await;
+        Ok(contract)
     }
 
     async fn get_contract(&self, project_id: i64, id: i64) -> Result<Contract> {
@@ -142,28 +177,46 @@ impl ContractOperations for RemoteContractOperations {
         params: &UpdateContractParams,
         array_params: &UpdateContractArrayParams,
     ) -> Result<Contract> {
+        let trigger = HookTrigger::Contract(ContractEvent::Updated);
+        self.fire_pre(&trigger, None).await?;
+
         let url = self.project_url(project_id, &format!("/contracts/{id}"));
         let body = update_body(params, array_params);
         let resp = self
             .auth(self.client().put(&url).json(&body))
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let contract: Contract = read_json_or_error(resp).await?;
+
+        self.fire_post(&trigger, Some(&contract)).await;
+        Ok(contract)
     }
 
     async fn delete_contract(&self, project_id: i64, id: i64) -> Result<()> {
+        let trigger = HookTrigger::Contract(ContractEvent::Deleted);
+        self.fire_pre(&trigger, None).await?;
+
         let url = self.project_url(project_id, &format!("/contracts/{id}"));
         let resp = self.auth(self.client().delete(&url)).send().await?;
-        check_success(resp).await
+        check_success(resp).await?;
+
+        self.fire_post(&trigger, None).await;
+        Ok(())
     }
 
     async fn check_dod(&self, project_id: i64, contract_id: i64, index: usize) -> Result<Contract> {
+        let trigger = HookTrigger::Contract(ContractEvent::DodChecked { index });
+        self.fire_pre(&trigger, None).await?;
+
         let url = self.project_url(
             project_id,
             &format!("/contracts/{contract_id}/dod/{index}/check"),
         );
         let resp = self.auth(self.client().post(&url)).send().await?;
-        read_json_or_error(resp).await
+        let contract: Contract = read_json_or_error(resp).await?;
+
+        self.fire_post(&trigger, Some(&contract)).await;
+        Ok(contract)
     }
 
     async fn uncheck_dod(
@@ -172,12 +225,18 @@ impl ContractOperations for RemoteContractOperations {
         contract_id: i64,
         index: usize,
     ) -> Result<Contract> {
+        let trigger = HookTrigger::Contract(ContractEvent::DodUnchecked { index });
+        self.fire_pre(&trigger, None).await?;
+
         let url = self.project_url(
             project_id,
             &format!("/contracts/{contract_id}/dod/{index}/uncheck"),
         );
         let resp = self.auth(self.client().post(&url)).send().await?;
-        read_json_or_error(resp).await
+        let contract: Contract = read_json_or_error(resp).await?;
+
+        self.fire_post(&trigger, Some(&contract)).await;
+        Ok(contract)
     }
 
     async fn add_note(
@@ -187,6 +246,9 @@ impl ContractOperations for RemoteContractOperations {
         content: String,
         source_task_id: Option<i64>,
     ) -> Result<ContractNote> {
+        let trigger = HookTrigger::Contract(ContractEvent::NoteAdded);
+        self.fire_pre(&trigger, None).await?;
+
         let url = self.project_url(project_id, &format!("/contracts/{contract_id}/notes"));
         let body = json!({
             "content": content,
@@ -196,7 +258,10 @@ impl ContractOperations for RemoteContractOperations {
             .auth(self.client().post(&url).json(&body))
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let note: ContractNote = read_json_or_error(resp).await?;
+
+        self.fire_post(&trigger, None).await;
+        Ok(note)
     }
 
     async fn list_notes(&self, project_id: i64, contract_id: i64) -> Result<Vec<ContractNote>> {

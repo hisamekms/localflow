@@ -5,10 +5,11 @@ use async_trait::async_trait;
 use crate::application::HookTrigger;
 use crate::application::port::HookDataSource;
 use crate::application::port::HookExecutor;
+use crate::domain::contract::Contract;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
 use crate::infra::config::{Config, HookWhen};
 
-use super::{BackendInfo, FireOutcome, RuntimeMode, fire};
+use super::{BackendInfo, FireOutcome, RuntimeMode, fire, fire_contract};
 
 /// Shell-based hook executor that spawns hook commands as child processes.
 pub struct ShellHookExecutor {
@@ -52,6 +53,24 @@ impl HookExecutor for ShellHookExecutor {
             self.backend.as_ref(),
             from_status,
             unblocked,
+            &self.runtime_mode,
+            &self.backend_info,
+        )
+        .await
+    }
+
+    async fn fire_contract(
+        &self,
+        trigger: &HookTrigger,
+        when: HookWhen,
+        contract: Option<&Contract>,
+    ) -> FireOutcome {
+        fire_contract(
+            &self.config,
+            trigger,
+            when,
+            contract,
+            self.backend.as_ref(),
             &self.runtime_mode,
             &self.backend_info,
         )

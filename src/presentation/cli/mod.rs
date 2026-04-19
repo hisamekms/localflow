@@ -773,6 +773,8 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 # token = "your-api-token"
 
 # Task action hooks: task_add / task_ready / task_start / task_complete / task_cancel / task_select
+# Contract action hooks: contract_add / contract_edit / contract_delete / contract_dod_check /
+#                        contract_dod_uncheck / contract_note_add
 #
 # [cli.task_add.hooks.example]
 # command = "echo task-added"
@@ -787,6 +789,9 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 # [cli.task_select.hooks.prompt_for_add]
 # command = "echo 'no eligible task — consider adding one'"
 # on_result = "none"
+#
+# [cli.contract_add.hooks.log]
+# command = "echo 'contract created'"
 
 # --- Server: Relay mode (serve --proxy) ---
 [server]

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 use crate::application::HookTrigger;
+use crate::domain::contract::Contract;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
 use crate::infra::config::HookWhen;
 use crate::infra::hook::FireOutcome;
@@ -18,6 +19,13 @@ pub trait HookExecutor: Send + Sync {
         from_status: Option<TaskStatus>,
         unblocked: Option<Vec<UnblockedTask>>,
     ) -> FireOutcome;
+
+    async fn fire_contract(
+        &self,
+        trigger: &HookTrigger,
+        when: HookWhen,
+        contract: Option<&Contract>,
+    ) -> FireOutcome;
 }
 
 /// No-op implementation for testing or when hooks are disabled.
@@ -32,6 +40,15 @@ impl HookExecutor for NoOpHookExecutor {
         _task: Option<&Task>,
         _from_status: Option<TaskStatus>,
         _unblocked: Option<Vec<UnblockedTask>>,
+    ) -> FireOutcome {
+        FireOutcome::Continue
+    }
+
+    async fn fire_contract(
+        &self,
+        _trigger: &HookTrigger,
+        _when: HookWhen,
+        _contract: Option<&Contract>,
     ) -> FireOutcome {
         FireOutcome::Continue
     }

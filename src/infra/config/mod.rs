@@ -143,6 +143,47 @@ impl TaskActionHooks {
     }
 }
 
+/// CLI / server runtimes expose a fixed set of contract-aggregate actions.
+/// Mirrors `TaskActionHooks` but for contract write operations.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContractActionHooks {
+    #[serde(default)]
+    pub contract_add: ActionConfig,
+    #[serde(default)]
+    pub contract_edit: ActionConfig,
+    #[serde(default)]
+    pub contract_delete: ActionConfig,
+    #[serde(default)]
+    pub contract_dod_check: ActionConfig,
+    #[serde(default)]
+    pub contract_dod_uncheck: ActionConfig,
+    #[serde(default)]
+    pub contract_note_add: ActionConfig,
+}
+
+impl ContractActionHooks {
+    pub fn action_config(&self, action: &str) -> Option<&ActionConfig> {
+        match action {
+            "contract_add" => Some(&self.contract_add),
+            "contract_edit" => Some(&self.contract_edit),
+            "contract_delete" => Some(&self.contract_delete),
+            "contract_dod_check" => Some(&self.contract_dod_check),
+            "contract_dod_uncheck" => Some(&self.contract_dod_uncheck),
+            "contract_note_add" => Some(&self.contract_note_add),
+            _ => None,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.contract_add.hooks.is_empty()
+            && self.contract_edit.hooks.is_empty()
+            && self.contract_delete.hooks.is_empty()
+            && self.contract_dod_check.hooks.is_empty()
+            && self.contract_dod_uncheck.hooks.is_empty()
+            && self.contract_note_add.hooks.is_empty()
+    }
+}
+
 // --- Metadata field types ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +260,10 @@ pub struct CliConfig {
     /// Flattened so `[cli.task_add.hooks.foo]` binds directly.
     #[serde(default, flatten)]
     pub hooks: TaskActionHooks,
+    /// Contract-aggregate hook definitions for the CLI runtime.
+    /// Flattened so `[cli.contract_add.hooks.foo]` binds directly.
+    #[serde(default, flatten)]
+    pub contract_hooks: ContractActionHooks,
 }
 
 impl Default for CliConfig {
@@ -227,6 +272,7 @@ impl Default for CliConfig {
             browser: true,
             remote: CliRemoteConfig::default(),
             hooks: TaskActionHooks::default(),
+            contract_hooks: ContractActionHooks::default(),
         }
     }
 }
@@ -240,6 +286,9 @@ pub struct ServerRelayConfig {
     /// Per-action hook definitions that fire when this binary runs as relay.
     #[serde(default, flatten)]
     pub hooks: TaskActionHooks,
+    /// Contract-aggregate hook definitions for the relay runtime.
+    #[serde(default, flatten)]
+    pub contract_hooks: ContractActionHooks,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -248,6 +297,9 @@ pub struct ServerRemoteConfig {
     /// direct (non-relay) server.
     #[serde(default, flatten)]
     pub hooks: TaskActionHooks,
+    /// Contract-aggregate hook definitions for the direct-server runtime.
+    #[serde(default, flatten)]
+    pub contract_hooks: ContractActionHooks,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -541,12 +593,16 @@ pub struct RawServerRelayConfig {
     pub token: Option<String>,
     #[serde(default, flatten)]
     pub hooks: TaskActionHooks,
+    #[serde(default, flatten)]
+    pub contract_hooks: ContractActionHooks,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawServerRemoteConfig {
     #[serde(default, flatten)]
     pub hooks: TaskActionHooks,
+    #[serde(default, flatten)]
+    pub contract_hooks: ContractActionHooks,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -568,6 +624,8 @@ pub struct RawCliConfig {
     pub remote: RawCliRemoteConfig,
     #[serde(default, flatten)]
     pub hooks: TaskActionHooks,
+    #[serde(default, flatten)]
+    pub contract_hooks: ContractActionHooks,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -680,11 +738,19 @@ impl RawConfig {
                         self.server.relay.hooks,
                         overlay.server.relay.hooks,
                     ),
+                    contract_hooks: merge_contract_action_hooks(
+                        self.server.relay.contract_hooks,
+                        overlay.server.relay.contract_hooks,
+                    ),
                 },
                 remote: RawServerRemoteConfig {
                     hooks: merge_task_action_hooks(
                         self.server.remote.hooks,
                         overlay.server.remote.hooks,
+                    ),
+                    contract_hooks: merge_contract_action_hooks(
+                        self.server.remote.contract_hooks,
+                        overlay.server.remote.contract_hooks,
                     ),
                 },
                 auth: RawAuthConfig {
@@ -806,6 +872,10 @@ impl RawConfig {
                     token: overlay.cli.remote.token.or(self.cli.remote.token),
                 },
                 hooks: merge_task_action_hooks(self.cli.hooks, overlay.cli.hooks),
+                contract_hooks: merge_contract_action_hooks(
+                    self.cli.contract_hooks,
+                    overlay.cli.contract_hooks,
+                ),
             },
             web: RawWebConfig {
                 host: overlay.web.host.or(self.web.host),
@@ -847,9 +917,11 @@ impl RawConfig {
                     url: self.server.relay.url,
                     token: self.server.relay.token,
                     hooks: self.server.relay.hooks,
+                    contract_hooks: self.server.relay.contract_hooks,
                 },
                 remote: ServerRemoteConfig {
                     hooks: self.server.remote.hooks,
+                    contract_hooks: self.server.remote.contract_hooks,
                 },
                 auth: AuthConfig {
                     api_key: ApiKeyConfig {
@@ -893,6 +965,7 @@ impl RawConfig {
                     token: self.cli.remote.token,
                 },
                 hooks: self.cli.hooks,
+                contract_hooks: self.cli.contract_hooks,
             },
             web: WebConfig {
                 host: self.web.host,
@@ -934,6 +1007,27 @@ fn merge_task_action_hooks(base: TaskActionHooks, overlay: TaskActionHooks) -> T
         task_complete: merge_one(base.task_complete, overlay.task_complete),
         task_cancel: merge_one(base.task_cancel, overlay.task_cancel),
         task_select: merge_one(base.task_select, overlay.task_select),
+    }
+}
+
+fn merge_contract_action_hooks(
+    base: ContractActionHooks,
+    overlay: ContractActionHooks,
+) -> ContractActionHooks {
+    fn merge_one(base: ActionConfig, overlay: ActionConfig) -> ActionConfig {
+        let mut hooks = base.hooks;
+        for (name, def) in overlay.hooks {
+            hooks.insert(name, def);
+        }
+        ActionConfig { hooks }
+    }
+    ContractActionHooks {
+        contract_add: merge_one(base.contract_add, overlay.contract_add),
+        contract_edit: merge_one(base.contract_edit, overlay.contract_edit),
+        contract_delete: merge_one(base.contract_delete, overlay.contract_delete),
+        contract_dod_check: merge_one(base.contract_dod_check, overlay.contract_dod_check),
+        contract_dod_uncheck: merge_one(base.contract_dod_uncheck, overlay.contract_dod_uncheck),
+        contract_note_add: merge_one(base.contract_note_add, overlay.contract_note_add),
     }
 }
 
@@ -1678,6 +1772,67 @@ mod resolve_secrets_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contract_action_hooks_empty_by_default() {
+        let hooks = ContractActionHooks::default();
+        assert!(hooks.is_empty());
+        assert!(
+            hooks
+                .action_config("contract_add")
+                .unwrap()
+                .hooks
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn contract_action_hooks_lookup_unknown_returns_none() {
+        let hooks = ContractActionHooks::default();
+        assert!(hooks.action_config("contract_unknown").is_none());
+        assert!(hooks.action_config("task_add").is_none());
+    }
+
+    #[test]
+    fn contract_action_hooks_is_empty_tracks_any_hook() {
+        let mut hooks = ContractActionHooks::default();
+        hooks.contract_add.hooks.insert(
+            "h".into(),
+            HookDef {
+                command: "true".into(),
+                when: HookWhen::Post,
+                mode: HookMode::Async,
+                on_failure: OnFailure::Abort,
+                enabled: true,
+                env_vars: vec![],
+                on_result: None,
+                prompt: None,
+            },
+        );
+        assert!(!hooks.is_empty());
+    }
+
+    #[test]
+    fn cli_contract_hooks_flatten_toml() {
+        let toml_str = r#"
+            browser = true
+
+            [contract_add.hooks.ping]
+            command = "echo added"
+
+            [contract_delete.hooks.audit]
+            command = "logger delete"
+            mode = "async"
+        "#;
+        let cli: CliConfig = toml::from_str(toml_str).unwrap();
+        assert!(cli.contract_hooks.contract_add.hooks.contains_key("ping"));
+        assert!(
+            cli.contract_hooks
+                .contract_delete
+                .hooks
+                .contains_key("audit")
+        );
+    }
 
     #[test]
     fn hook_def_defaults() {

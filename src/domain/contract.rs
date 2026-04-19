@@ -17,6 +17,7 @@ use super::validator::{
 pub enum ContractEvent {
     Created,
     Updated,
+    Deleted,
     DodChecked { index: usize },
     DodUnchecked { index: usize },
     NoteAdded,

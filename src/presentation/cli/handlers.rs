@@ -2447,10 +2447,10 @@ pub async fn cmd_auth_revoke(cli: &Cli, id: Option<i64>, all: bool) -> Result<()
 
 fn build_contract_ops(config: &Config, root: &Path) -> Result<Arc<dyn ContractOperations>> {
     if config.cli.remote.url.is_some() {
-        Ok(Arc::new(create_remote_contract_operations(config)))
+        Ok(Arc::new(create_remote_contract_operations(config, root)))
     } else {
         let backend = create_backend(root, config)?;
-        Ok(Arc::new(create_contract_service(backend)))
+        Ok(Arc::new(create_contract_service(backend, config, root)))
     }
 }
 

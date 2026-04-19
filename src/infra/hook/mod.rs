@@ -14,10 +14,11 @@ use uuid::Uuid;
 use crate::application::HookTrigger;
 use crate::application::hook_trigger::SelectResult;
 use crate::application::port::HookDataSource;
+use crate::domain::contract::Contract;
 use crate::domain::task::{self, Task, TaskStatus, UnblockedTask};
 use crate::infra::config::{
-    ActionConfig, Config, HookDef, HookMode, HookOutput, HookWhen, OnFailure, OnResult,
-    TaskActionHooks,
+    ActionConfig, Config, ContractActionHooks, HookDef, HookMode, HookOutput, HookWhen, OnFailure,
+    OnResult, TaskActionHooks,
 };
 use crate::infra::xdg::XdgDirs;
 
@@ -98,6 +99,15 @@ pub struct TaskSelectEvent {
     pub result: String,
     pub stats: HashMap<String, i64>,
     pub ready_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ContractHookEvent {
+    pub event_id: String,
+    pub event: String,
+    pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract: Option<Contract>,
 }
 
 /// Outcome of firing a batch of hooks. Pre+Sync+Abort failures return `Abort`
@@ -257,6 +267,15 @@ pub async fn build_task_select_event(
         result: result.as_str().to_string(),
         stats,
         ready_count,
+    }
+}
+
+pub fn build_contract_event(event_name: &str, contract: Option<&Contract>) -> ContractHookEvent {
+    ContractHookEvent {
+        event_id: Uuid::new_v4().to_string(),
+        event: event_name.into(),
+        timestamp: Utc::now().to_rfc3339(),
+        contract: contract.cloned(),
     }
 }
 
@@ -572,6 +591,18 @@ fn hooks_for_runtime<'a>(config: &'a Config, runtime: &RuntimeMode) -> &'a TaskA
     }
 }
 
+/// Pick the `ContractActionHooks` section for the currently-running runtime.
+fn contract_hooks_for_runtime<'a>(
+    config: &'a Config,
+    runtime: &RuntimeMode,
+) -> &'a ContractActionHooks {
+    match runtime {
+        RuntimeMode::Cli => &config.cli.contract_hooks,
+        RuntimeMode::ServerRelay => &config.server.relay.contract_hooks,
+        RuntimeMode::ServerRemote => &config.server.remote.contract_hooks,
+    }
+}
+
 /// Filter a single hook by `when` and `on_result`.
 /// `trigger_result` is `Some(result)` only for `HookTrigger::TaskSelect`; other
 /// triggers are treated as matching `OnResult::Any`.
@@ -596,6 +627,98 @@ fn hook_applies(hook: &HookDef, when: HookWhen, trigger_result: Option<SelectRes
 /// Resolve the action key from the trigger (used to pick CLI/server action hooks).
 fn action_for_trigger(trigger: &HookTrigger) -> Option<&'static str> {
     trigger.event_name()
+}
+
+/// Run a precomputed list of applicable hooks against a pre-serialized envelope.
+/// Shared between task and contract dispatch paths.
+#[allow(clippy::too_many_arguments)]
+fn execute_hook_batch(
+    applicable: Vec<(String, HookDef)>,
+    envelope_json: &str,
+    envelope_event_id: &str,
+    event_name: &str,
+    task_id_for_log: Option<i64>,
+    when: HookWhen,
+    runtime_mode: &RuntimeMode,
+    backend_info: &BackendInfo,
+    log_target: &HookLogTarget,
+) -> FireOutcome {
+    if applicable.is_empty() {
+        return FireOutcome::Continue;
+    }
+
+    let mut outcome = FireOutcome::Continue;
+    for (name, hook) in applicable {
+        let env_map = match resolve_env_vars(&hook) {
+            Ok(m) => m,
+            Err(missing) => {
+                let msg = format!(
+                    "hook skipped ({}): {} — missing required env: {}",
+                    event_name, name, missing
+                );
+                eprintln!("{msg}");
+                let entry = HookLogEntry::new("WARN", "hook_skipped")
+                    .with_event_id(envelope_event_id)
+                    .with_event(event_name)
+                    .with_hook(&name)
+                    .with_command(&hook.command)
+                    .with_task_id(task_id_for_log)
+                    .with_runtime(runtime_mode.as_str())
+                    .with_backend(backend_info)
+                    .with_message(&msg);
+                write_hook_log(log_target, &entry);
+                continue;
+            }
+        };
+
+        let sync = hook.mode == HookMode::Sync;
+        let status = run_hook_command(
+            &hook.command,
+            event_name,
+            envelope_event_id,
+            &name,
+            task_id_for_log,
+            envelope_json,
+            &env_map,
+            sync,
+            Some(log_target),
+        );
+
+        if sync {
+            let failed = status.map(|s| !s.success()).unwrap_or(true);
+            if failed {
+                match hook.on_failure {
+                    OnFailure::Abort => {
+                        if when == HookWhen::Pre {
+                            outcome = FireOutcome::Abort;
+                            tracing::warn!(
+                                hook = %name,
+                                event = %event_name,
+                                "hook failed with on_failure=abort; aborting transition"
+                            );
+                            return outcome;
+                        } else {
+                            tracing::warn!(
+                                hook = %name,
+                                event = %event_name,
+                                "post-hook failed with on_failure=abort (no-op; abort only applies to sync+pre)"
+                            );
+                        }
+                    }
+                    OnFailure::Warn => {
+                        tracing::warn!(
+                            hook = %name,
+                            event = %event_name,
+                            "hook failed (on_failure=warn, continuing)"
+                        );
+                    }
+                    OnFailure::Ignore => {}
+                }
+            }
+        }
+    }
+
+    outcome
 }
 
 /// Fire all hooks matching the given trigger + timing for the current runtime.
@@ -683,6 +806,10 @@ pub async fn fire(
                 }
             }
         }
+        HookTrigger::Contract(_) => {
+            // `fire()` is task-scoped; contract triggers must use `fire_contract()`.
+            return FireOutcome::Continue;
+        }
     };
 
     // Log a single `event_fired` entry even when no hooks match.
@@ -696,82 +823,96 @@ pub async fn fire(
         write_hook_log(&log_target, &entry);
     }
 
-    if applicable.is_empty() {
+    execute_hook_batch(
+        applicable,
+        &envelope_json,
+        &envelope_event_id,
+        event_name,
+        task_id_for_log,
+        when,
+        runtime_mode,
+        backend_info,
+        &log_target,
+    )
+}
+
+/// Fire contract-aggregate hooks matching the given trigger + timing for the
+/// current runtime. Mirrors `fire()` but dispatches against
+/// `ContractActionHooks` and serializes a contract-shaped envelope.
+pub async fn fire_contract(
+    config: &Config,
+    trigger: &HookTrigger,
+    when: HookWhen,
+    contract: Option<&Contract>,
+    backend: &dyn HookDataSource,
+    runtime_mode: &RuntimeMode,
+    backend_info: &BackendInfo,
+) -> FireOutcome {
+    let Some(event_name) = trigger.event_name() else {
+        return FireOutcome::Continue;
+    };
+    // Only Contract triggers are valid here; other kinds are a no-op.
+    if !matches!(trigger, HookTrigger::Contract(_)) {
         return FireOutcome::Continue;
     }
 
-    let mut outcome = FireOutcome::Continue;
-    for (name, hook) in applicable {
-        let env_map = match resolve_env_vars(&hook) {
-            Ok(m) => m,
-            Err(missing) => {
-                let msg = format!(
-                    "hook skipped ({}): {} — missing required env: {}",
-                    event_name, name, missing
-                );
-                eprintln!("{msg}");
-                let entry = HookLogEntry::new("WARN", "hook_skipped")
-                    .with_event_id(&envelope_event_id)
-                    .with_event(event_name)
-                    .with_hook(&name)
-                    .with_command(&hook.command)
-                    .with_task_id(task_id_for_log)
-                    .with_runtime(runtime_mode.as_str())
-                    .with_backend(backend_info)
-                    .with_message(&msg);
-                write_hook_log(&log_target, &entry);
-                continue;
-            }
-        };
+    let runtime_hooks = contract_hooks_for_runtime(config, runtime_mode);
+    let Some(action) = runtime_hooks.action_config(event_name) else {
+        return FireOutcome::Continue;
+    };
 
-        let sync = hook.mode == HookMode::Sync;
-        let status = run_hook_command(
-            &hook.command,
-            event_name,
-            &envelope_event_id,
-            &name,
-            task_id_for_log,
-            &envelope_json,
-            &env_map,
-            sync,
-            Some(&log_target),
-        );
+    let applicable: Vec<(String, HookDef)> = action
+        .hooks
+        .iter()
+        .filter(|(_, def)| hook_applies(def, when, None))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
 
-        if sync {
-            let failed = status.map(|s| !s.success()).unwrap_or(true);
-            if failed {
-                match hook.on_failure {
-                    OnFailure::Abort => {
-                        if when == HookWhen::Pre {
-                            outcome = FireOutcome::Abort;
-                            tracing::warn!(
-                                hook = %name,
-                                event = %event_name,
-                                "hook failed with on_failure=abort; aborting transition"
-                            );
-                            return outcome;
-                        } else {
-                            tracing::warn!(
-                                hook = %name,
-                                event = %event_name,
-                                "post-hook failed with on_failure=abort (no-op; abort only applies to sync+pre)"
-                            );
-                        }
-                    }
-                    OnFailure::Warn => {
-                        tracing::warn!(
-                            hook = %name,
-                            event = %event_name,
-                            "hook failed (on_failure=warn, continuing)"
-                        );
-                    }
-                    OnFailure::Ignore => {}
-                }
-            }
+    let log_target = HookLogTarget {
+        output: config.log.hook_output,
+        file_path: log_file_path_with_dir(config.log.dir.as_deref(), &config.xdg),
+    };
+
+    let (envelope_project, envelope_user) = resolve_envelope_context(config, backend).await;
+
+    let event = build_contract_event(event_name, contract);
+    let envelope_event_id = event.event_id.clone();
+    let envelope = HookEnvelope {
+        runtime: *runtime_mode,
+        backend: backend_info.clone(),
+        project: envelope_project,
+        user: envelope_user,
+        event,
+    };
+    let envelope_json = match serde_json::to_string(&envelope) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("hook serialize error ({event_name}): {e}");
+            return FireOutcome::Continue;
         }
+    };
+
+    // Log a single `event_fired` entry even when no hooks match.
+    {
+        let entry = HookLogEntry::new("INFO", "event_fired")
+            .with_event_id(&envelope_event_id)
+            .with_event(event_name)
+            .with_runtime(runtime_mode.as_str())
+            .with_backend(backend_info);
+        write_hook_log(&log_target, &entry);
     }
 
-    outcome
+    execute_hook_batch(
+        applicable,
+        &envelope_json,
+        &envelope_event_id,
+        event_name,
+        None,
+        when,
+        runtime_mode,
+        backend_info,
+        &log_target,
+    )
 }
 
 /// Warn once per process if the loaded config has hook definitions in runtime
@@ -785,13 +926,20 @@ pub fn warn_about_mismatched_runtime_sections(config: &Config, runtime: &Runtime
 
     let active = runtime.section_label();
     let mut mismatched: Vec<&str> = Vec::new();
-    if !matches!(runtime, RuntimeMode::Cli) && !config.cli.hooks.is_empty() {
+    if !matches!(runtime, RuntimeMode::Cli)
+        && (!config.cli.hooks.is_empty() || !config.cli.contract_hooks.is_empty())
+    {
         mismatched.push("cli");
     }
-    if !matches!(runtime, RuntimeMode::ServerRelay) && !config.server.relay.hooks.is_empty() {
+    if !matches!(runtime, RuntimeMode::ServerRelay)
+        && (!config.server.relay.hooks.is_empty() || !config.server.relay.contract_hooks.is_empty())
+    {
         mismatched.push("server.relay");
     }
-    if !matches!(runtime, RuntimeMode::ServerRemote) && !config.server.remote.hooks.is_empty() {
+    if !matches!(runtime, RuntimeMode::ServerRemote)
+        && (!config.server.remote.hooks.is_empty()
+            || !config.server.remote.contract_hooks.is_empty())
+    {
         mismatched.push("server.remote");
     }
     if !mismatched.is_empty() {
@@ -848,9 +996,26 @@ pub fn validate_config_hooks(config: &Config) {
             }
         }
     }
+    fn walk_contract(label_prefix: &str, action: &ContractActionHooks) {
+        for (action_key, hooks) in [
+            ("contract_add", &action.contract_add),
+            ("contract_edit", &action.contract_edit),
+            ("contract_delete", &action.contract_delete),
+            ("contract_dod_check", &action.contract_dod_check),
+            ("contract_dod_uncheck", &action.contract_dod_uncheck),
+            ("contract_note_add", &action.contract_note_add),
+        ] {
+            for (name, def) in &hooks.hooks {
+                validate_hook_def(&format!("{label_prefix}.{action_key}"), name, def, false);
+            }
+        }
+    }
     walk("cli", &config.cli.hooks);
     walk("server.relay", &config.server.relay.hooks);
     walk("server.remote", &config.server.remote.hooks);
+    walk_contract("cli", &config.cli.contract_hooks);
+    walk_contract("server.relay", &config.server.relay.contract_hooks);
+    walk_contract("server.remote", &config.server.remote.contract_hooks);
     for (stage_name, stage) in &config.workflow.stages {
         for (hook_name, def) in &stage.hooks {
             validate_hook_def(&format!("workflow.{stage_name}"), hook_name, def, false);

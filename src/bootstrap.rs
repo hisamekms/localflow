@@ -301,11 +301,35 @@ pub fn create_metadata_field_service(backend: Arc<dyn TaskBackend>) -> MetadataF
     MetadataFieldService::new(backend)
 }
 
-pub fn create_contract_service(backend: Arc<dyn TaskBackend>) -> LocalContractOperations {
-    LocalContractOperations::new(backend)
+/// Create a `LocalContractOperations` wired up with a hook executor for the
+/// given runtime. Use this when callers know the runtime they are executing in
+/// (CLI direct, server direct, etc.).
+pub fn create_local_contract_operations(
+    backend: Arc<dyn TaskBackend>,
+    config: &Config,
+    project_root: &Path,
+    runtime_mode: RuntimeMode,
+) -> LocalContractOperations {
+    let backend_info = resolve_backend_info(config, project_root);
+    let hook_data: Arc<dyn HookDataSource> =
+        Arc::new(crate::application::port::BackendHookData(backend.clone()));
+    let hooks = create_hook_executor(config.clone(), runtime_mode, backend_info, hook_data);
+    LocalContractOperations::new(backend, hooks)
 }
 
-pub fn create_remote_contract_operations(config: &Config) -> RemoteContractOperations {
+/// Backwards-compatible helper used by CLI paths (always CLI runtime).
+pub fn create_contract_service(
+    backend: Arc<dyn TaskBackend>,
+    config: &Config,
+    project_root: &Path,
+) -> LocalContractOperations {
+    create_local_contract_operations(backend, config, project_root, RuntimeMode::Cli)
+}
+
+pub fn create_remote_contract_operations(
+    config: &Config,
+    project_root: &Path,
+) -> RemoteContractOperations {
     let url = config
         .cli
         .remote
@@ -313,7 +337,13 @@ pub fn create_remote_contract_operations(config: &Config) -> RemoteContractOpera
         .as_ref()
         .expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
-    RemoteContractOperations::new(url, api_key)
+
+    let hook_data: Arc<dyn HookDataSource> =
+        Arc::new(RemoteHookDataSource::new(url, api_key.clone()));
+    let backend_info = resolve_backend_info(config, project_root);
+    let hooks = create_hook_executor(config.clone(), RuntimeMode::Cli, backend_info, hook_data);
+
+    RemoteContractOperations::new(url, api_key, hooks)
 }
 
 pub fn create_remote_hook_data(config: &Config) -> Arc<dyn HookDataSource> {

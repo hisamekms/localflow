@@ -26,8 +26,9 @@ use crate::application::auth::Permission;
 use crate::application::port::TaskBackend;
 use crate::application::port::auth::AuthError;
 use crate::application::{
-    ContractOperations, LocalTaskOperations, MetadataFieldOperations, MetadataFieldService,
-    ProjectOperations, ProjectService, TaskOperations, UserOperations, UserService,
+    ContractOperations, LocalContractOperations, LocalTaskOperations, MetadataFieldOperations,
+    MetadataFieldService, ProjectOperations, ProjectService, TaskOperations, UserOperations,
+    UserService,
 };
 use crate::bootstrap;
 use crate::bootstrap::AuthMode;
@@ -499,14 +500,14 @@ pub async fn serve(
         config_path: config_path.map(Arc::new),
         task_service: Arc::new(LocalTaskOperations::new(
             backend.clone(),
-            hook_executor,
+            hook_executor.clone(),
             pr_verifier,
             completion_policy,
         )),
         project_service: Arc::new(ProjectService::new(backend.clone())),
         user_service: Arc::new(UserService::new(backend.clone())),
         metadata_service: Arc::new(MetadataFieldService::new(backend.clone())),
-        contract_service: Arc::new(bootstrap::create_contract_service(backend)),
+        contract_service: Arc::new(LocalContractOperations::new(backend, hook_executor)),
         auth_mode: auth_mode.map(Arc::new),
         master_key_configured: config.server.auth.api_key.master_key.is_some(),
         proxy_mode: false,
@@ -550,7 +551,7 @@ pub async fn serve_proxy(
         task_service: Arc::new(RemoteTaskOperations::new(
             remote_url,
             api_key.clone(),
-            hook_executor,
+            hook_executor.clone(),
         )),
         project_service: Arc::new(RemoteProjectOperations::new(remote_url, api_key.clone())),
         user_service: Arc::new(RemoteUserOperations::new(remote_url, api_key.clone())),
@@ -558,7 +559,11 @@ pub async fn serve_proxy(
             remote_url,
             api_key.clone(),
         )),
-        contract_service: Arc::new(RemoteContractOperations::new(remote_url, api_key)),
+        contract_service: Arc::new(RemoteContractOperations::new(
+            remote_url,
+            api_key,
+            hook_executor,
+        )),
         auth_mode: None,
         master_key_configured: false,
         proxy_mode: true,

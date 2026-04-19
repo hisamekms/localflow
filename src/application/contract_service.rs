@@ -4,18 +4,24 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 
-use crate::application::port::{ContractOperations, TaskBackend};
+use crate::application::HookTrigger;
+use crate::application::port::{ContractOperations, HookExecutor, TaskBackend};
 use crate::domain::contract::{
-    Contract, ContractNote, CreateContractParams, UpdateContractArrayParams, UpdateContractParams,
+    Contract, ContractEvent, ContractNote, CreateContractParams, UpdateContractArrayParams,
+    UpdateContractParams,
 };
+use crate::domain::error::DomainError;
+use crate::infra::config::HookWhen;
+use crate::infra::hook::FireOutcome;
 
 pub struct LocalContractOperations {
     backend: Arc<dyn TaskBackend>,
+    hooks: Arc<dyn HookExecutor>,
 }
 
 impl LocalContractOperations {
-    pub fn new(backend: Arc<dyn TaskBackend>) -> Self {
-        Self { backend }
+    pub fn new(backend: Arc<dyn TaskBackend>, hooks: Arc<dyn HookExecutor>) -> Self {
+        Self { backend, hooks }
     }
 }
 
@@ -31,7 +37,28 @@ impl ContractOperations for LocalContractOperations {
         params: &CreateContractParams,
     ) -> Result<Contract> {
         params.validate()?;
-        self.backend.create_contract(project_id, params).await
+
+        let trigger = HookTrigger::Contract(ContractEvent::Created);
+        if self
+            .hooks
+            .fire_contract(&trigger, HookWhen::Pre, None)
+            .await
+            == FireOutcome::Abort
+        {
+            return Err(DomainError::HookAborted {
+                event: "contract_add".into(),
+            }
+            .into());
+        }
+
+        let contract = self.backend.create_contract(project_id, params).await?;
+
+        let _ = self
+            .hooks
+            .fire_contract(&trigger, HookWhen::Post, Some(&contract))
+            .await;
+
+        Ok(contract)
     }
 
     async fn get_contract(&self, _project_id: i64, id: i64) -> Result<Contract> {
@@ -51,11 +78,57 @@ impl ContractOperations for LocalContractOperations {
     ) -> Result<Contract> {
         params.validate()?;
         array_params.validate()?;
-        self.backend.update_contract(id, params, array_params).await
+
+        let prev = self.backend.get_contract(id).await?;
+        let trigger = HookTrigger::Contract(ContractEvent::Updated);
+        if self
+            .hooks
+            .fire_contract(&trigger, HookWhen::Pre, Some(&prev))
+            .await
+            == FireOutcome::Abort
+        {
+            return Err(DomainError::HookAborted {
+                event: "contract_edit".into(),
+            }
+            .into());
+        }
+
+        let contract = self
+            .backend
+            .update_contract(id, params, array_params)
+            .await?;
+
+        let _ = self
+            .hooks
+            .fire_contract(&trigger, HookWhen::Post, Some(&contract))
+            .await;
+
+        Ok(contract)
     }
 
     async fn delete_contract(&self, _project_id: i64, id: i64) -> Result<()> {
-        self.backend.delete_contract(id).await
+        let prev = self.backend.get_contract(id).await?;
+        let trigger = HookTrigger::Contract(ContractEvent::Deleted);
+        if self
+            .hooks
+            .fire_contract(&trigger, HookWhen::Pre, Some(&prev))
+            .await
+            == FireOutcome::Abort
+        {
+            return Err(DomainError::HookAborted {
+                event: "contract_delete".into(),
+            }
+            .into());
+        }
+
+        self.backend.delete_contract(id).await?;
+
+        let _ = self
+            .hooks
+            .fire_contract(&trigger, HookWhen::Post, Some(&prev))
+            .await;
+
+        Ok(())
     }
 
     async fn check_dod(
@@ -64,7 +137,28 @@ impl ContractOperations for LocalContractOperations {
         contract_id: i64,
         index: usize,
     ) -> Result<Contract> {
-        self.backend.check_dod(contract_id, index).await
+        let prev = self.backend.get_contract(contract_id).await?;
+        let trigger = HookTrigger::Contract(ContractEvent::DodChecked { index });
+        if self
+            .hooks
+            .fire_contract(&trigger, HookWhen::Pre, Some(&prev))
+            .await
+            == FireOutcome::Abort
+        {
+            return Err(DomainError::HookAborted {
+                event: "contract_dod_check".into(),
+            }
+            .into());
+        }
+
+        let contract = self.backend.check_dod(contract_id, index).await?;
+
+        let _ = self
+            .hooks
+            .fire_contract(&trigger, HookWhen::Post, Some(&contract))
+            .await;
+
+        Ok(contract)
     }
 
     async fn uncheck_dod(
@@ -73,7 +167,28 @@ impl ContractOperations for LocalContractOperations {
         contract_id: i64,
         index: usize,
     ) -> Result<Contract> {
-        self.backend.uncheck_dod(contract_id, index).await
+        let prev = self.backend.get_contract(contract_id).await?;
+        let trigger = HookTrigger::Contract(ContractEvent::DodUnchecked { index });
+        if self
+            .hooks
+            .fire_contract(&trigger, HookWhen::Pre, Some(&prev))
+            .await
+            == FireOutcome::Abort
+        {
+            return Err(DomainError::HookAborted {
+                event: "contract_dod_uncheck".into(),
+            }
+            .into());
+        }
+
+        let contract = self.backend.uncheck_dod(contract_id, index).await?;
+
+        let _ = self
+            .hooks
+            .fire_contract(&trigger, HookWhen::Post, Some(&contract))
+            .await;
+
+        Ok(contract)
     }
 
     async fn add_note(
@@ -85,7 +200,30 @@ impl ContractOperations for LocalContractOperations {
     ) -> Result<ContractNote> {
         let note = ContractNote::new(content, source_task_id, now_iso8601());
         note.validate()?;
-        self.backend.add_note(contract_id, &note).await
+
+        let prev = self.backend.get_contract(contract_id).await?;
+        let trigger = HookTrigger::Contract(ContractEvent::NoteAdded);
+        if self
+            .hooks
+            .fire_contract(&trigger, HookWhen::Pre, Some(&prev))
+            .await
+            == FireOutcome::Abort
+        {
+            return Err(DomainError::HookAborted {
+                event: "contract_note_add".into(),
+            }
+            .into());
+        }
+
+        let created = self.backend.add_note(contract_id, &note).await?;
+
+        let after = self.backend.get_contract(contract_id).await.ok();
+        let _ = self
+            .hooks
+            .fire_contract(&trigger, HookWhen::Post, after.as_ref())
+            .await;
+
+        Ok(created)
     }
 
     async fn list_notes(&self, _project_id: i64, contract_id: i64) -> Result<Vec<ContractNote>> {
@@ -97,9 +235,13 @@ impl ContractOperations for LocalContractOperations {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::port::TaskBackend;
+    use crate::application::port::{NoOpHookExecutor, TaskBackend};
     use crate::infra::sqlite::SqliteBackend;
     use tempfile::tempdir;
+
+    fn noop_hooks() -> Arc<dyn HookExecutor> {
+        Arc::new(NoOpHookExecutor)
+    }
 
     async fn new_backend() -> (tempfile::TempDir, Arc<dyn TaskBackend>, i64) {
         let dir = tempdir().unwrap();
@@ -128,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn create_and_get_contract() {
         let (_dir, backend, project_id) = new_backend().await;
-        let ops = LocalContractOperations::new(backend);
+        let ops = LocalContractOperations::new(backend, noop_hooks());
 
         let created = ops
             .create_contract(project_id, &simple_params())
@@ -146,7 +288,7 @@ mod tests {
     #[tokio::test]
     async fn list_contracts_returns_all() {
         let (_dir, backend, project_id) = new_backend().await;
-        let ops = LocalContractOperations::new(backend);
+        let ops = LocalContractOperations::new(backend, noop_hooks());
 
         ops.create_contract(project_id, &simple_params())
             .await
@@ -162,7 +304,7 @@ mod tests {
     #[tokio::test]
     async fn edit_contract_scalar_and_array() {
         let (_dir, backend, project_id) = new_backend().await;
-        let ops = LocalContractOperations::new(backend);
+        let ops = LocalContractOperations::new(backend, noop_hooks());
         let c = ops
             .create_contract(project_id, &simple_params())
             .await
@@ -190,7 +332,7 @@ mod tests {
     #[tokio::test]
     async fn check_and_uncheck_dod() {
         let (_dir, backend, project_id) = new_backend().await;
-        let ops = LocalContractOperations::new(backend);
+        let ops = LocalContractOperations::new(backend, noop_hooks());
         let c = ops
             .create_contract(project_id, &simple_params())
             .await
@@ -207,7 +349,7 @@ mod tests {
     #[tokio::test]
     async fn add_and_list_notes() {
         let (_dir, backend, project_id) = new_backend().await;
-        let ops = LocalContractOperations::new(backend.clone());
+        let ops = LocalContractOperations::new(backend.clone(), noop_hooks());
         let c = ops
             .create_contract(project_id, &simple_params())
             .await
@@ -264,7 +406,7 @@ mod tests {
     #[tokio::test]
     async fn delete_contract_removes_it() {
         let (_dir, backend, project_id) = new_backend().await;
-        let ops = LocalContractOperations::new(backend);
+        let ops = LocalContractOperations::new(backend, noop_hooks());
         let c = ops
             .create_contract(project_id, &simple_params())
             .await
@@ -277,7 +419,7 @@ mod tests {
     #[tokio::test]
     async fn create_contract_validates_params() {
         let (_dir, backend, project_id) = new_backend().await;
-        let ops = LocalContractOperations::new(backend);
+        let ops = LocalContractOperations::new(backend, noop_hooks());
 
         let mut params = simple_params();
         params.title = "x".repeat(10_000);
