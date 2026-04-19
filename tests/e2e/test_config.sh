@@ -35,6 +35,11 @@ TEMPLATE_CONTENT="$(cat "$TEST_PROJECT_ROOT/.senko/config.toml")"
 assert_contains "$TEMPLATE_CONTENT" "cli.task_" "template mentions [cli.task_*] runtime"
 assert_contains "$TEMPLATE_CONTENT" "workflow." "template mentions [workflow.*] runtime"
 assert_contains "$TEMPLATE_CONTENT" "server.remote" "template mentions [server.remote.*] runtime"
+# Contract-aggregate hooks must also appear in the template
+assert_contains "$TEMPLATE_CONTENT" "cli.contract_" "template mentions [cli.contract_*] runtime"
+assert_contains "$TEMPLATE_CONTENT" "contract_add" "template documents contract_add action"
+assert_contains "$TEMPLATE_CONTENT" "contract_dod_check" "template documents contract_dod_check action"
+assert_contains "$TEMPLATE_CONTENT" "contract_note_add" "template documents contract_note_add action"
 # Legacy schema markers must not appear
 assert_not_contains "$TEMPLATE_CONTENT" "on_task_added" "template has no on_task_added"
 assert_not_contains "$TEMPLATE_CONTENT" "on_task_completed" "template has no on_task_completed"

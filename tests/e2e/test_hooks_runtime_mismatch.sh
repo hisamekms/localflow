@@ -134,4 +134,56 @@ LOG5_CONTENT="$(cat "$LOG5")"
 echo "[5] load-time warning for on_result on non-task_select hook"
 assert_contains "$LOG5_CONTENT" "on_result is only meaningful for task_select" "on_result-misuse warning present"
 
+# ---------------------------------------------------------------
+# Case 6: server.remote runtime + hook defined under [cli.contract_*]
+# Confirms the mismatch warning fires for contract-action sections too,
+# not just for task-action sections.
+# ---------------------------------------------------------------
+cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'TOML'
+[cli.contract_add.hooks.stray]
+command = "true"
+TOML
+
+LOG6="$TEST_DIR/server6.log"
+start_server_capture "$LOG6"
+stop_server
+LOG6_CONTENT="$(cat "$LOG6")"
+
+echo "[6] server.remote runtime warns about foreign [cli.contract_*] hooks"
+assert_contains "$LOG6_CONTENT" "do not match the active runtime" "mismatch warning present for [cli.contract_*]"
+assert_contains "$LOG6_CONTENT" "cli" "mismatch warning mentions cli"
+
+# ---------------------------------------------------------------
+# Case 7: server.remote runtime + hook defined under [server.relay.contract_*]
+# ---------------------------------------------------------------
+cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'TOML'
+[server.relay.contract_dod_check.hooks.stray]
+command = "true"
+TOML
+
+LOG7="$TEST_DIR/server7.log"
+start_server_capture "$LOG7"
+stop_server
+LOG7_CONTENT="$(cat "$LOG7")"
+
+echo "[7] server.remote runtime warns about foreign [server.relay.contract_*] hooks"
+assert_contains "$LOG7_CONTENT" "do not match the active runtime" "mismatch warning present for [server.relay.contract_*]"
+assert_contains "$LOG7_CONTENT" "server.relay" "mismatch warning mentions server.relay"
+
+# ---------------------------------------------------------------
+# Case 8: matching [server.remote.contract_*] hook — no mismatch warning
+# ---------------------------------------------------------------
+cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'TOML'
+[server.remote.contract_add.hooks.ok]
+command = "true"
+TOML
+
+LOG8="$TEST_DIR/server8.log"
+start_server_capture "$LOG8"
+stop_server
+LOG8_CONTENT="$(cat "$LOG8")"
+
+echo "[8] matching [server.remote.contract_*] hook emits no mismatch warning"
+assert_not_contains "$LOG8_CONTENT" "do not match the active runtime" "no mismatch warning for matching contract runtime"
+
 test_summary
