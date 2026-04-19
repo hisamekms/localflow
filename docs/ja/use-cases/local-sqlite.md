@@ -3,15 +3,15 @@
 **個人開発者 1 人がローカルマシンだけで使う** 最小構成。サーバは立てない。
 
 ```
-┌─────────────────────────┐
-│  Developer's machine    │
-│                         │
-│   senko CLI             │
-│     │                   │
-│     ▼                   │
-│   .senko/senko.db       │
-│   (SQLite, git ignored) │
-└─────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│  Developer's machine                                 │
+│                                                      │
+│   senko CLI (in any project dir)                     │
+│     │                                                │
+│     ▼                                                │
+│   ~/.local/share/senko/projects/<project>/data.db    │
+│   ( = $XDG_DATA_HOME/senko/projects/<project>/... )  │
+└──────────────────────────────────────────────────────┘
 ```
 
 ## いつ選ぶか
@@ -24,7 +24,7 @@
 逆にこの構成では **無理** なこと:
 
 - 複数開発者で同じタスク DB を共有
-- 別マシンからの read/write (手動で `.senko/senko.db` を同期しない限り)
+- 別マシンからの read/write (XDG 配下の DB ファイルを手動でコピー同期しない限り)
 - サーバ監査ログ
 - SSO 連携
 
@@ -35,7 +35,7 @@
 | コンポーネント | 役割 | 設定 |
 |---|---|---|
 | senko CLI | タスク操作、skill ホスト | インストールのみ |
-| SQLite DB | データ保存 (`.senko/senko.db`) | 初回自動作成 |
+| SQLite DB | データ保存 (`$XDG_DATA_HOME/senko/projects/<dir>/data.db`) | 初回自動作成 |
 | Claude Code skill | `/senko` コマンドの提供 | `senko skill-install` で配置 |
 
 ## セットアップ手順
@@ -61,16 +61,7 @@ senko skill-install
 .claude/skills/senko/SKILL.md
 ```
 
-### 3. `.gitignore` を設定
-
-```
-# .gitignore
-.senko/
-```
-
-DB ファイル (`.senko/senko.db`) は **コミットしない** こと。
-
-### 4. 最初のタスクを追加
+### 3. 最初のタスクを追加
 
 CLI から直接:
 
@@ -86,15 +77,18 @@ Claude Code から:
 /senko                                      # ready なタスクを自動選択
 ```
 
-初回 `senko` 実行時に `.senko/senko.db` と初期マイグレーションが走ります。
+初回 `senko` 実行時に XDG 配下の DB (`$XDG_DATA_HOME/senko/projects/<dir>/data.db`) と初期マイグレーションが走ります。DB の場所を変えたい場合は `--db-path` / `SENKO_DB_PATH` / `[backend.sqlite] db_path` で上書き可能。
 
 ## 推奨オプション設定
 
-最低限は設定不要ですが、`.senko/config.toml` があると便利です:
+最低限は設定不要ですが、`.senko/config.toml` があると便利です (設定ファイルだけはプロジェクト直下で管理):
 
 ```bash
+mkdir -p .senko
 senko config --init > .senko/config.toml     # コメント付きテンプレート
 ```
+
+設定ファイルをコミット対象から外したい場合は `.senko/config.local.toml` に書いてください ([overview.md](../reference/config/overview.md))。
 
 よく使う設定例:
 
@@ -122,12 +116,14 @@ on_failure = "ignore"
 
 | パス | 用途 |
 |---|---|
-| `<project>/.senko/senko.db` | SQLite 本体 (git ignored) |
+| `$XDG_DATA_HOME/senko/projects/<dir>/data.db` | SQLite 本体 (= 通常 `~/.local/share/senko/projects/<dir>/data.db`) |
 | `<project>/.senko/config.toml` | 設定 (任意、git commit 可) |
-| `<project>/.senko/config.local.toml` | 開発者個人の上書き (git ignored) |
+| `<project>/.senko/config.local.toml` | 開発者個人の上書き (git ignored 推奨) |
 | `$XDG_STATE_HOME/senko/` | hook 実行ログ (既定 `~/.local/state/senko/`) |
 
-`.senko/` がどうしても作れない場所では、自動的に `$XDG_DATA_HOME/senko/projects/<hash>/data.db` にフォールバックします。
+DB はプロジェクトディレクトリ配下には書かれないので `.gitignore` の追加は不要です。設定ファイルを機密込みで書くときだけ `.senko/config.local.toml` を ignore してください。
+
+過去バージョンで `<project>/.senko/data.db` を使っていた環境は、初回起動時に XDG 配下へ自動マイグレーションされます (元ファイルは検証用に残ります)。
 
 ## バックアップ・移行
 
@@ -137,10 +133,11 @@ on_failure = "ignore"
 
 ```bash
 # 手動バックアップ例
-cp .senko/senko.db .senko/senko.db.bak.$(date +%Y%m%d)
+DB="$HOME/.local/share/senko/projects/$(basename $PWD)/data.db"
+cp "$DB" "$DB.bak.$(date +%Y%m%d)"
 
 # 別マシンへ
-scp .senko/senko.db other-host:/path/to/project/.senko/
+scp "$DB" other-host:"$DB"
 ```
 
 ## リモート構成への移行タイミング

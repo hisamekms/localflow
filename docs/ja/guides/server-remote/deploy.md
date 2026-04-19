@@ -161,7 +161,7 @@ docker run --rm -p 3142:3142 \
 - **ヘルスチェック**: `GET /api/v1/health` (認証不要、200)
 - **ログ**: `stdout` に JSON で出力。journald / Fluentd で収集
 - **メトリクス**: v1 時点で組み込みなし → hook + 外部基盤
-- **バックアップ**: SQLite なら `.senko/senko.db` の snapshot、PostgreSQL は `pg_dump`
+- **バックアップ**: SQLite なら `[backend.sqlite] db_path` で明示指定したパスの snapshot (未指定なら `$XDG_DATA_HOME/senko/projects/<dir>/data.db`)、PostgreSQL は `pg_dump`
 - **アップグレード**: 新バイナリを配置 → サービス再起動。マイグレーションは自動。本番では事前に別 DB で検証を
 
 ## 次のステップ

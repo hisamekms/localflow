@@ -17,7 +17,7 @@ SQLite で動かす時の設定。
 
 | キー | 型 | 既定 | 説明 |
 |---|---|---|---|
-| `db_path` | string | 自動 | DB ファイルパス。既定: `<project_root>/.senko/senko.db` or `$XDG_DATA_HOME/senko/projects/<hash>/data.db` |
+| `db_path` | string | 自動 | DB ファイルパス。既定: `$XDG_DATA_HOME/senko/projects/<dir-name>/data.db` (通常は `~/.local/share/senko/projects/<dir-name>/data.db`)。レガシーな `<project_root>/.senko/data.db` は初回検知時に XDG 側へマイグレーションされる |
 
 ## `[backend.postgres]` (postgres feature 必要)
 

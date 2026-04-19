@@ -87,7 +87,7 @@ description = "タスク完了時に POST する宛先"
   "runtime": "cli",
   "backend": {
     "type": "sqlite",
-    "db_file_path": "/path/to/.senko/senko.db"
+    "db_file_path": "/home/alice/.local/share/senko/projects/my-project/data.db"
   },
   "project": { "id": 1, "name": "default" },
   "user":    { "id": 1, "name": "default" },

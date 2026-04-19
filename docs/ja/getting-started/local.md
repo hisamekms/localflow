@@ -36,8 +36,7 @@ senko skill-install
 .claude/skills/senko/SKILL.md   # Claude Code が読む skill 定義
 ```
 
-データベースは最初の CLI コマンドで `.senko/senko.db` に自動作成されます (マイグレーション込み)。
-`.gitignore` に `.senko/` を追加してコミット対象から外してください。
+データベースは最初の CLI コマンドで `$XDG_DATA_HOME/senko/projects/<dir-name>/data.db` (通常 `~/.local/share/senko/projects/<dir-name>/data.db`) に自動作成されます。プロジェクトディレクトリ配下には書き込まれないため `.gitignore` の追加は不要です。
 
 ## 3. 最初のタスクを追加して実行
 
@@ -85,11 +84,11 @@ mode = "async"
 
 | パス | 用途 |
 |---|---|
-| `.senko/senko.db` | SQLite データベース (タスク・プロジェクト・ユーザ等) |
-| `.senko/config.toml` | 設定ファイル (任意) |
+| `$XDG_DATA_HOME/senko/projects/<dir>/data.db` | SQLite データベース (= 通常 `~/.local/share/senko/projects/<dir>/data.db`) |
+| `<project>/.senko/config.toml` | 設定ファイル (任意) |
 | `$XDG_STATE_HOME/senko/` | hook 実行ログの既定出力先 |
 
-`.senko/` はプロジェクトルート配下に置かれ、**git には含めない** 運用を推奨します。
+DB はプロジェクトディレクトリ外 (XDG 配下) に置かれるので `.gitignore` 追加は不要。設定ファイルに機密を書いた場合のみ `.senko/config.local.toml` を `.gitignore` してください。
 
 ## よく使うコマンド
 

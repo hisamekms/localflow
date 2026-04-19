@@ -84,7 +84,7 @@ Q1. サーバを立てる予定はある？
 
 - runtime: `cli`
 - config: `.senko/config.toml` に `[cli.*]` hook のみ
-- DB: `.senko/senko.db`
+- DB: `$XDG_DATA_HOME/senko/projects/<dir>/data.db`
 
 ### ケース B: チーム、サーバ共有
 

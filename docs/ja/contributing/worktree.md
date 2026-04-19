@@ -89,7 +89,7 @@ git pull
 ## 複数 worktree の共存
 
 - `worktrees/docs-v1` と `worktrees/fix-x` を同時に持っても問題ない
-- それぞれ独立した `target/`, `.senko/` を持つ (SQLite も別)
+- それぞれ独立した `target/` を持ち、senko の SQLite も XDG 配下で別パス (`$XDG_DATA_HOME/senko/projects/docs-v1/data.db` vs `.../projects/fix-x/data.db`) になるので干渉しない
 - 一方で **共通の `.git/`** を参照しているので、branch 操作の整合は git 側でちゃんと取れる
 
 ## トラブルシューティング

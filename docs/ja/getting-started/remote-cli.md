@@ -79,7 +79,7 @@ senko config
 
 ## オフライン/ローカル DB に一時的に戻したい
 
-環境変数 `SENKO_CLI_REMOTE_URL` を解除すれば、このコマンド実行中だけローカル SQLite (`.senko/senko.db`) を触ります:
+環境変数 `SENKO_CLI_REMOTE_URL` を解除すれば、このコマンド実行中だけローカル SQLite (`$XDG_DATA_HOME/senko/projects/<dir>/data.db`) を触ります:
 
 ```bash
 SENKO_CLI_REMOTE_URL= senko task list

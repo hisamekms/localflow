@@ -19,24 +19,27 @@ bootstrap は以下の順で backend を選びます:
 ## SQLite (既定)
 
 ```
-データの場所: <project_root>/.senko/senko.db
+データの場所: $XDG_DATA_HOME/senko/projects/<dir-name>/data.db
+           (= 通常 ~/.local/share/senko/projects/<dir-name>/data.db)
 ```
+
+`<dir-name>` は project root のディレクトリ名。同名プロジェクトが衝突する場合は `db_path` を明示すること。
 
 上書きしたい場合:
 
 ```toml
 [backend.sqlite]
-db_path = "/custom/location/senko.db"
+db_path = "/custom/location/data.db"
 ```
 
 or CLI/env:
 
 ```bash
-senko --db-path /custom/senko.db task list
-SENKO_DB_PATH=/custom/senko.db senko task list
+senko --db-path /custom/data.db task list
+SENKO_DB_PATH=/custom/data.db senko task list
 ```
 
-`db_path` 未指定かつ `.senko/` が作れない環境では `$XDG_DATA_HOME/senko/projects/<hash>/data.db` にフォールバック。
+過去バージョンで `<project_root>/.senko/data.db` を使っていた場合、初回起動で XDG 側に自動マイグレーションされます (元ファイルは検証用に残ります)。
 
 ## PostgreSQL (CLI 直接接続、稀)
 

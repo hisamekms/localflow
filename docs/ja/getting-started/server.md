@@ -30,7 +30,7 @@ cd /var/lib/senko
 senko serve --host 0.0.0.0 --port 3142
 ```
 
-これだけで `/var/lib/senko/.senko/senko.db` に SQLite が作成され、API が 3142 で待受けます。
+これだけで SQLite が `$XDG_DATA_HOME/senko/projects/senko/data.db` (= 通常 `$HOME/.local/share/senko/projects/senko/data.db`) に作成され、API が 3142 で待受けます。DB の場所を明示したい場合は `[backend.sqlite] db_path` か `--db-path` / `SENKO_DB_PATH` で指定してください (サーバ運用では明示指定を推奨)。
 
 動作確認:
 

@@ -206,9 +206,10 @@ id PK / contract_id FK / tag    (UNIQUE(contract_id, tag))
 
 | 構成 | 場所 |
 |---|---|
-| ローカル SQLite (既定) | `<project_root>/.senko/senko.db` |
+| ローカル SQLite (既定) | `$XDG_DATA_HOME/senko/projects/<dir-name>/data.db` (= 通常 `~/.local/share/senko/projects/<dir-name>/data.db`) |
 | SQLite (明示指定) | `--db-path` / `SENKO_DB_PATH` / `[backend.sqlite] db_path` |
-| SQLite (XDG 経由) | `$XDG_DATA_HOME/senko/projects/<hash>/data.db` |
-| PostgreSQL | 接続 URL が与えられた場合のみ |
+| PostgreSQL | 接続 URL が与えられた場合のみ (DB 側に永続化) |
 
-プロジェクトルートの解決は `--project-root` / `.senko/` / `.git/` 上方探索 / カレントディレクトリの順。
+`<dir-name>` はプロジェクトルートディレクトリ名。プロジェクトディレクトリの直下には何も書き込まれないため `.gitignore` 追加は不要です。
+
+プロジェクトルートの解決は `--project-root` / `.senko/` (レガシー互換のためのマーカー) / `.git/` 上方探索 / カレントディレクトリの順。過去に `<project>/.senko/data.db` を持っていたインストールは初回起動で XDG 側へ自動マイグレーションされます。
