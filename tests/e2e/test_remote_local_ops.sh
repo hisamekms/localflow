@@ -262,85 +262,8 @@ assert_eq "0" "$UNBLOCKED_COUNT2" "api complete: 0 unblocked for standalone task
 
 stop_server
 
-# ========================================
-# Section 4: hooks.enabled verification
-# enabled=true/false fire hooks correctly
-# ========================================
-echo ""
-echo "=== Section 4: hooks.enabled Verification ==="
-
-write_hook_config() {
-  local hooks_enabled="$1"
-  mkdir -p "$TEST_PROJECT_ROOT/.senko"
-  cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
-[hooks]
-enabled = $hooks_enabled
-
-[hooks.on_task_ready.test_hook]
-command = "true"
-enabled = true
-
-[hooks.on_task_completed.test_hook]
-command = "true"
-enabled = true
-EOF
-}
-
-run_hook_transitions() {
-  local t1
-  t1=$(run_http task add --title "Hook transition task")
-  local t1_id
-  t1_id=$(echo "$t1" | jq -r '.id')
-  run_http task ready "$t1_id" >/dev/null 2>&1
-  run_http task start "$t1_id" >/dev/null 2>&1
-  run_http task complete "$t1_id" >/dev/null 2>&1
-}
-
-echo "[4.1] hooks.enabled = false: API fires, CLI does not"
-setup_test_env
-write_hook_config "false"
-start_server
-clear_hook_log
-
-run_hook_transitions
-sleep 1
-
-assert_gte() {
-  local actual="$1"
-  local threshold="$2"
-  local message="$3"
-  if [[ "$actual" -ge "$threshold" ]]; then
-    echo "  PASS: $message"
-    PASS_COUNT=$((PASS_COUNT + 1))
-  else
-    echo "  FAIL: $message"
-    echo "    expected: >= $threshold"
-    echo "    actual:   $actual"
-    FAIL_COUNT=$((FAIL_COUNT + 1))
-  fi
-}
-
-assert_gte "$(count_log_entries api task_ready)" 1 "disabled: api fires task_ready"
-assert_gte "$(count_log_entries api task_completed)" 1 "disabled: api fires task_completed"
-assert_eq "0" "$(count_log_entries cli task_ready)" "disabled: cli no task_ready"
-assert_eq "0" "$(count_log_entries cli task_completed)" "disabled: cli no task_completed"
-
-stop_server
-
-echo "[4.2] hooks.enabled = true: CLI and API both fire"
-setup_test_env
-write_hook_config "true"
-start_server
-clear_hook_log
-
-run_hook_transitions
-sleep 1
-
-assert_gte "$(count_log_entries cli task_ready)" 1 "enabled: cli fires task_ready"
-assert_gte "$(count_log_entries cli task_completed)" 1 "enabled: cli fires task_completed"
-assert_gte "$(count_log_entries api task_ready)" 1 "enabled: api fires task_ready"
-assert_gte "$(count_log_entries api task_completed)" 1 "enabled: api fires task_completed"
-
-stop_server
+# Per-runtime hook firing (CLI vs server.remote) is covered in full by
+# test_http_hooks.sh under the new hooks schema, so it is no longer duplicated
+# here.
 
 test_summary

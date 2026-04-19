@@ -16,62 +16,25 @@ echo "[2] SENKO_AUTO_MERGE overrides default"
 JSON_OUT="$(SENKO_AUTO_MERGE=false run_lf config)"
 assert_json_field "$JSON_OUT" '.workflow.auto_merge' "false" "env overrides auto_merge"
 
-echo "[3] SENKO_HOOKS_ENABLED overrides default"
-JSON_OUT="$(SENKO_HOOKS_ENABLED=false run_lf config)"
-assert_json_field "$JSON_OUT" '.hooks.enabled' "false" "env overrides hooks.enabled"
-
-echo "[4] SENKO_CLI_REMOTE_URL overrides default"
+echo "[3] SENKO_CLI_REMOTE_URL overrides default"
 JSON_OUT="$(SENKO_CLI_REMOTE_URL=http://remote:9999 run_lf config)"
 assert_json_field "$JSON_OUT" '.cli.remote.url' "http://remote:9999" "env overrides cli.remote.url"
 
-echo "[5] Env vars override config.toml values"
+echo "[4] Env vars override config.toml values"
 mkdir -p "$TEST_PROJECT_ROOT/.senko"
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
 [workflow]
 merge_via = "direct"
 auto_merge = true
-
-[hooks]
-enabled = true
 EOF
-JSON_OUT="$(SENKO_MERGE_VIA=pr SENKO_AUTO_MERGE=false SENKO_HOOKS_ENABLED=false run_lf config)"
+JSON_OUT="$(SENKO_MERGE_VIA=pr SENKO_AUTO_MERGE=false run_lf config)"
 assert_json_field "$JSON_OUT" '.workflow.merge_via' "pr" "env overrides toml merge_via"
 assert_json_field "$JSON_OUT" '.workflow.auto_merge' "false" "env overrides toml auto_merge"
-assert_json_field "$JSON_OUT" '.hooks.enabled' "false" "env overrides toml hooks.enabled"
 
-echo "[6] SENKO_HOOK_ON_TASK_ADDED inserts env hook"
-JSON_OUT="$(SENKO_HOOK_ON_TASK_ADDED="echo env-hook" run_lf config)"
-HOOK_COUNT=$(echo "$JSON_OUT" | jq '.hooks.on_task_added | keys | length')
-assert_eq "1" "$HOOK_COUNT" "env hook inserted (no toml hooks)"
-ENV_CMD=$(echo "$JSON_OUT" | jq -r '.hooks.on_task_added._env.command')
-assert_eq "echo env-hook" "$ENV_CMD" "env hook command"
-
-echo "[7] SENKO_HOOK_ON_TASK_ADDED alongside config.toml hooks"
-cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
-[hooks.on_task_added.toml-hook]
-command = "echo toml-hook"
-EOF
-JSON_OUT="$(SENKO_HOOK_ON_TASK_ADDED="echo env-hook" run_lf config)"
-HOOK_COUNT=$(echo "$JSON_OUT" | jq '.hooks.on_task_added | keys | length')
-assert_eq "2" "$HOOK_COUNT" "env hook alongside toml hook"
-TOML_CMD=$(echo "$JSON_OUT" | jq -r '.hooks.on_task_added["toml-hook"].command')
-ENV_CMD=$(echo "$JSON_OUT" | jq -r '.hooks.on_task_added._env.command')
-assert_eq "echo toml-hook" "$TOML_CMD" "toml hook command"
-assert_eq "echo env-hook" "$ENV_CMD" "env hook command"
-
-echo "[8] All 5 hook env vars work"
+# Note: SENKO_HOOKS_ENABLED and SENKO_HOOK_ON_TASK_* env vars were removed in
+# the hooks-config-refresh change. Hooks are now configured exclusively via
+# config.toml under [cli.*] / [server.remote.*] / [server.relay.*] / [workflow.*].
 rm -f "$TEST_PROJECT_ROOT/.senko/config.toml"
-JSON_OUT="$(SENKO_HOOK_ON_TASK_ADDED="cmd1" \
-  SENKO_HOOK_ON_TASK_READY="cmd2" \
-  SENKO_HOOK_ON_TASK_STARTED="cmd3" \
-  SENKO_HOOK_ON_TASK_COMPLETED="cmd4" \
-  SENKO_HOOK_ON_TASK_CANCELED="cmd5" \
-  run_lf config)"
-assert_json_field "$JSON_OUT" '.hooks.on_task_added._env.command' "cmd1" "on_task_added env"
-assert_json_field "$JSON_OUT" '.hooks.on_task_ready._env.command' "cmd2" "on_task_ready env"
-assert_json_field "$JSON_OUT" '.hooks.on_task_started._env.command' "cmd3" "on_task_started env"
-assert_json_field "$JSON_OUT" '.hooks.on_task_completed._env.command' "cmd4" "on_task_completed env"
-assert_json_field "$JSON_OUT" '.hooks.on_task_canceled._env.command' "cmd5" "on_task_canceled env"
 
 echo "[9] SENKO_PROJECT_ROOT overrides --project-root"
 ALT_PROJECT="$(mktemp -d)"

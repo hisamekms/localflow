@@ -282,22 +282,19 @@ stop_servers
 # Write hook config
 mkdir -p "$TEST_PROJECT_ROOT/.senko"
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
-[hooks]
-enabled = true
-
-[hooks.on_task_ready.test_hook]
+[cli.task_ready.hooks.test_hook]
 command = "true"
 enabled = true
 
-[hooks.on_task_started.test_hook]
+[cli.task_start.hooks.test_hook]
 command = "true"
 enabled = true
 
-[hooks.on_task_completed.test_hook]
+[cli.task_complete.hooks.test_hook]
 command = "true"
 enabled = true
 
-[hooks.on_task_canceled.test_hook]
+[cli.task_cancel.hooks.test_hook]
 command = "true"
 enabled = true
 EOF
@@ -342,13 +339,13 @@ count_log_entries() {
 echo "[6.1] CLI fires task_ready via relay"
 assert_gte "$(count_log_entries cli task_ready)" 1 "relay: cli fires task_ready"
 
-echo "[6.2] CLI fires task_started via relay"
-assert_gte "$(count_log_entries cli task_started)" 1 "relay: cli fires task_started"
+echo "[6.2] CLI fires task_start via relay"
+assert_gte "$(count_log_entries cli task_start)" 1 "relay: cli fires task_start"
 
-echo "[6.3] CLI fires task_completed via relay"
-assert_gte "$(count_log_entries cli task_completed)" 1 "relay: cli fires task_completed"
+echo "[6.3] CLI fires task_complete via relay"
+assert_gte "$(count_log_entries cli task_complete)" 1 "relay: cli fires task_complete"
 
-echo "[6.4] CLI fires task_canceled via relay"
-assert_gte "$(count_log_entries cli task_canceled)" 1 "relay: cli fires task_canceled"
+echo "[6.4] CLI fires task_cancel via relay"
+assert_gte "$(count_log_entries cli task_cancel)" 1 "relay: cli fires task_cancel"
 
 test_summary

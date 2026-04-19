@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # e2e test: doctor subcommand (hook configuration diagnostics)
+#
+# Under the new hooks schema the diagnostic `event` label is
+# `<runtime>.<action>` (e.g. `cli.task_add`, `server.remote.task_ready`,
+# `workflow.branch_merge`). Env-var requirements are declared via the
+# structured `env_vars` list instead of the legacy `requires_env` array.
 
 set -euo pipefail
 
@@ -30,7 +35,7 @@ assert_json_field "$JSON" '.has_errors' "false" "json: has_errors is false"
 echo "[2] Bare command — no file checks"
 
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
-[hooks.on_task_added.echo-hook]
+[cli.task_add.hooks.echo-hook]
 command = "echo hello"
 EOF
 
@@ -40,6 +45,7 @@ assert_eq "1" "$HOOKS_LEN" "json: one hook entry"
 CHECKS_LEN="$(echo "$JSON" | jq '.hooks[0].checks | length')"
 assert_eq "0" "$CHECKS_LEN" "json: bare command has no checks"
 assert_json_field "$JSON" '.has_errors' "false" "json: has_errors false for bare cmd"
+assert_json_field "$JSON" '.hooks[0].event' "cli.task_add" "json: event label is cli.task_add"
 
 OUT="$(run_lf --output text doctor)"
 assert_contains "$OUT" "all checks passed" "text: bare command passes"
@@ -55,7 +61,7 @@ SCRIPT
 chmod +x "$HOOK_SCRIPT"
 
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
-[hooks.on_task_added.script-hook]
+[cli.task_add.hooks.script-hook]
 command = "$HOOK_SCRIPT"
 EOF
 
@@ -72,7 +78,7 @@ assert_json_field "$JSON" '.hooks[0].checks[1].status' "ok" "json: script_execut
 echo "[4] Script does not exist"
 
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
-[hooks.on_task_added.missing-hook]
+[cli.task_add.hooks.missing-hook]
 command = "/nonexistent/path/hook.sh"
 EOF
 
@@ -97,7 +103,7 @@ SCRIPT
 chmod 644 "$NOEXEC_SCRIPT"
 
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
-[hooks.on_task_added.noexec-hook]
+[cli.task_add.hooks.noexec-hook]
 command = "$NOEXEC_SCRIPT"
 EOF
 
@@ -109,13 +115,15 @@ assert_json_field "$JSON" '.hooks[0].checks[1].check' "script_executable" "json:
 assert_json_field "$JSON" '.hooks[0].checks[1].status' "error" "json: script_executable error"
 assert_json_field "$JSON" '.hooks[0].checks[1].message' "not executable" "json: message is 'not executable'"
 
-# 6. Missing environment variable → exit 1
-echo "[6] Missing environment variable"
+# 6. Missing required env var → exit 1
+echo "[6] Missing required environment variable"
 
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
-[hooks.on_task_added.env-hook]
+[cli.task_add.hooks.env-hook]
 command = "echo test"
-requires_env = ["SENKO_E2E_DOCTOR_NONEXISTENT_VAR_12345"]
+[[cli.task_add.hooks.env-hook.env_vars]]
+name = "SENKO_E2E_DOCTOR_NONEXISTENT_VAR_12345"
+required = true
 EOF
 
 assert_exit_code 1 run_lf --output json doctor
@@ -132,9 +140,11 @@ echo "[7] Environment variable present"
 export SENKO_E2E_DOCTOR_TEST_VAR="1"
 
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
-[hooks.on_task_added.env-hook]
+[cli.task_add.hooks.env-hook]
 command = "echo test"
-requires_env = ["SENKO_E2E_DOCTOR_TEST_VAR"]
+[[cli.task_add.hooks.env-hook.env_vars]]
+name = "SENKO_E2E_DOCTOR_TEST_VAR"
+required = true
 EOF
 
 JSON="$(run_lf --output json doctor)"
@@ -148,7 +158,7 @@ unset SENKO_E2E_DOCTOR_TEST_VAR
 echo "[8] JSON output structure"
 
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
-[hooks.on_task_ready.my-hook]
+[cli.task_ready.hooks.my-hook]
 command = "$HOOK_SCRIPT"
 EOF
 
@@ -156,7 +166,7 @@ JSON="$(run_lf --output json doctor)"
 # Verify top-level structure
 assert_eq "true" "$(echo "$JSON" | jq 'has("hooks") and has("has_errors")')" "json: top-level has hooks and has_errors"
 # Verify hook entry structure
-assert_json_field "$JSON" '.hooks[0].event' "on_task_ready" "json: hook event field"
+assert_json_field "$JSON" '.hooks[0].event' "cli.task_ready" "json: hook event field"
 assert_json_field "$JSON" '.hooks[0].name' "my-hook" "json: hook name field"
 assert_eq "$HOOK_SCRIPT" "$(echo "$JSON" | jq -r '.hooks[0].command')" "json: hook command field"
 
@@ -165,7 +175,7 @@ echo "[9] Text output format"
 
 OUT="$(run_lf --output text doctor)"
 assert_contains "$OUT" "Hook diagnostics" "text: header present"
-assert_contains "$OUT" "[on_task_ready] my-hook" "text: event/name header format"
+assert_contains "$OUT" "[cli.task_ready] my-hook" "text: event/name header format"
 assert_contains "$OUT" "command: $HOOK_SCRIPT" "text: command line"
 assert_contains "$OUT" "all checks passed" "text: result line"
 
@@ -173,11 +183,11 @@ assert_contains "$OUT" "all checks passed" "text: result line"
 echo "[10] Disabled hooks are skipped"
 
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
-[hooks.on_task_added.disabled-hook]
+[cli.task_add.hooks.disabled-hook]
 command = "/nonexistent/path/hook.sh"
 enabled = false
 
-[hooks.on_task_added.enabled-hook]
+[cli.task_add.hooks.enabled-hook]
 command = "echo hello"
 EOF
 

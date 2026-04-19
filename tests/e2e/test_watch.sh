@@ -11,7 +11,7 @@ trap cleanup_test_env EXIT
 
 echo "--- Test: inline hooks ---"
 
-# Helper: create config.toml with hooks (named hook format)
+# Helper: create config.toml with hooks (named hook format, new schema)
 create_config() {
   local on_added="${1:-}"
   local on_completed="${2:-}"
@@ -20,20 +20,20 @@ create_config() {
   : > "$config_dir/config.toml"
   if [[ -n "$on_added" ]]; then
     cat >> "$config_dir/config.toml" <<HOOKEOF
-[hooks.on_task_added.default]
+[cli.task_add.hooks.default]
 command = "$on_added"
 HOOKEOF
   fi
   if [[ -n "$on_completed" ]]; then
     cat >> "$config_dir/config.toml" <<HOOKEOF
-[hooks.on_task_completed.default]
+[cli.task_complete.hooks.default]
 command = "$on_completed"
 HOOKEOF
   fi
 }
 
-# 1. on_task_added hook fires for new task
-echo "[1] on_task_added hook fires"
+# 1. task_add hook fires for new task
+echo "[1] task_add hook fires"
 
 HOOK_OUTPUT="$TEST_DIR/added_output.json"
 create_config "cat > $HOOK_OUTPUT" ""
@@ -47,15 +47,15 @@ if [[ -f "$HOOK_OUTPUT" ]]; then
   HOOK_JSON="$(cat "$HOOK_OUTPUT")"
   HOOK_EVENT="$(echo "$HOOK_JSON" | jq -r '.event.event')"
   HOOK_TITLE="$(echo "$HOOK_JSON" | jq -r '.event.task.title')"
-  assert_eq "task_added" "$HOOK_EVENT" "on_task_added event type"
-  assert_eq "Hook Test Task" "$HOOK_TITLE" "on_task_added task title"
+  assert_eq "task_add" "$HOOK_EVENT" "task_add event type"
+  assert_eq "Hook Test Task" "$HOOK_TITLE" "task_add task title"
 else
   echo "  FAIL: hook output file not created"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
-# 2. on_task_completed hook fires
-echo "[2] on_task_completed hook fires"
+# 2. task_complete hook fires
+echo "[2] task_complete hook fires"
 
 setup_test_env
 
@@ -67,7 +67,7 @@ TASK_ID="$(run_lf --output json task add --title "Complete Me" 2>/dev/null | jq 
 run_lf task ready "$TASK_ID" >/dev/null 2>&1
 run_lf task start "$TASK_ID" >/dev/null 2>&1
 
-# Complete the task (should trigger on_task_completed inline)
+# Complete the task (should trigger task_complete inline)
 run_lf task complete "$TASK_ID" >/dev/null 2>&1
 
 wait_for "completed hook output" 5 "[ -f '$HOOK_OUTPUT' ]"
@@ -76,8 +76,8 @@ if [[ -f "$HOOK_OUTPUT" ]]; then
   HOOK_JSON="$(cat "$HOOK_OUTPUT")"
   HOOK_EVENT="$(echo "$HOOK_JSON" | jq -r '.event.event')"
   HOOK_TITLE="$(echo "$HOOK_JSON" | jq -r '.event.task.title')"
-  assert_eq "task_completed" "$HOOK_EVENT" "on_task_completed event type"
-  assert_eq "Complete Me" "$HOOK_TITLE" "on_task_completed task title"
+  assert_eq "task_complete" "$HOOK_EVENT" "task_complete event type"
+  assert_eq "Complete Me" "$HOOK_TITLE" "task_complete task title"
 else
   echo "  FAIL: hook output file not created for completed event"
   FAIL_COUNT=$((FAIL_COUNT + 1))
@@ -138,10 +138,10 @@ MARKER2="$TEST_DIR/multi_hook2.txt"
 config_dir="$TEST_PROJECT_ROOT/.senko"
 mkdir -p "$config_dir"
 cat > "$config_dir/config.toml" <<EOF
-[hooks.on_task_added.hook1]
+[cli.task_add.hooks.hook1]
 command = "echo hook1 > $MARKER1"
 
-[hooks.on_task_added.hook2]
+[cli.task_add.hooks.hook2]
 command = "echo hook2 > $MARKER2"
 EOF
 

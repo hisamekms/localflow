@@ -27,7 +27,7 @@ assert_contains "$CLEAR_OUTPUT" "log" "clear output mentions log"
 echo "[3] Generate log entries via hooks"
 mkdir -p "$TEST_PROJECT_ROOT/.senko"
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'TOML'
-[hooks.on_task_added.test_hook]
+[cli.task_add.hooks.test_hook]
 command = "true"
 enabled = true
 TOML
@@ -43,10 +43,10 @@ run_lf task add --title "Hook log test 3" >/dev/null 2>&1
 # Wait for async hooks to complete
 sleep 1
 
-# 4. hooks log shows entries
+# 4. hooks log shows entries with the new event name
 echo "[4] hooks log shows entries"
 LOG_OUTPUT="$(run_lf hooks log 2>&1)"
-assert_contains "$LOG_OUTPUT" "task_added" "log contains task_added events"
+assert_contains "$LOG_OUTPUT" "task_add" "log contains task_add events"
 
 # 5. hooks log -n limits output
 echo "[5] hooks log -n 1"

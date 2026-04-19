@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # e2e test: hooks test subcommand
+#
+# Uses the new hooks schema introduced in the hooks-config-refresh change:
+#   [cli.<action>.hooks.<name>]     — action ∈ { task_add, task_ready, task_start,
+#                                                task_complete, task_cancel, task_select }
+# Old schema ([hooks.on_task_*.<name>]) is no longer accepted.
 
 set -euo pipefail
 
@@ -18,15 +23,15 @@ run_lf --output json task list >/dev/null 2>&1
 TASK_ID="$(run_lf --output json task add --title "Hook test task" --description "Test description" | jq -r '.id')"
 run_lf task ready "$TASK_ID" >/dev/null
 
-# Configure a hook for task_ready
+# Configure hooks under the CLI runtime using the new schema
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
-[hooks.on_task_ready.cat-hook]
+[cli.task_ready.hooks.cat-hook]
 command = "cat"
 
-[hooks.on_task_started.hook1]
+[cli.task_start.hooks.hook1]
 command = "echo hook1"
 
-[hooks.on_task_started.hook2]
+[cli.task_start.hooks.hook2]
 command = "echo hook2"
 EOF
 
@@ -50,9 +55,7 @@ assert_eq "true" "$HAS_DB_PATH" "dry-run backend has db_file_path"
 # 1c. dry-run: envelope includes project and user
 echo "[1c] dry-run includes project and user"
 DRY_PROJECT_ID="$(echo "$DRY_OUTPUT" | jq '.project.id')"
-DRY_PROJECT_NAME="$(echo "$DRY_OUTPUT" | jq -r '.project.name')"
 DRY_USER_ID="$(echo "$DRY_OUTPUT" | jq '.user.id')"
-DRY_USER_NAME="$(echo "$DRY_OUTPUT" | jq -r '.user.name')"
 assert_eq "1" "$DRY_PROJECT_ID" "dry-run project id"
 assert_eq "1" "$DRY_USER_ID" "dry-run user id"
 HAS_PROJECT="$(echo "$DRY_OUTPUT" | jq 'has("project")')"
@@ -62,7 +65,7 @@ assert_eq "true" "$HAS_USER" "dry-run has user field"
 
 # 2. dry-run without task_id: should use sample task
 echo "[2] dry-run without task_id uses sample task"
-SAMPLE_OUTPUT="$(run_lf hooks test task_added --dry-run 2>/dev/null)"
+SAMPLE_OUTPUT="$(run_lf hooks test task_add --dry-run 2>/dev/null)"
 SAMPLE_TITLE="$(echo "$SAMPLE_OUTPUT" | jq -r '.event.task.title')"
 assert_eq "Sample task" "$SAMPLE_TITLE" "sample task title"
 
@@ -84,12 +87,12 @@ assert_contains "$INVALID_OUTPUT" "unknown event" "invalid event error message"
 
 # 6. no hooks configured for event
 echo "[6] no hooks configured message"
-NO_HOOK_STDERR="$(run_lf hooks test task_completed 2>&1 >/dev/null)"
+NO_HOOK_STDERR="$(run_lf hooks test task_complete 2>&1 >/dev/null)"
 assert_contains "$NO_HOOK_STDERR" "No hooks configured" "no hooks message"
 
 # 7. multiple hooks executed
 echo "[7] multiple hooks for same event"
-MULTI_STDERR="$(run_lf hooks test task_started "$TASK_ID" 2>&1 >/dev/null)"
+MULTI_STDERR="$(run_lf hooks test task_start "$TASK_ID" 2>&1 >/dev/null)"
 assert_contains "$MULTI_STDERR" "hook 1/2" "multi hook header 1"
 assert_contains "$MULTI_STDERR" "hook 2/2" "multi hook header 2"
 
@@ -106,16 +109,16 @@ HAS_READY="$(echo "$STATS_OUTPUT" | jq '.event | has("ready_count")')"
 assert_eq "true" "$HAS_STATS" "dry-run has stats"
 assert_eq "true" "$HAS_READY" "dry-run has ready_count"
 
-# 10. no_eligible_task dry-run includes envelope
-echo "[10] no_eligible_task dry-run includes envelope"
-NO_TASK_OUTPUT="$(run_lf hooks test no_eligible_task --dry-run 2>/dev/null)"
-NO_TASK_RUNTIME="$(echo "$NO_TASK_OUTPUT" | jq -r '.runtime')"
-NO_TASK_EVENT="$(echo "$NO_TASK_OUTPUT" | jq -r '.event.event')"
-assert_eq "cli" "$NO_TASK_RUNTIME" "no_eligible_task runtime"
-assert_eq "no_eligible_task" "$NO_TASK_EVENT" "no_eligible_task event name"
-NO_TASK_PROJECT_ID="$(echo "$NO_TASK_OUTPUT" | jq '.project.id')"
-NO_TASK_USER_ID="$(echo "$NO_TASK_OUTPUT" | jq '.user.id')"
-assert_eq "1" "$NO_TASK_PROJECT_ID" "no_eligible_task project id"
-assert_eq "1" "$NO_TASK_USER_ID" "no_eligible_task user id"
+# 10. task_select dry-run includes envelope
+echo "[10] task_select dry-run includes envelope"
+SELECT_OUTPUT="$(run_lf hooks test task_select --dry-run 2>/dev/null)"
+SELECT_RUNTIME="$(echo "$SELECT_OUTPUT" | jq -r '.runtime')"
+SELECT_EVENT="$(echo "$SELECT_OUTPUT" | jq -r '.event.event')"
+assert_eq "cli" "$SELECT_RUNTIME" "task_select runtime"
+assert_eq "task_select" "$SELECT_EVENT" "task_select event name"
+SELECT_PROJECT_ID="$(echo "$SELECT_OUTPUT" | jq '.project.id')"
+SELECT_USER_ID="$(echo "$SELECT_OUTPUT" | jq '.user.id')"
+assert_eq "1" "$SELECT_PROJECT_ID" "task_select project id"
+assert_eq "1" "$SELECT_USER_ID" "task_select user id"
 
 test_summary

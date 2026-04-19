@@ -560,7 +560,7 @@ pub enum HooksCommand {
     },
     /// Test hooks by running them synchronously
     Test {
-        /// Event name (task_added, task_ready, task_started, task_completed, task_canceled)
+        /// Event name (task_add, task_ready, task_start, task_complete, task_cancel, task_select)
         event_name: String,
         /// Task ID to use for building the event (uses a sample task if omitted)
         task_id: Option<i64>,
