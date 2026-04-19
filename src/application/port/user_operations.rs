@@ -30,7 +30,7 @@ pub trait UserOperations: Send + Sync {
         device_name: Option<&str>,
     ) -> Result<ApiKeyWithSecret>;
     async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>>;
-    async fn delete_api_key(&self, key_id: i64) -> Result<()>;
+    async fn delete_api_key(&self, key_id: i64, user_id: i64) -> Result<()>;
 
     // --- Session management ---
 

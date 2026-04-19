@@ -147,11 +147,11 @@ impl UserOperations for RemoteUserOperations {
         read_json_or_error(resp).await
     }
 
-    async fn delete_api_key(&self, key_id: i64) -> Result<()> {
+    async fn delete_api_key(&self, key_id: i64, user_id: i64) -> Result<()> {
         let resp = self
             .auth(
                 self.client()
-                    .delete(self.url(&format!("/api/v1/users/0/api-keys/{key_id}"))),
+                    .delete(self.url(&format!("/api/v1/users/{user_id}/api-keys/{key_id}"))),
             )
             .send()
             .await?;
@@ -194,7 +194,7 @@ impl UserOperations for RemoteUserOperations {
                 sorted.sort_by(|a, b| a.created_at().cmp(b.created_at()));
                 let to_remove = (sorted.len() as u32) - max + 1;
                 for key in sorted.iter().take(to_remove as usize) {
-                    self.delete_api_key(key.id()).await?;
+                    self.delete_api_key(key.id(), user_id).await?;
                 }
             }
         }

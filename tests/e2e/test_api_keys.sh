@@ -170,4 +170,63 @@ echo "=== DELETE api-keys without auth returns 401 ==="
 STATUS=$(status_no_auth -X DELETE "$API_BASE/users/$USER_ID/api-keys/$KEY2_ID")
 assert_eq "401" "$STATUS" "DELETE api-keys without auth returns 401"
 
+# =============================================
+# 4. IDOR regression: cross-user delete forbidden
+# =============================================
+
+USER_A_ID=$(curl -sf -X POST "$API_BASE/users" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -d "{\"username\":\"idor_user_a_$$\"}" | jq -r '.id')
+USER_B_ID=$(curl -sf -X POST "$API_BASE/users" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -d "{\"username\":\"idor_user_b_$$\"}" | jq -r '.id')
+
+USER_A_AUTH_KEY=$(curl -sf -X POST "$API_BASE/users/$USER_A_ID/api-keys" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -d '{"name":"a-bearer"}' | jq -r '.key')
+USER_B_AUTH_KEY=$(curl -sf -X POST "$API_BASE/users/$USER_B_ID/api-keys" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -d '{"name":"b-bearer"}' | jq -r '.key')
+
+TARGET_KEY_JSON=$(curl -sf -X POST "$API_BASE/users/$USER_A_ID/api-keys" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -d '{"name":"a-target"}')
+TARGET_KEY_ID=$(echo "$TARGET_KEY_JSON" | jq -r '.id')
+TARGET_KEY_PREFIX=$(echo "$TARGET_KEY_JSON" | jq -r '.key_prefix')
+
+echo ""
+echo "=== IDOR: user B cannot delete user A's key (403) ==="
+STATUS=$(status_with_token "$USER_B_AUTH_KEY" -X DELETE \
+  "$API_BASE/users/$USER_A_ID/api-keys/$TARGET_KEY_ID")
+assert_eq "403" "$STATUS" "Cross-user delete blocked"
+
+echo ""
+echo "=== IDOR: target key still exists after blocked delete ==="
+A_KEYS=$(curl -sf -H "Authorization: Bearer $MASTER_KEY" \
+  "$API_BASE/users/$USER_A_ID/api-keys")
+STILL_PRESENT=$(echo "$A_KEYS" | jq -r --arg prefix "$TARGET_KEY_PREFIX" \
+  '[.[] | select(.key_prefix == $prefix)] | length')
+assert_eq "1" "$STILL_PRESENT" "Target key survives unauthorized delete"
+
+echo ""
+echo "=== Owner can delete their own key (204) ==="
+STATUS=$(status_with_token "$USER_A_AUTH_KEY" -X DELETE \
+  "$API_BASE/users/$USER_A_ID/api-keys/$TARGET_KEY_ID")
+assert_eq "204" "$STATUS" "Owner delete succeeds"
+
+echo ""
+echo "=== Master key bypass still works (204) ==="
+MASTER_DEL_KEY_ID=$(curl -sf -X POST "$API_BASE/users/$USER_A_ID/api-keys" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -d '{"name":"master-del"}' | jq -r '.id')
+STATUS=$(status_with_token "$MASTER_KEY" -X DELETE \
+  "$API_BASE/users/$USER_A_ID/api-keys/$MASTER_DEL_KEY_ID")
+assert_eq "204" "$STATUS" "Master key can delete any user's key"
+
 test_summary

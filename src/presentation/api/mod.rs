@@ -1942,12 +1942,20 @@ async fn create_api_key(
 async fn delete_api_key(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((_user_id, key_id)): Path<(i64, i64)>,
+    Path((user_id, key_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, ApiError> {
-    require_auth_user(&auth, state.auth_enabled())?;
+    let caller = require_auth_user(&auth, state.auth_enabled())?;
+    if let Some(caller) = caller
+        && caller.id() != user_id
+        && caller.id() != 0
+    {
+        return Err(ApiError::Forbidden(
+            "can only delete your own api keys".into(),
+        ));
+    }
     state
         .user_service
-        .delete_api_key(key_id)
+        .delete_api_key(key_id, user_id)
         .await
         .map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)

@@ -72,8 +72,8 @@ impl UserOperations for UserService {
         self.backend.list_api_keys(user_id).await
     }
 
-    async fn delete_api_key(&self, key_id: i64) -> Result<()> {
-        self.backend.delete_api_key(key_id).await
+    async fn delete_api_key(&self, key_id: i64, user_id: i64) -> Result<()> {
+        self.backend.delete_api_key_for_user(key_id, user_id).await
     }
 
     // --- Session management ---
