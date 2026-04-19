@@ -157,6 +157,8 @@ The split path has a strict ordering — Contract must exist before the sub-task
 
 Omit `--metadata` entirely if there are no metadata fields to pass.
 
+**Always include `--assignee-user-id self`** on every `senko task add` call above (both the single-task and split paths — including the terminal task). Unlike `--metadata`, this flag is never optional: omitting it leaves the task unassigned. Do NOT drop it.
+
 Capture all the IDs for Phase 3.
 
 ### Phase 3: Dependency Setup
@@ -231,7 +233,7 @@ Display the finalized task details (or task graph if multiple) to the user. For 
 
 **Simple mode procedure:**
 
-1. Create draft: `senko task add --title "<description>"`
+1. Create draft: `senko task add --title "<description>" --assignee-user-id self`
 2. Set description: `senko task edit <id> --description "<description>"`
 3. **Branch setting**: Same as Phase 4 step 4 above.
 4. Transition: `senko task ready <id>`
