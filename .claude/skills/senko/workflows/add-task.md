@@ -79,6 +79,14 @@ The split path has a strict ordering — Contract must exist before the sub-task
 
 1. **Create the Contract first** (using the draft confirmed in Phase 1.5):
 
+   Emit pre-hooks for the `contract_add` workflow stage and execute any commands listed:
+
+   ```bash
+   bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_add pre
+   ```
+
+   Then create the contract:
+
    ```bash
    senko contract add \
      --title "<contract_title>" \
@@ -89,6 +97,12 @@ The split path has a strict ordering — Contract must exist before the sub-task
    ```
 
    Capture the `id` from the JSON output — refer to it as `$CONTRACT_ID` below.
+
+   Emit post-hooks for the `contract_add` workflow stage and execute any commands listed:
+
+   ```bash
+   bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_add post
+   ```
 
 2. **Create each sub-task**:
 
@@ -122,9 +136,23 @@ The split path has a strict ordering — Contract must exist before the sub-task
 
 5. **Record a Contract note** summarizing the split (this seeds the shared memory for the sub-tasks):
 
+   Emit pre-hooks for the `contract_note_add` workflow stage and execute any commands listed:
+
+   ```bash
+   bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_note_add pre
+   ```
+
+   Add the note:
+
    ```bash
    senko contract note add $CONTRACT_ID \
      --content "Contract created at task split. Sub-tasks: $SUB_ID_1, $SUB_ID_2, ...; terminal: $TERMINAL_ID."
+   ```
+
+   Emit post-hooks for the `contract_note_add` workflow stage and execute any commands listed:
+
+   ```bash
+   bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_note_add post
    ```
 
 Omit `--metadata` entirely if there are no metadata fields to pass.

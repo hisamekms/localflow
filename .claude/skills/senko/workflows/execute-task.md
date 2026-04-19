@@ -73,9 +73,15 @@ Wait for the user to approve the plan.
 
 Notes are the shared memory between sibling sub-tasks and the terminal task. Record one — via the command below — at each of the following moments. Each note should be 1–2 sentences; before adding, re-read `senko contract note list <contract_id>` and skip the write if the same observation is already present.
 
+For every note you add, wrap the write with the `contract_note_add` workflow-stage hooks. Emit pre-hooks, run `senko contract note add`, then emit post-hooks:
+
 ```bash
+bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_note_add pre
 senko contract note add <contract_id> --content "<text>" --source-task <task_id>
+bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_note_add post
 ```
+
+Execute any commands printed by the emit-hooks calls in order.
 
 1. **Major design decisions**: as soon as a non-trivial technical choice is made (library or pattern selection, architectural change, non-obvious trade-off), write a note naming the decision and the reason. Do this during planning or implementation, whichever is earlier.
 2. **Pitfalls / surprises**: when a non-obvious bug, undocumented constraint, or reproducible gotcha is hit, record it so the next sibling doesn't repeat the loss. One sentence of what went wrong + one sentence of what to do about it is enough.

@@ -6,7 +6,9 @@ set -euo pipefail
 #
 # Usage: build-metadata.sh <stage>
 #   stage: task_add, task_ready, task_start, task_complete, task_cancel, task_select,
-#          branch_set, branch_cleanup, branch_merge, pr_create, pr_update, plan, implement
+#          branch_set, branch_cleanup, branch_merge, pr_create, pr_update, plan, implement,
+#          contract_add, contract_edit, contract_delete,
+#          contract_dod_check, contract_dod_uncheck, contract_note_add
 #
 # Output (JSON):
 #   { "resolved": { "key": "value", ... }, "prompts": [ { "key": "...", "prompt": "..." } ] }

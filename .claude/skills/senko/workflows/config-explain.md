@@ -30,11 +30,14 @@ For each section, explain every item's **current value**, whether it's the **def
 **workflow stages** — built-in names consumed by the skill:
 
 ```
-task_add         task_ready       task_start       task_complete
-task_cancel      task_select      branch_set       branch_cleanup
-branch_merge     pr_create        pr_update        plan
-implement
+task_add               task_ready             task_start             task_complete
+task_cancel            task_select            branch_set             branch_cleanup
+branch_merge           pr_create              pr_update              plan
+implement              contract_add           contract_edit          contract_delete
+contract_dod_check     contract_dod_uncheck   contract_note_add
 ```
+
+The `contract_*` stages are emitted ad-hoc from workflow markdown (`add-task`, `execute-task`, `contract-terminal`) at each `senko contract <verb>` call site, not from `generate-plan-sections.sh`.
 
 User-defined stage names are also accepted — unknown stages are preserved in the `senko config` output so external scripts can consume them. The skill only fires on the built-in names above.
 
@@ -149,6 +152,12 @@ CLI / server actions (fixed):
 | `task_complete` | A task is completed. |
 | `task_cancel` | A task is canceled. |
 | `task_select` | `senko task next` runs (use `on_result = "selected"` or `"none"` to scope). |
+| `contract_add` | A new contract is created. |
+| `contract_edit` | A contract's fields are edited. |
+| `contract_delete` | A contract is deleted. |
+| `contract_dod_check` | A contract DoD item is checked. |
+| `contract_dod_uncheck` | A contract DoD item is unchecked. |
+| `contract_note_add` | A note is added to a contract. |
 
 Each HookDef supports:
 

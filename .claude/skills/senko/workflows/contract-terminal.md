@@ -45,8 +45,14 @@ For each Contract DoD item with `"checked": false`:
    - the `description`, `plan`, and `definition_of_done` of every linked sub-task (run `senko task get <sub_id>` for each)
    - the Contract's title and description for framing
 2. Process the subagent's result for that item:
-   - **VERIFIED**: `senko contract dod check <contract_id> <index>`
-   - **NEEDS_USER_APPROVAL**: confirm with the user via `AskUserQuestion`; if approved, run the `dod check` command above
+   - **VERIFIED**: wrap the check with `contract_dod_check` workflow-stage hooks:
+     ```bash
+     bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_dod_check pre
+     senko contract dod check <contract_id> <index>
+     bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_dod_check post
+     ```
+     Execute any commands printed by the emit-hooks calls in order.
+   - **NEEDS_USER_APPROVAL**: confirm with the user via `AskUserQuestion`; if approved, run the same pre-hook / `dod check` / post-hook sequence above
    - **NOT_ACHIEVED**: leave the DoD unchecked and append the gap to an in-memory `gaps` list that includes the DoD index, text, and the subagent's explanation
 
 Do the DoD items sequentially unless they're clearly independent (the note context may be useful across items).
@@ -58,12 +64,15 @@ Do the DoD items sequentially unless they're clearly independent (the note conte
 The Contract is satisfied. Complete the terminal task itself:
 
 1. Run the `dod-verifier` subagent for any unchecked DoD items on the **terminal task** (its own DoD, typically just `"Verify Contract DoD items"` seeded in `add-task.md`). Process results the same way (VERIFIED → `senko task dod check`, NEEDS_USER_APPROVAL → ask, NOT_ACHIEVED → address it).
-2. Record a closing note on the Contract:
+2. Record a closing note on the Contract, wrapped with `contract_note_add` workflow-stage hooks:
    ```bash
+   bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_note_add pre
    senko contract note add <contract_id> \
      --content "Terminal verification passed on task <id>. All Contract DoD items checked." \
      --source-task <id>
+   bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_note_add post
    ```
+   Execute any commands printed by the emit-hooks calls in order.
 3. Consult `senko config` for `merge_via` and perform the PR-merge check exactly like `complete-task.md` does. Since terminal tasks usually have no branch, PR checks are rarely relevant — but if the user added a branch, respect the config.
 
 4. Complete:
@@ -96,12 +105,15 @@ The Contract is not satisfied. Create follow-up tasks linked to the same Contrac
    senko task deps set <new_term_id> --on <follow_up_1> <follow_up_2>
    senko task ready <new_term_id>
    ```
-4. **Record a Contract note** explaining the gap and the retry plan (one note is enough):
+4. **Record a Contract note** explaining the gap and the retry plan (one note is enough), wrapped with `contract_note_add` workflow-stage hooks:
    ```bash
+   bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_note_add pre
    senko contract note add <contract_id> \
      --content "Terminal <id> found gaps on DoD #<i>, #<j>: <short reason>. Follow-ups <fu1>, <fu2>; new terminal <new_term_id>." \
      --source-task <id>
+   bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_note_add post
    ```
+   Execute any commands printed by the emit-hooks calls in order.
 5. **Cancel the current terminal task** — it has fulfilled its purpose (discovering the gap) and a fresh one is in place:
    ```bash
    senko task cancel <id> --reason "Contract DoDs not met; follow-ups <fu1>, <fu2>; new terminal <new_term_id>"

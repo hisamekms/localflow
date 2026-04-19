@@ -123,7 +123,8 @@ senko config --init                    # generate template config.toml
   - `[server.relay.<action>.hooks.<name>]` — fired by `senko serve-proxy`.
   - `[server.remote.<action>.hooks.<name>]` — fired by `senko serve`.
   - `[workflow.<stage>.hooks.<name>]` — emitted as plan instructions by the skill at the matching stage.
-  - CLI/server `<action>` is one of: `task_add`, `task_ready`, `task_start`, `task_complete`, `task_cancel`, `task_select`.
+  - CLI/server `<action>` is one of: `task_add`, `task_ready`, `task_start`, `task_complete`, `task_cancel`, `task_select`, `contract_add`, `contract_edit`, `contract_delete`, `contract_dod_check`, `contract_dod_uncheck`, `contract_note_add`.
+  - Workflow stage hooks under `[workflow.contract_<verb>.hooks.*]` are emitted into the plan by the skill at each `senko contract <verb>` call site (see `workflows/add-task.md`, `workflows/execute-task.md`, and `workflows/contract-terminal.md`).
   - HookDef fields: `command` (shell), `when` (`pre` / `post`, default `post`), `mode` (`sync` / `async`, default `async`), `on_failure` (`abort` / `warn` / `ignore`, default `abort`), `enabled` (default `true`), `env_vars` (list of `{name, required, default, description}`), `on_result` (`any` / `selected` / `none`, `task_select` only), `prompt` (workflow stages only — renders an agent instruction).
   - Only `mode = "sync"` + `when = "pre"` + `on_failure = "abort"` can abort a state transition. Hooks defined under a non-matching runtime section are ignored with a startup warning.
   - The global `[hooks].enabled` switch and `SENKO_HOOKS_ENABLED` / `SENKO_HOOK_ON_TASK_*` env vars have been removed; configure hooks only in `config.toml`.
