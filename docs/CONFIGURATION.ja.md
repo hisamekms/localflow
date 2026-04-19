@@ -47,10 +47,12 @@ senko config --init
 task_add         task_ready       task_start       task_complete
 task_cancel      task_select      branch_set       branch_cleanup
 branch_merge     pr_create        pr_update        plan
-implement
+implement        contract_add     contract_edit    contract_delete
+contract_dod_check                contract_dod_uncheck
+contract_note_add
 ```
 
-ユーザー独自のステージ名も許容されます。未知のステージ名は `senko config` の出力にそのまま残り、外部スクリプトから利用できます。skill は上記の組み込み名のみで発火します。
+ユーザー独自のステージ名も許容されます。未知のステージ名は `senko config` の出力にそのまま残り、外部スクリプトから利用できます。skill は上記の組み込み名のみで発火します。なお `contract_*` ステージのうち、現行の同梱ワークフローが実際に emit するのは `contract_add` / `contract_note_add` / `contract_dod_check` の 3 つだけで、`contract_edit` / `contract_delete` / `contract_dod_uncheck` は組み込み名として認識はされますが、ユーザー定義のワークフロー拡張向けに予約されています。
 
 各ステージ共通のキー:
 

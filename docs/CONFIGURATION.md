@@ -47,10 +47,12 @@ Stages live under `[workflow.<stage>]`. The skill consumes these built-in stage 
 task_add         task_ready       task_start       task_complete
 task_cancel      task_select      branch_set       branch_cleanup
 branch_merge     pr_create        pr_update        plan
-implement
+implement        contract_add     contract_edit    contract_delete
+contract_dod_check                contract_dod_uncheck
+contract_note_add
 ```
 
-Additional, user-defined stage names are accepted as well — unknown stages are preserved in the `senko config` output so external scripts can consume them. The skill only fires on the built-in names listed above.
+Additional, user-defined stage names are accepted as well — unknown stages are preserved in the `senko config` output so external scripts can consume them. The skill only fires on the built-in names listed above. Of the `contract_*` stages, the bundled workflows currently emit only `contract_add`, `contract_note_add`, and `contract_dod_check`; `contract_edit`, `contract_delete`, and `contract_dod_uncheck` are recognized as built-ins but are reserved for user-defined workflow extensions.
 
 Each stage supports:
 
