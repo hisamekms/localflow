@@ -77,6 +77,33 @@ echo "=== POST api-keys without auth returns 401 ==="
 STATUS=$(status_no_auth -X POST "$API_BASE/users/$USER_ID/api-keys")
 assert_eq "401" "$STATUS" "POST api-keys without auth returns 401"
 
+# --- Ownership regression (task 312): non-master caller must match user_id ---
+
+# KEY1 was minted for USER_ID by master; use its raw key as a non-master token.
+USER_API_KEY=$(echo "$KEY1_JSON" | jq -r '.key')
+
+echo ""
+echo "=== POST api-keys self-mint with user's own key returns 201 ==="
+STATUS=$(status_with_token "$USER_API_KEY" -X POST "$API_BASE/users/$USER_ID/api-keys")
+assert_eq "201" "$STATUS" "POST api-keys on self with user key returns 201"
+
+# Create a second user to act as the attack target.
+OTHER_USER_JSON=$(curl -sf -X POST "$API_BASE/users" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -d "{\"username\":\"apikey_test_other_$$\"}")
+OTHER_USER_ID=$(echo "$OTHER_USER_JSON" | jq -r '.id')
+
+echo ""
+echo "=== POST api-keys for another user with non-master key returns 403 ==="
+STATUS=$(status_with_token "$USER_API_KEY" -X POST "$API_BASE/users/$OTHER_USER_ID/api-keys")
+assert_eq "403" "$STATUS" "POST api-keys for other user with non-master key returns 403"
+
+echo ""
+echo "=== POST api-keys for another user with master key still returns 201 ==="
+STATUS=$(status_with_token "$MASTER_KEY" -X POST "$API_BASE/users/$OTHER_USER_ID/api-keys")
+assert_eq "201" "$STATUS" "POST api-keys for other user with master key returns 201"
+
 # =============================================
 # 2. GET /api/v1/users/{user_id}/api-keys
 # =============================================

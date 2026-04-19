@@ -1914,7 +1914,15 @@ async fn create_api_key(
     Path(user_id): Path<i64>,
     body: Option<Json<CreateApiKeyParams>>,
 ) -> Result<(StatusCode, Json<ApiKeyWithSecretResponse>), ApiError> {
-    require_auth_user(&auth, state.auth_enabled())?;
+    let caller = require_auth_user(&auth, state.auth_enabled())?;
+    if let Some(caller) = caller
+        && caller.id() != user_id
+        && caller.id() != 0
+    {
+        return Err(ApiError::Forbidden(
+            "can only create API keys for your own account".into(),
+        ));
+    }
     let (name, device_name) = match body {
         Some(Json(b)) => (b.name.unwrap_or_default(), b.device_name),
         None => (String::new(), None),
